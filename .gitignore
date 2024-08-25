@@ -30,4 +30,5 @@ creds.json
 # Files
 commands.md
 test_upload.py
+test_upload_local.py
 wwpp-full.mp4

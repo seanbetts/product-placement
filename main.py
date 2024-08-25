@@ -1,65 +1,58 @@
 import os
-from dotenv import load_dotenv
-from fastapi import FastAPI, File, UploadFile, BackgroundTasks
-from google.cloud import storage
 import uuid
+import logging
+from fastapi import FastAPI, File, UploadFile, BackgroundTasks
+from fastapi.responses import JSONResponse
+from google.cloud import storage
+from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
-# Access environment variables
-GCP_PROJECT_ID = os.getenv('GCP_PROJECT_ID')
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Set up FastAPI
+logger.info("Initializing FastAPI application...")
+app = FastAPI()
+logger.info("FastAPI application initialized.")
+
+storage_client = storage.Client()
 PROCESSING_BUCKET = os.getenv('PROCESSING_BUCKET')
 
-app = FastAPI()
-storage_client = storage.Client()
-
 @app.post("/upload")
-async def upload_video(video: UploadFile = File(...), background_tasks: BackgroundTasks):
+async def upload_video(video: UploadFile, background_tasks: BackgroundTasks):
+    logger.info(f"Received upload request for file: {video.filename}")
     video_id = str(uuid.uuid4())
     bucket = storage_client.bucket(PROCESSING_BUCKET)
     blob = bucket.blob(f'{video_id}/original.mp4')
     
-    blob.upload_from_file(video.file, content_type=video.content_type)
-    
-    background_tasks.add_task(process_video, video_id)
-    
-    return {"video_id": video_id, "status": "processing"}
+    try:
+        logger.info(f"Uploading file to bucket: {PROCESSING_BUCKET}")
+        blob.upload_from_file(video.file, content_type=video.content_type)
+        logger.info(f"File uploaded successfully. Video ID: {video_id}")
+        background_tasks.add_task(process_video, video_id)
+        return {"video_id": video_id, "status": "processing"}
+    except Exception as e:
+        logger.error(f"Error during upload: {str(e)}", exc_info=True)
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 async def process_video(video_id: str):
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    
-    # Download the original video
-    blob = bucket.blob(f'{video_id}/original.mp4')
-    local_path = f'/tmp/{video_id}_original.mp4'
-    blob.download_to_filename(local_path)
-    
-    # Process video (placeholder for SAM 2 logic)
-    # This is where you'd implement frame extraction, object detection, and tracking
-    
-    # Upload processed frames (example)
-    for i in range(0, 1000, 50):  # Assuming 1000 frames, processing every 50th
-        frame_blob = bucket.blob(f'{video_id}/frames/frame_{i:04d}.jpg')
-        # In reality, you'd be saving actual processed frames here
-        frame_blob.upload_from_string(f"Processed frame {i}", content_type='image/jpeg')
-    
-    # Upload statistics (placeholder)
-    stats_blob = bucket.blob(f'{video_id}/statistics.json')
-    stats_blob.upload_from_string('{"placeholder": "statistics"}', content_type='application/json')
-    
-    print(f"Completed processing video {video_id}")
+    logger.info(f"Starting to process video: {video_id}")
+    try:
+        # Your processing logic here
+        logger.info(f"Completed processing video: {video_id}")
+    except Exception as e:
+        logger.error(f"Error processing video {video_id}: {str(e)}", exc_info=True)
 
-@app.get("/status/{video_id}")
-async def get_status(video_id: str):
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    stats_blob = bucket.blob(f'{video_id}/statistics.json')
-    
-    if stats_blob.exists():
-        return {"video_id": video_id, "status": "complete"}
-    else:
-        return {"video_id": video_id, "status": "processing"}
+@app.get("/health")
+async def health_check():
+    logger.info("Health check called")
+    return {"status": "ok"}
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
     import uvicorn
+    port = int(os.environ.get("PORT", 8080))
+    logger.info(f"Starting server on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)
