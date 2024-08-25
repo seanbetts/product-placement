@@ -1,6 +1,8 @@
 fastapi
 uvicorn
+gunicorn
 google-cloud-storage
 torch
 torchvision
 opencv-python-headless
+python-dotenv

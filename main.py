@@ -1,16 +1,23 @@
 import os
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks
 from google.cloud import storage
 import uuid
 
+# Load environment variables from .env file
+load_dotenv()
+
+# Access environment variables
+GCP_PROJECT_ID = os.getenv('GCP_PROJECT_ID')
+PROCESSING_BUCKET = os.getenv('PROCESSING_BUCKET')
+
 app = FastAPI()
 storage_client = storage.Client()
-BUCKET_NAME = os.environ['PROCESSING_BUCKET']
 
 @app.post("/upload")
 async def upload_video(video: UploadFile = File(...), background_tasks: BackgroundTasks):
     video_id = str(uuid.uuid4())
-    bucket = storage_client.bucket(BUCKET_NAME)
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
     blob = bucket.blob(f'{video_id}/original.mp4')
     
     blob.upload_from_file(video.file, content_type=video.content_type)
@@ -20,7 +27,7 @@ async def upload_video(video: UploadFile = File(...), background_tasks: Backgrou
     return {"video_id": video_id, "status": "processing"}
 
 async def process_video(video_id: str):
-    bucket = storage_client.bucket(BUCKET_NAME)
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
     
     # Download the original video
     blob = bucket.blob(f'{video_id}/original.mp4')
@@ -44,7 +51,7 @@ async def process_video(video_id: str):
 
 @app.get("/status/{video_id}")
 async def get_status(video_id: str):
-    bucket = storage_client.bucket(BUCKET_NAME)
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
     stats_blob = bucket.blob(f'{video_id}/statistics.json')
     
     if stats_blob.exists():
@@ -53,5 +60,6 @@ async def get_status(video_id: str):
         return {"video_id": video_id, "status": "processing"}
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    uvicorn.run(app, host="0.0.0.0", port=port)

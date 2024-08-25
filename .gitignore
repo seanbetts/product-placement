@@ -20,3 +20,14 @@ Thumbs.db
 
 # Logs
 *.log
+
+# env
+.env
+
+# Creds
+creds.json
+
+# Files
+commands.md
+test_upload.py
+wwpp-full.mp4
