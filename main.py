@@ -11,7 +11,13 @@ import concurrent.futures
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
 from google.cloud import storage
+from google.oauth2 import service_account
+from google.auth.transport.requests import AuthorizedSession
 from dotenv import load_dotenv
+from io import BytesIO
+import urllib3
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Load environment variables
 load_dotenv()
@@ -23,8 +29,32 @@ logger = logging.getLogger(__name__)
 # Set up FastAPI
 app = FastAPI()
 
-storage_client = storage.Client()
 PROCESSING_BUCKET = os.getenv('PROCESSING_BUCKET')
+GOOGLE_APPLICATION_CREDENTIALS = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+BATCH_SIZE = 20
+FRAME_INTERVAL = 1
+STATUS_UPDATES = 100
+MAX_WORKERS = 10
+
+# Custom transport with larger connection pool
+class CustomTransport(AuthorizedSession):
+    def __init__(self, credentials):
+        super().__init__(credentials)
+        retry_strategy = Retry(
+            total=3,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["HEAD", "GET", "OPTIONS", "POST", "PUT"]
+        )
+        adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100, max_retries=retry_strategy)
+        self.mount("https://", adapter)
+
+# Set up Google Cloud Storage client with proper authentication and custom transport
+credentials = service_account.Credentials.from_service_account_file(
+    GOOGLE_APPLICATION_CREDENTIALS,
+    scopes=["https://www.googleapis.com/auth/cloud-platform"]
+)
+custom_transport = CustomTransport(credentials)
+storage_client = storage.Client(credentials=credentials, _http=custom_transport)
 
 @app.get("/health")
 async def health_check():
@@ -47,7 +77,7 @@ async def upload_video(video: UploadFile, background_tasks: BackgroundTasks):
     except Exception as e:
         logger.error(f"Error during upload: {str(e)}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": str(e)})
-    
+
 @app.get("/status/{video_id}")
 async def get_status(video_id: str):
     logger.info(f"Received status request for video ID: {video_id}")
@@ -67,68 +97,68 @@ async def process_video(video_id: str):
     bucket = storage_client.bucket(PROCESSING_BUCKET)
     video_blob = bucket.blob(f'{video_id}/original.mp4')
     
-    # Update status to "processing"
     update_status(video_id, "processing", {})
 
     with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_video:
-        # Download video to a temporary file
         video_blob.download_to_filename(temp_video.name)
         temp_video_path = temp_video.name
 
     try:
-        # Start timing the processing
         start_time = time.time()
         start_datetime = datetime.datetime.now().isoformat()
 
-        # Open the video file
         cap = cv2.VideoCapture(temp_video_path)
-        
-        # Get video properties
         fps = cap.get(cv2.CAP_PROP_FPS)
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         duration = frame_count / fps
         
         frame_number = 0
+        batches = []
+        current_batch = []
 
-        # Use multithreading for frame extraction and upload
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            futures = []
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                if current_batch:
+                    batches.append(current_batch)
+                break
 
-                futures.append(executor.submit(process_frame, frame, video_id, frame_number, bucket))
-                frame_number += 1
+            if frame_number % FRAME_INTERVAL == 0:
+                current_batch.append((frame, frame_number))
+                
+                if len(current_batch) == BATCH_SIZE:
+                    batches.append(current_batch)
+                    current_batch = []
 
-                # Update status every 100 frames
-                if frame_number % 100 == 0:
-                    progress = (frame_number / frame_count) * 100
-                    update_status(video_id, "processing", {
-                        "progress": f"{progress:.2f}%",
-                        "frames_processed": f'{frame_number} frames of {frame_count} total frames'
-                    })
-                    logger.info(f"Processed {frame_number} of {frame_count} frames for video {video_id}")
+            frame_number += 1
 
-            # Wait for all futures to complete
-            concurrent.futures.wait(futures)
+            if frame_number % STATUS_UPDATES == 0:
+                progress = (frame_number / frame_count) * 100
+                update_status(video_id, "processing", {
+                    "progress": f"{progress:.2f}%",
+                    "frames_processed": f'{frame_number} frames of {frame_count} total frames'
+                })
+                logger.info(f"Processed {frame_number} of {frame_count} frames for video {video_id}")
 
         cap.release()
 
-        # Calculate processing time and frames per second
+        # Process batches in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = [executor.submit(process_batch, batch, video_id, bucket) for batch in batches]
+            concurrent.futures.wait(futures)
+
         end_time = time.time()
         end_datetime = datetime.datetime.now().isoformat()
         processing_time = end_time - start_time
         frames_per_second = frame_number / processing_time
         processing_speed = (frames_per_second / fps) * 100
 
-        # Save final statistics
         stats = {
             "video_id": video_id,
             "video_length": f'{round(duration,1)} seconds',
             "total_frames": frame_count,
             "video_fps": round(fps, 2),
-            "extracted_frames": frame_number,
+            "extracted_frames": frame_number // FRAME_INTERVAL,
             "processing_time": f'{processing_time:.2f} seconds',
             "processing_fps": f'{frames_per_second:.2f}',
             "processing_speed": f'{processing_speed:.1f}% of real-time',
@@ -138,7 +168,7 @@ async def process_video(video_id: str):
         update_status(video_id, "complete", stats)
         
         logger.info(f"Completed processing video: {video_id}")
-        logger.info(f"Extracted {frame_number} of {frame_count} frames from {video_id}")
+        logger.info(f"Extracted {frame_number // FRAME_INTERVAL} of {frame_count} frames from {video_id}")
         logger.info(f"Processing started at: {start_datetime}")
         logger.info(f"Processing ended at: {end_datetime}")
         logger.info(f"Processing time: {processing_time:.2f} seconds")
@@ -148,18 +178,23 @@ async def process_video(video_id: str):
         logger.error(f"Error processing video {video_id}: {str(e)}", exc_info=True)
         update_status(video_id, "error", {"error": str(e)})
     finally:
-        # Clean up the temporary file
         os.unlink(temp_video_path)
 
-def process_frame(frame, video_id, frame_number, bucket):
+def process_batch(batch, video_id, bucket):
     try:
-        frame_filename = f'{frame_number:06d}.jpg'
-        _, buffer = cv2.imencode('.jpg', frame)
-        frame_blob = bucket.blob(f'{video_id}/frames/{frame_filename}')
-        frame_blob.upload_from_string(buffer.tobytes(), content_type='image/jpeg')
-        logger.info(f"Uploaded frame {frame_number} for video {video_id}")
+        uploads = []
+        for frame, frame_number in batch:
+            frame_filename = f'{frame_number:06d}.jpg'
+            _, buffer = cv2.imencode('.jpg', frame)
+            frame_blob = bucket.blob(f'{video_id}/frames/{frame_filename}')
+            uploads.append((frame_blob, buffer.tobytes()))
+
+        # Perform batch upload
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(uploads), 10)) as executor:
+            list(executor.map(lambda x: x[0].upload_from_string(x[1], content_type='image/jpeg'), uploads))
+        
     except Exception as e:
-        logger.error(f"Error processing frame {frame_number} for video {video_id}: {str(e)}")
+        logger.error(f"Error processing batch for video {video_id}: {str(e)}")
 
 def update_status(video_id: str, status: str, details: dict):
     bucket = storage_client.bucket(PROCESSING_BUCKET)
