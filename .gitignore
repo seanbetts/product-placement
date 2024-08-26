@@ -31,5 +31,6 @@ creds.json
 commands.md
 test_upload.py
 test_upload_local.py
+processing_optimisation_test.py
 wwpp-full.mp4
 wwpp-pepsi.mov

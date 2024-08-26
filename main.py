@@ -32,10 +32,10 @@ app = FastAPI()
 
 PROCESSING_BUCKET = os.getenv('PROCESSING_BUCKET')
 GOOGLE_APPLICATION_CREDENTIALS = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-BATCH_SIZE = 20
-FRAME_INTERVAL = 1
-STATUS_UPDATES = 100
-MAX_WORKERS = 10
+BATCH_SIZE = int(os.getenv('BATCH_SIZE', '20'))
+FRAME_INTERVAL = int(os.getenv('FRAME_INTERVAL', '1'))
+STATUS_UPDATE_INTERVAL = int(os.getenv('STATUS_UPDATE_INTERVAL', '10'))
+MAX_WORKERS = int(os.getenv('MAX_WORKERS', '10'))
 
 # Custom transport with larger connection pool
 class CustomTransport(AuthorizedSession):
@@ -104,6 +104,7 @@ async def get_status(video_id: str):
 
 async def process_video(video_id: str):
     logger.info(f"Starting to process video: {video_id}")
+    logger.info(f"Video processing settings: Batch Size: {BATCH_SIZE}, Max Workers: {MAX_WORKERS}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
     video_blob = bucket.blob(f'{video_id}/original.mp4')
     
@@ -116,6 +117,7 @@ async def process_video(video_id: str):
     try:
         start_time = time.time()
         start_datetime = datetime.datetime.now().isoformat()
+        last_update_time = start_time
 
         cap = cv2.VideoCapture(temp_video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
@@ -142,13 +144,24 @@ async def process_video(video_id: str):
 
             frame_number += 1
 
-            if frame_number % STATUS_UPDATES == 0:
+            current_time = time.time()
+            if current_time - last_update_time >= STATUS_UPDATE_INTERVAL:
                 progress = (frame_number / frame_count) * 100
+                elapsed_time = current_time - start_time
+                frames_per_second = frame_number / elapsed_time
+                estimated_total_time = (frame_count / frame_number) * elapsed_time if frame_number > 0 else 0
+                estimated_remaining_time = estimated_total_time - elapsed_time
+
                 update_status(video_id, "processing", {
                     "progress": f"{progress:.2f}%",
-                    "frames_processed": f'{frame_number} frames of {frame_count} total frames'
+                    "frames_processed": f'{frame_number} frames of {frame_count} total frames',
+                    "elapsed_time": f'{elapsed_time:.2f} seconds',
+                    "estimated_total_time": f'{estimated_total_time:.2f} seconds',
+                    "estimated_remaining_time": f'{estimated_remaining_time:.2f} seconds',
+                    "processing_speed": f'{frames_per_second:.2f} frames/second'
                 })
                 logger.info(f"Processed {frame_number} of {frame_count} frames for video {video_id}")
+                last_update_time = current_time
 
         cap.release()
 
