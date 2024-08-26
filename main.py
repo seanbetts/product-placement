@@ -90,10 +90,9 @@ async def process_video(video_id: str):
         
         frame_number = 0
 
-        # Optimization 1: Use multiprocessing for frame extraction and upload
-        with concurrent.futures.ProcessPoolExecutor() as executor:
+        # Use multithreading for frame extraction and upload
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = []
-            frame_number = 0
             while True:
                 ret, frame = cap.read()
                 if not ret:
@@ -111,6 +110,7 @@ async def process_video(video_id: str):
                     })
                     logger.info(f"Processed {frame_number} of {frame_count} frames for video {video_id}")
 
+            # Wait for all futures to complete
             concurrent.futures.wait(futures)
 
         cap.release()
@@ -152,10 +152,14 @@ async def process_video(video_id: str):
         os.unlink(temp_video_path)
 
 def process_frame(frame, video_id, frame_number, bucket):
-    frame_filename = f'{frame_number:06d}.jpg'
-    _, buffer = cv2.imencode('.jpg', frame)
-    frame_blob = bucket.blob(f'{video_id}/frames/{frame_filename}')
-    frame_blob.upload_from_string(buffer.tobytes(), content_type='image/jpeg')
+    try:
+        frame_filename = f'{frame_number:06d}.jpg'
+        _, buffer = cv2.imencode('.jpg', frame)
+        frame_blob = bucket.blob(f'{video_id}/frames/{frame_filename}')
+        frame_blob.upload_from_string(buffer.tobytes(), content_type='image/jpeg')
+        logger.info(f"Uploaded frame {frame_number} for video {video_id}")
+    except Exception as e:
+        logger.error(f"Error processing frame {frame_number} for video {video_id}: {str(e)}")
 
 def update_status(video_id: str, status: str, details: dict):
     bucket = storage_client.bucket(PROCESSING_BUCKET)
