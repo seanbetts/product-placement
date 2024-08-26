@@ -13,13 +13,14 @@ from fastapi.responses import JSONResponse
 from google.cloud import storage
 from google.oauth2 import service_account
 from google.auth.transport.requests import AuthorizedSession
+from google.auth import default
 from dotenv import load_dotenv
 from io import BytesIO
 import urllib3
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# Load environment variables
+# Load environment variables (this will work locally, but not affect GCP environment)
 load_dotenv()
 
 # Set up logging
@@ -49,12 +50,21 @@ class CustomTransport(AuthorizedSession):
         self.mount("https://", adapter)
 
 # Set up Google Cloud Storage client with proper authentication and custom transport
-credentials = service_account.Credentials.from_service_account_file(
-    GOOGLE_APPLICATION_CREDENTIALS,
-    scopes=["https://www.googleapis.com/auth/cloud-platform"]
-)
-custom_transport = CustomTransport(credentials)
-storage_client = storage.Client(credentials=credentials, _http=custom_transport)
+try:
+    if GOOGLE_APPLICATION_CREDENTIALS:
+        credentials = service_account.Credentials.from_service_account_file(
+            GOOGLE_APPLICATION_CREDENTIALS,
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+    else:
+        # Use default credentials (this will work in GCP)
+        credentials, _ = default()
+    
+    custom_transport = CustomTransport(credentials)
+    storage_client = storage.Client(credentials=credentials, _http=custom_transport)
+except Exception as e:
+    logger.error(f"Error setting up Google Cloud Storage client: {str(e)}")
+    raise
 
 @app.get("/health")
 async def health_check():
