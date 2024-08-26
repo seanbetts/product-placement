@@ -1,21 +1,29 @@
-# Video Processing App
 
-This application processes video files using SAM 2 (Segment Anything Model 2) for object detection and tracking.
+# Product Placement Detection
 
-## Setup
+This project consists of a backend API for processing videos to detect product placements, and a frontend web application for uploading videos and viewing results.
 
-1. Install dependencies:
-pip install -r requirements.txt
+## Project Structure
 
-2. Set up environment variables:
-- PROCESSING_BUCKET: Name of your Google Cloud Storage bucket
+- \`/backend\`: FastAPI application for video processing
+- \`/frontend\`: React application for user interface
 
-3. Run the application:
-python main.py
+## Getting Started
 
-## API Endpoints
+1. Clone this repository
+2. Set up the backend:
+   \`\`\`
+   cd backend
+   pip install -r requirements.txt
+   \`\`\`
+3. Set up the frontend:
+   \`\`\`
+   cd frontend
+   npm install
+   \`\`\`
+4. Run the application using Docker Compose:
+   \`\`\`
+   docker-compose up --build
+   \`\`\`
 
-- POST /upload: Upload a video file for processing
-- GET /status/{video_id}: Check the processing status of a video
-
-For more details, refer to the API documentation.
+Refer to individual README files in the backend and frontend directories for more detailed instructions.
