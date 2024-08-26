@@ -5,6 +5,9 @@ import tempfile
 import uuid
 import logging
 import datetime
+import time
+import asyncio
+import concurrent.futures
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
 from google.cloud import storage
@@ -18,9 +21,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Set up FastAPI
-logger.info("Initializing FastAPI application...")
 app = FastAPI()
-logger.info("FastAPI application initialized.")
 
 storage_client = storage.Client()
 PROCESSING_BUCKET = os.getenv('PROCESSING_BUCKET')
@@ -75,6 +76,10 @@ async def process_video(video_id: str):
         temp_video_path = temp_video.name
 
     try:
+        # Start timing the processing
+        start_time = time.time()
+        start_datetime = datetime.datetime.now().isoformat()
+
         # Open the video file
         cap = cv2.VideoCapture(temp_video_path)
         
@@ -85,42 +90,59 @@ async def process_video(video_id: str):
         
         frame_number = 0
 
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
+        # Optimization 1: Use multiprocessing for frame extraction and upload
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            futures = []
+            frame_number = 0
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-            frame_filename = f'{frame_number:06d}.jpg'
-            _, buffer = cv2.imencode('.jpg', frame)
-            frame_blob = bucket.blob(f'{video_id}/frames/{frame_filename}')
-            frame_blob.upload_from_string(buffer.tobytes(), content_type='image/jpeg')
+                futures.append(executor.submit(process_frame, frame, video_id, frame_number, bucket))
+                frame_number += 1
 
-            frame_number += 1
+                # Update status every 100 frames
+                if frame_number % 100 == 0:
+                    progress = (frame_number / frame_count) * 100
+                    update_status(video_id, "processing", {
+                        "progress": f"{progress:.2f}%",
+                        "frames_processed": f'{frame_number} frames of {frame_count} total frames'
+                    })
+                    logger.info(f"Processed {frame_number} of {frame_count} frames for video {video_id}")
 
-            # Update status every 100 frames
-            if frame_number % 100 == 0:
-                progress = (frame_number / frame_count) * 100
-                update_status(video_id, "processing", {
-                    "progress": f"{progress:.2f}%",
-                    "frames_processed": frame_number,
-                    "total_frames": frame_count
-                })
-                logger.info(f"Processed {frame_number} frames for video {video_id}")
+            concurrent.futures.wait(futures)
 
         cap.release()
+
+        # Calculate processing time and frames per second
+        end_time = time.time()
+        end_datetime = datetime.datetime.now().isoformat()
+        processing_time = end_time - start_time
+        frames_per_second = frame_number / processing_time
+        processing_speed = (frames_per_second / fps) * 100
 
         # Save final statistics
         stats = {
             "video_id": video_id,
             "video_length": f'{round(duration,1)} seconds',
             "total_frames": frame_count,
+            "video_fps": round(fps, 2),
             "extracted_frames": frame_number,
-            "fps": round(fps, 2)
+            "processing_time": f'{processing_time:.2f} seconds',
+            "processing_fps": f'{frames_per_second:.2f}',
+            "processing_speed": f'{processing_speed:.1f}% of real-time',
+            "processing_start_time": start_datetime,
+            "processing_end_time": end_datetime
         }
         update_status(video_id, "complete", stats)
         
         logger.info(f"Completed processing video: {video_id}")
-        logger.info(f"Extracted {frame_number} frames from {video_id}")
+        logger.info(f"Extracted {frame_number} of {frame_count} frames from {video_id}")
+        logger.info(f"Processing started at: {start_datetime}")
+        logger.info(f"Processing ended at: {end_datetime}")
+        logger.info(f"Processing time: {processing_time:.2f} seconds")
+        logger.info(f"Frames processed per second: {frames_per_second:.2f}")
 
     except Exception as e:
         logger.error(f"Error processing video {video_id}: {str(e)}", exc_info=True)
@@ -128,6 +150,12 @@ async def process_video(video_id: str):
     finally:
         # Clean up the temporary file
         os.unlink(temp_video_path)
+
+def process_frame(frame, video_id, frame_number, bucket):
+    frame_filename = f'{frame_number:06d}.jpg'
+    _, buffer = cv2.imencode('.jpg', frame)
+    frame_blob = bucket.blob(f'{video_id}/frames/{frame_filename}')
+    frame_blob.upload_from_string(buffer.tobytes(), content_type='image/jpeg')
 
 def update_status(video_id: str, status: str, details: dict):
     bucket = storage_client.bucket(PROCESSING_BUCKET)
