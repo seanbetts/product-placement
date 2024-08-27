@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Typography, CircularProgress, Box, Paper, Button } from '@mui/material';
+import { Typography, CircularProgress, Box, Paper, Button, Divider } from '@mui/material';
 import api from '../services/api';
 
 const VideoStatus = ({ videoId }) => {
@@ -11,9 +11,19 @@ const VideoStatus = ({ videoId }) => {
   const fetchStatus = useCallback(async () => {
     try {
       const statusData = await api.getVideoStatus(videoId);
-      // ... rest of the function remains the same
+      setStatus(statusData);
+      setLoading(false);
+      setError(null);
+
+      if (statusData.status === 'complete' || pollingCount > 60) {
+        return true; // Signal to stop polling
+      }
+      setPollingCount(prev => prev + 1);
     } catch (error) {
-      // ... error handling remains the same
+      console.error('Error fetching video status:', error);
+      setError('Failed to fetch status. Please try again.');
+      setLoading(false);
+      return true; // Signal to stop polling on error
     }
     return false; // Continue polling
   }, [videoId, pollingCount]);
@@ -52,35 +62,45 @@ const VideoStatus = ({ videoId }) => {
     );
   }
 
+  const details = status?.details || {};
+
   return (
     <Paper sx={{ p: 2, mt: 2 }}>
       <Typography variant="h6" gutterBottom>Video Processing Status</Typography>
-      <Typography>Video ID: {videoId}</Typography>
+      <Typography>Video ID: {details.video_id}</Typography>
       <Typography>Status: {status?.status}</Typography>
-      
-      {status?.status === 'processing' && status?.details && (
-        <Box mt={2}>
-          <Typography>Progress: {status.details.progress}</Typography>
-          <Typography>Processing speed: {status.details.processing_speed}</Typography>
-          <Typography>Frames Processed: {status.details.frames_processed}</Typography>
-          <Typography>Estimated total time: {status.details.estimated_total_time}</Typography>
-          <Typography>Estimated remaining time: {status.details.estimated_remaining_time}</Typography>
-        </Box>
-      )}
+      <Typography>Last Updated: {new Date(status?.last_updated).toLocaleString()}</Typography>
 
-      {status?.status === 'complete' && status?.details && (
-        <Box mt={2}>
-          <Typography>Video Length: {status.details.video_length}</Typography>
-          <Typography>Video FPS: {status.details.video_fps}</Typography>
-          <Typography>Total Frames: {status.details.total_frames}</Typography>
-          <Typography>Total Processing Time: {status.details.processing_time}</Typography>
-          <Typography>Processing Speed: {status.details.processing_speed}</Typography>
-          <Typography>
-            Extracted Frames: {status.details.extracted_frames} 
-            ({((status.details.extracted_frames / status.details.total_frames) * 100).toFixed(2)}%)
-          </Typography>
-        </Box>
-      )}
+      <Divider sx={{ my: 2 }} />
+
+      <Typography variant="subtitle1" gutterBottom>Video Details:</Typography>
+      <Typography>Length: {details.video_length}</Typography>
+      <Typography>Total Frames: {details.video?.total_frames}</Typography>
+      <Typography>Extracted Frames: {details.video?.extracted_frames}</Typography>
+      <Typography>Video FPS: {details.video?.video_fps}</Typography>
+      <Typography>Processing Time: {details.video?.video_processing_time}</Typography>
+      <Typography>Processing Speed: {details.video?.video_processing_speed}</Typography>
+      <Typography>Processing FPS: {details.video?.video_processing_fps}</Typography>
+
+      <Divider sx={{ my: 2 }} />
+
+      <Typography variant="subtitle1" gutterBottom>Audio Details:</Typography>
+      <Typography>Length: {details.audio?.audio_length}</Typography>
+      <Typography>Processing Time: {details.audio?.audio_processing_time}</Typography>
+      <Typography>Processing Speed: {details.audio?.audio_processing_speed}</Typography>
+
+      <Divider sx={{ my: 2 }} />
+
+      <Typography variant="subtitle1" gutterBottom>Transcription Details:</Typography>
+      <Typography>Processing Time: {details.transcription?.transcription_processing_time}</Typography>
+
+      <Divider sx={{ my: 2 }} />
+
+      <Typography variant="subtitle1" gutterBottom>Total Processing:</Typography>
+      <Typography>Start Time: {new Date(details.total_processing_start_time).toLocaleString()}</Typography>
+      <Typography>End Time: {new Date(details.total_processing_end_time).toLocaleString()}</Typography>
+      <Typography>Processing Time: {details.total_processing_time}</Typography>
+      <Typography>Total Speed: {details.total_processing_speed}</Typography>
 
       {pollingCount > 60 && (
         <Box mt={2}>

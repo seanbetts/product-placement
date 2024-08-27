@@ -12,7 +12,7 @@ import ffmpeg
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from google.cloud import storage
 from google.oauth2 import service_account
@@ -20,6 +20,7 @@ from google.auth.transport.requests import AuthorizedSession
 from google.auth import default
 from dotenv import load_dotenv
 from io import BytesIO
+from typing import List
 import urllib3
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -156,7 +157,6 @@ async def get_processed_videos():
     logger.info(f"Returning {len(processed_videos)} processed videos")
     return processed_videos
 
-
 @app.get("/video-frame/{video_id}")
 async def get_video_frame(video_id: str):
     logger.info(f"Received request for first frame of video: {video_id}")
@@ -168,6 +168,72 @@ async def get_video_frame(video_id: str):
         return StreamingResponse(BytesIO(frame_data), media_type="image/jpeg")
     else:
         raise HTTPException(status_code=404, detail="First frame not found")
+    
+@app.get("/video/{video_id}")
+async def get_video_details(video_id: str):
+    logger.info(f"Received request for video details: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    status_blob = bucket.blob(f'{video_id}/status.json')
+
+    if status_blob.exists():
+        status_data = json.loads(status_blob.download_as_string())
+        return status_data
+    else:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+@app.get("/video/{video_id}/frames")
+async def get_video_frames(video_id: str) -> List[dict]:
+    logger.info(f"Received request for video frames: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    frames_prefix = f'{video_id}/frames/'
+    blobs = bucket.list_blobs(prefix=frames_prefix)
+    
+    frames = []
+    for blob in blobs:
+        frame_number = int(blob.name.split('/')[-1].split('.')[0])
+        if frame_number % 50 == 0:
+            frames.append({
+                "number": frame_number,
+                "url": blob.generate_signed_url(version="v4", expiration=3600, method="GET")
+            })
+    
+    return sorted(frames, key=lambda x: x["number"])
+
+@app.get("/video/{video_id}/transcript")
+async def get_transcript(video_id: str):
+    logger.info(f"Received request for video transcript: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    transcript_blob = bucket.blob(f'{video_id}/transcript.txt')
+
+    if transcript_blob.exists():
+        transcript = transcript_blob.download_as_text()
+        return {"transcript": transcript}
+    else:
+        raise HTTPException(status_code=404, detail="Transcript not found")
+
+@app.get("/video/{video_id}/download/{file_type}")
+async def download_file(video_id: str, file_type: str):
+    logger.info(f"Received download request for {file_type} of video: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    
+    if file_type == "video":
+        blob = bucket.blob(f'{video_id}/original.mp4')
+        filename = f"{video_id}_video.mp4"
+    elif file_type == "audio":
+        blob = bucket.blob(f'{video_id}/audio.mp3')
+        filename = f"{video_id}_audio.mp3"
+    elif file_type == "transcript":
+        blob = bucket.blob(f'{video_id}/transcript.txt')
+        filename = f"{video_id}_transcript.txt"
+    else:
+        raise HTTPException(status_code=400, detail="Invalid file type")
+
+    if blob.exists():
+        temp_file = tempfile.NamedTemporaryFile(delete=False)
+        blob.download_to_filename(temp_file.name)
+        return FileResponse(temp_file.name, media_type='application/octet-stream', filename=filename)
+    else:
+        raise HTTPException(status_code=404, detail=f"{file_type.capitalize()} not found")
 
 async def run_video_processing(video_id: str):
     try:
@@ -229,6 +295,7 @@ async def process_video(video_id: str):
             },
             "total_processing_start_time": datetime.datetime.fromtimestamp(total_start_time).isoformat(),
             "total_processing_end_time": datetime.datetime.fromtimestamp(total_end_time).isoformat(),
+            "total_processing_time": f"{(total_end_time - total_start_time):.2f} seconds",
             "total_processing_speed": f"{(float(video_stats['video_length'].split()[0]) / total_processing_time * 100):.1f}% of real-time"
         }
 

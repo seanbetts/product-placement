@@ -56,11 +56,12 @@ const VideoUpload = ({ onUploadSuccess }) => {
 
   const handleUpload = async () => {
     if (!file) return;
-  
+
     setUploading(true);
     setError(null);
     try {
       const response = await api.uploadVideo(file);
+      setUploadedVideoId(response.video_id);
       if (typeof onUploadSuccess === 'function') {
         onUploadSuccess(response.video_id);
       }
