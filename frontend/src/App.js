@@ -1,24 +1,35 @@
 import React from 'react';
-import { Container, Typography, Button } from '@mui/material';
-import Header from './components/Header';
+import { BrowserRouter as Router, Route, Routes, Link } from 'react-router-dom';
+import { AppBar, Toolbar, Typography, Container, Button } from '@mui/material';
+import VideoUploadPage from './components/VideoUploadPage';
+import VideoHistory from './components/VideoHistory';
 
 function App() {
   return (
-    <div className="App">
-      <Header />
+    <Router>
+      <AppBar position="static">
+        <Toolbar>
+          <Typography variant="h6" style={{ flexGrow: 1 }}>
+            Product Placement Detection
+          </Typography>
+          <Button color="inherit" component={Link} to="/">Home</Button>
+          <Button color="inherit" component={Link} to="/upload">Upload</Button>
+          <Button color="inherit" component={Link} to="/history">History</Button>
+        </Toolbar>
+      </AppBar>
       <Container>
-        <Typography variant="h5" sx={{ margin: '20px 0' }}>
-          Welcome to Product Placement Detection
-        </Typography>
-        <Button variant="contained" color="primary">
-          Upload Video (Coming Soon)
-        </Button>
-        <Typography variant="body1" sx={{ margin: '20px 0' }}>
-          Status: Frontend is running successfully!
-        </Typography>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/upload" element={<VideoUploadPage />} />
+          <Route path="/history" element={<VideoHistory />} />
+        </Routes>
       </Container>
-    </div>
+    </Router>
   );
+}
+
+function Home() {
+  return <h2>Welcome to Product Placement Detection</h2>;
 }
 
 export default App;
