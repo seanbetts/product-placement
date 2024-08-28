@@ -207,6 +207,53 @@ const VideoDetails = () => {
         ))}
       </Box>
 
+      <Box sx={{ mb: 4 }}>
+        <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Transcript</Typography>
+        <TextField
+            fullWidth
+            variant="outlined"
+            placeholder="Search transcript..."
+            value={searchTerm}
+            onChange={handleSearchChange}
+            sx={{ mb: 2 }}
+            InputProps={{
+            startAdornment: (
+                <InputAdornment position="start">
+                <SearchIcon />
+                </InputAdornment>
+            ),
+            }}
+        />
+        {filteredTranscript.length > 0 ? (
+            <TableContainer component={Paper} sx={{ maxHeight: 400, overflow: 'auto' }}>
+            <Table stickyHeader aria-label="transcript table">
+                <TableHead>
+                <TableRow>
+                    <TableCell>Start Time</TableCell>
+                    <TableCell>End Time</TableCell>
+                    <TableCell>Sentence</TableCell>
+                    <TableCell>Confidence</TableCell>
+                </TableRow>
+                </TableHead>
+                <TableBody>
+                {filteredTranscript.map((sentence, index) => (
+                    <TableRow key={index}>
+                    <TableCell>{formatTime(parseFloat(sentence.start_time))}</TableCell>
+                    <TableCell>{formatTime(parseFloat(sentence.end_time))}</TableCell>
+                    <TableCell>{highlightText(sentence.text, searchTerm)}</TableCell>
+                    <TableCell>{(sentence.confidence * 100).toFixed(2)}%</TableCell>
+                    </TableRow>
+                ))}
+                </TableBody>
+            </Table>
+            </TableContainer>
+        ) : (
+            <Typography>No matching transcript found</Typography>
+        )}
+      </Box>
+
+
+
       <Grid container spacing={3} sx={{ mb: 4 }}>
         <Grid item xs={12} md={4}>
           <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -261,49 +308,6 @@ const VideoDetails = () => {
           </Box>
         </Grid>
       </Grid>
-
-      <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Transcript</Typography>
-      <TextField
-        fullWidth
-        variant="outlined"
-        placeholder="Search transcript..."
-        value={searchTerm}
-        onChange={handleSearchChange}
-        sx={{ mb: 2 }}
-        InputProps={{
-          startAdornment: (
-            <InputAdornment position="start">
-              <SearchIcon />
-            </InputAdornment>
-          ),
-        }}
-      />
-      {filteredTranscript.length > 0 ? (
-        <TableContainer component={Paper} sx={{ maxHeight: 400, overflow: 'auto' }}>
-          <Table stickyHeader aria-label="transcript table">
-            <TableHead>
-              <TableRow>
-                <TableCell>Start Time</TableCell>
-                <TableCell>End Time</TableCell>
-                <TableCell>Sentence</TableCell>
-                <TableCell>Confidence</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filteredTranscript.map((sentence, index) => (
-                <TableRow key={index}>
-                  <TableCell>{formatTime(parseFloat(sentence.start_time))}</TableCell>
-                  <TableCell>{formatTime(parseFloat(sentence.end_time))}</TableCell>
-                  <TableCell>{highlightText(sentence.text, searchTerm)}</TableCell>
-                  <TableCell>{(sentence.confidence * 100).toFixed(2)}%</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      ) : (
-        <Typography>No matching transcript found</Typography>
-      )}
     </Box>
   );
 };
