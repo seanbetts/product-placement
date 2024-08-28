@@ -212,8 +212,8 @@ const VideoDetails = () => {
           <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             <Typography variant="h6" gutterBottom>Video Stats</Typography>
             <Typography>Length: {details.video_length || 'N/A'}</Typography>
-            <Typography>Total Frames: {videoData.total_frames || 'N/A'}</Typography>
-            <Typography>Extracted Frames: {videoData.extracted_frames || 'N/A'}</Typography>
+            <Typography>Total Frames: {videoData.total_frames.toLocaleString() || 'N/A'}</Typography>
+            <Typography>Extracted Frames: {videoData.extracted_frames.toLocaleString() || 'N/A'}</Typography>
             <Typography>Video FPS: {videoData.video_fps || 'N/A'}</Typography>
             <Typography>Processing Time: {videoData.video_processing_time || 'N/A'}</Typography>
             <Typography>Processing Speed: {videoData.video_processing_speed || 'N/A'}</Typography>
@@ -247,7 +247,7 @@ const VideoDetails = () => {
           <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             <Typography variant="h6" gutterBottom>Transcript Stats</Typography>
             <Typography>Processing Time: {transcriptionData.transcription_processing_time || 'N/A'}</Typography>
-            <Typography>Word Count {transcriptionData.word_count || 'N/A'}</Typography>
+            <Typography>Word Count {transcriptionData.word_count.toLocaleString() || 'N/A'}</Typography>
             <Typography>Confidence {transcriptionData.confidence || 'N/A'}</Typography>
             <Typography>Transcription Speed {transcriptionData.transcription_speed || 'N/A'}</Typography>
             <Box sx={{ flexGrow: 1 }} />

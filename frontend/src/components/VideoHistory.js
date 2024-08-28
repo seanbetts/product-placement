@@ -292,10 +292,10 @@ const VideoHistory = () => {
                   <Divider sx={{ my: 1 }} />
                   <Typography variant="subtitle2">Video:</Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Total Frames: {video.details.video.total_frames || 'N/A'}
+                    Total Frames: {video.details.video.total_frames.toLocaleString() || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Extracted Frames: {video.details.video.extracted_frames || 'N/A'}
+                    Extracted Frames: {video.details.video.extracted_frames.toLocaleString() || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
                     Video FPS: {video.details.video.video_fps || 'N/A'}
@@ -323,7 +323,7 @@ const VideoHistory = () => {
                     Processing Time: {video.details.transcription.transcription_processing_time || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Word Count {video.details.transcription.word_count || 'N/A'}
+                    Word Count {video.details.transcription.word_count.toLocaleString() || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
                     Confidence {video.details.transcription.confidence || 'N/A'}
