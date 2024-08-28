@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { 
   Typography, 
@@ -6,18 +6,29 @@ import {
   CircularProgress, 
   Grid, 
   Button, 
-  Skeleton 
+  Skeleton,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  TextField,
+  InputAdornment
 } from '@mui/material';
+import SearchIcon from '@mui/icons-material/Search';
 import api from '../services/api';
 
 const VideoDetails = () => {
   const { videoId } = useParams();
   const [videoDetails, setVideoDetails] = useState(null);
   const [frames, setFrames] = useState([]);
-  const [transcript, setTranscript] = useState('');
+  const [transcript, setTranscript] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [imagesLoaded, setImagesLoaded] = useState({});
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     const fetchVideoDetails = async () => {
@@ -31,7 +42,7 @@ const VideoDetails = () => {
         setImagesLoaded(framesData.reduce((acc, frame) => ({ ...acc, [frame.number]: false }), {}));
 
         const transcriptData = await api.getTranscript(videoId);
-        setTranscript(transcriptData.transcript);
+        setTranscript(transcriptData);
 
         setLoading(false);
       } catch (err) {
@@ -43,6 +54,73 @@ const VideoDetails = () => {
 
     fetchVideoDetails();
   }, [videoId]);
+
+  const formatTime = (seconds) => {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+  };
+
+  const sentenceTranscript = useMemo(() => {
+    if (!Array.isArray(transcript) || transcript.length === 0) {
+      return [];
+    }
+
+    let sentences = [];
+    let currentSentence = { words: [], start_time: null, end_time: null, totalConfidence: 0, totalLength: 0 };
+
+    transcript.forEach((word, index) => {
+      if (!currentSentence.start_time) {
+        currentSentence.start_time = word.start_time;
+      }
+      currentSentence.words.push(word.word);
+      currentSentence.totalConfidence += word.confidence * word.word.length;
+      currentSentence.totalLength += word.word.length;
+      currentSentence.end_time = word.end_time;
+
+      if (word.word.match(/[.!?]$/) || index === transcript.length - 1) {
+        sentences.push({
+          text: currentSentence.words.join(' '),
+          start_time: currentSentence.start_time,
+          end_time: currentSentence.end_time,
+          confidence: currentSentence.totalConfidence / currentSentence.totalLength
+        });
+        currentSentence = { words: [], start_time: null, end_time: null, totalConfidence: 0, totalLength: 0 };
+      }
+    });
+
+    return sentences;
+  }, [transcript]);
+
+  const highlightText = (text, highlight) => {
+    if (!highlight.trim()) {
+      return <span>{text}</span>;
+    }
+    const regex = new RegExp(`(${highlight})`, 'gi');
+    const parts = text.split(regex);
+    return (
+      <span>
+        {parts.filter(String).map((part, i) => 
+          regex.test(part) ? (
+            <mark key={i} style={{ backgroundColor: 'yellow', padding: 0 }}>{part}</mark>
+          ) : (
+            <span key={i}>{part}</span>
+          )
+        )}
+      </span>
+    );
+  };
+
+  const filteredTranscript = useMemo(() => {
+    if (!searchTerm) return sentenceTranscript;
+    return sentenceTranscript.filter(sentence => 
+      sentence.text.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [sentenceTranscript, searchTerm]);
+
+  const handleSearchChange = (event) => {
+    setSearchTerm(event.target.value);
+  };
 
   const handleDownload = async (fileType) => {
     try {
@@ -169,6 +247,9 @@ const VideoDetails = () => {
           <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             <Typography variant="h6" gutterBottom>Transcript Stats</Typography>
             <Typography>Processing Time: {transcriptionData.transcription_processing_time || 'N/A'}</Typography>
+            <Typography>Word Count {transcriptionData.word_count || 'N/A'}</Typography>
+            <Typography>Confidence {transcriptionData.confidence || 'N/A'}</Typography>
+            <Typography>Transcription Speed {transcriptionData.transcription_speed || 'N/A'}</Typography>
             <Box sx={{ flexGrow: 1 }} />
             <Button 
               variant="contained" 
@@ -182,9 +263,47 @@ const VideoDetails = () => {
       </Grid>
 
       <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Transcript</Typography>
-      <Box sx={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #ccc', p: 2 }}>
-        <Typography>{transcript}</Typography>
-      </Box>
+      <TextField
+        fullWidth
+        variant="outlined"
+        placeholder="Search transcript..."
+        value={searchTerm}
+        onChange={handleSearchChange}
+        sx={{ mb: 2 }}
+        InputProps={{
+          startAdornment: (
+            <InputAdornment position="start">
+              <SearchIcon />
+            </InputAdornment>
+          ),
+        }}
+      />
+      {filteredTranscript.length > 0 ? (
+        <TableContainer component={Paper} sx={{ maxHeight: 400, overflow: 'auto' }}>
+          <Table stickyHeader aria-label="transcript table">
+            <TableHead>
+              <TableRow>
+                <TableCell>Start Time</TableCell>
+                <TableCell>End Time</TableCell>
+                <TableCell>Sentence</TableCell>
+                <TableCell>Confidence</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {filteredTranscript.map((sentence, index) => (
+                <TableRow key={index}>
+                  <TableCell>{formatTime(parseFloat(sentence.start_time))}</TableCell>
+                  <TableCell>{formatTime(parseFloat(sentence.end_time))}</TableCell>
+                  <TableCell>{highlightText(sentence.text, searchTerm)}</TableCell>
+                  <TableCell>{(sentence.confidence * 100).toFixed(2)}%</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      ) : (
+        <Typography>No matching transcript found</Typography>
+      )}
     </Box>
   );
 };

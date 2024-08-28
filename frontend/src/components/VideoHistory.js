@@ -322,6 +322,15 @@ const VideoHistory = () => {
                   <Typography variant="body2" color="text.secondary">
                     Processing Time: {video.details.transcription.transcription_processing_time || 'N/A'}
                   </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Word Count {video.details.transcription.word_count || 'N/A'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Confidence {video.details.transcription.confidence || 'N/A'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Transcription Speed {video.details.transcription.transcription_speed || 'N/A'}
+                  </Typography>
                   <Divider sx={{ my: 1 }} />
                   <Typography variant="subtitle2">Total Processing:</Typography>
                   <Typography variant="body2" color="text.secondary">
