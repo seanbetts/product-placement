@@ -18,6 +18,8 @@ from google.cloud import storage
 from google.oauth2 import service_account
 from google.auth.transport.requests import AuthorizedSession
 from google.auth import default
+from google.cloud.speech_v2 import SpeechClient
+from google.cloud.speech_v2.types import cloud_speech
 from dotenv import load_dotenv
 from io import BytesIO
 from typing import List
@@ -44,6 +46,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+GCP_PROJECT_ID = os.getenv('GCP_PROJECT_ID')
 PROCESSING_BUCKET = os.getenv('PROCESSING_BUCKET')
 GOOGLE_APPLICATION_CREDENTIALS = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '20'))
@@ -201,13 +204,12 @@ async def get_video_frames(video_id: str) -> List[dict]:
 
 @app.get("/video/{video_id}/transcript")
 async def get_transcript(video_id: str):
-    logger.info(f"Received request for video transcript: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
-    transcript_blob = bucket.blob(f'{video_id}/transcript.txt')
-
+    transcript_blob = bucket.blob(f'{video_id}/transcripts/transcript.json')
+    
     if transcript_blob.exists():
-        transcript = transcript_blob.download_as_text()
-        return {"transcript": transcript}
+        transcript = json.loads(transcript_blob.download_as_string())
+        return transcript
     else:
         raise HTTPException(status_code=404, detail="Transcript not found")
 
@@ -223,7 +225,7 @@ async def download_file(video_id: str, file_type: str):
         blob = bucket.blob(f'{video_id}/audio.mp3')
         filename = f"{video_id}_audio.mp3"
     elif file_type == "transcript":
-        blob = bucket.blob(f'{video_id}/transcript.txt')
+        blob = bucket.blob(f'{video_id}/transcripts/transcript.txt')
         filename = f"{video_id}_transcript.txt"
     else:
         raise HTTPException(status_code=400, detail="Invalid file type")
@@ -268,11 +270,12 @@ async def process_video(video_id: str):
 
         # Start transcription only after audio extraction is complete
         transcription_start_time = time.time()
-        await transcribe_audio(video_id, bucket)
+        transcription_stats = await transcribe_audio(video_id, bucket, float(video_stats['video_length'].split()[0]))
         transcription_processing_time = time.time() - transcription_start_time
 
         total_end_time = time.time()
         total_processing_time = total_end_time - total_start_time
+        
 
         stats = {
             "video_id": video_id,
@@ -291,7 +294,10 @@ async def process_video(video_id: str):
                 "audio_processing_speed": f"{audio_stats['audio_processing_speed']:.1f}% of real-time",
             },
             "transcription": {
-                "transcription_processing_time": f"{transcription_processing_time:.2f} seconds",
+                "transcription_processing_time": f"{transcription_stats['transcription_time']:.2f} seconds",
+                "word_count": transcription_stats['word_count'],
+                "confidence": f"{transcription_stats['overall_confidence']:.1f}%",
+                "transcription_speed": f"{transcription_stats['transcription_speed']:.1f}% of real-time"
             },
             "total_processing_start_time": datetime.datetime.fromtimestamp(total_start_time).isoformat(),
             "total_processing_end_time": datetime.datetime.fromtimestamp(total_end_time).isoformat(),
@@ -433,41 +439,137 @@ async def extract_audio(video_path: str, video_id: str, bucket: storage.Bucket):
         "audio_processing_speed": 0
     }
 
-async def transcribe_audio(video_id: str, bucket: storage.Bucket):
+async def transcribe_audio(video_id: str, bucket: storage.Bucket, video_length: float):
     logger.info(f"Transcribing audio for video: {video_id}")
     audio_blob = bucket.blob(f'{video_id}/audio.mp3')
-    
-    # Wait for the audio file to be available (with a timeout)
-    start_time = time.time()
-    while not audio_blob.exists():
-        await asyncio.sleep(1)
-        if time.time() - start_time > 300:  # 5 minutes timeout
-            logger.error(f"Timeout waiting for audio file for video {video_id}")
-            return
 
     if not audio_blob.exists():
         logger.warning(f"Audio file not found for video: {video_id}")
-        return
-
-    # Download audio file
-    audio_path = f"/tmp/{video_id}_audio.mp3"
-    audio_blob.download_to_filename(audio_path)
+        return None
 
     try:
-        # This is a placeholder for your actual transcription service call
-        # Replace this with your actual transcription service API call
-        await asyncio.sleep(5)  # Simulating transcription time
-        transcript = "This is a placeholder transcript."
+        # Instantiate the Speech client
+        speech_client = SpeechClient()
 
-        # Upload transcript
-        transcript_blob = bucket.blob(f'{video_id}/transcript.txt')
-        transcript_blob.upload_from_string(transcript)
-        logger.info(f"Transcript uploaded for video: {video_id}")
+        # Set up the recognition config
+        config = cloud_speech.RecognitionConfig(
+            auto_decoding_config={},
+            features=cloud_speech.RecognitionFeatures(
+                enable_word_confidence=True,
+                enable_word_time_offsets=True,
+                enable_automatic_punctuation=True,
+            ),
+            model="long",
+            language_codes=["en-US"],
+        )
+
+        # Set up the audio file metadata
+        audio_gcs_uri = f"gs://{PROCESSING_BUCKET}/{video_id}/audio.mp3"
+        files = [cloud_speech.BatchRecognizeFileMetadata(uri=audio_gcs_uri)]
+
+        # Set up the output config
+        output_config = cloud_speech.RecognitionOutputConfig(
+            gcs_output_config=cloud_speech.GcsOutputConfig(
+                uri=f"gs://{PROCESSING_BUCKET}/{video_id}/transcripts/"
+            ),
+        )
+
+        # Create the batch recognition request
+        request = cloud_speech.BatchRecognizeRequest(
+            recognizer=f"projects/{GCP_PROJECT_ID}/locations/global/recognizers/_",
+            config=config,
+            files=files,
+            recognition_output_config=output_config,
+        )
+
+        # Start the batch recognition operation
+        transcription_start_time = time.time()
+        operation = speech_client.batch_recognize(request=request)
+        logger.info(f"Started batch recognition for video {video_id}")
+
+        # Wait for the operation to complete with a timeout of 2x video length
+        timeout = video_length * 2
+        response = await asyncio.to_thread(operation.result, timeout=timeout)
+        transcription_end_time = time.time()
+        logger.info(f"Batch recognition completed for video {video_id}")
+
+        # Process the response and create transcripts
+        plain_transcript, json_transcript, word_count, overall_confidence = await process_transcription_response(bucket, video_id)
+
+        # Upload plain transcript
+        plain_transcript_blob = bucket.blob(f'{video_id}/transcripts/transcript.txt')
+        plain_transcript_blob.upload_from_string(plain_transcript)
+
+        # Upload JSON transcript
+        json_transcript_blob = bucket.blob(f'{video_id}/transcripts/transcript.json')
+        json_transcript_blob.upload_from_string(json.dumps(json_transcript, indent=2))
+
+        logger.info(f"Transcripts uploaded for video: {video_id}")
+
+        logger.info(f"Video length: {video_length}")
+
+        # Calculate transcription stats
+        transcription_time = transcription_end_time - transcription_start_time
+        transcription_speed = (video_length / transcription_time) * 100 if transcription_time > 0 else 0
+        overall_confidence = overall_confidence * 100
+
+        return {
+            "word_count": word_count,
+            "transcription_time": transcription_time,
+            "transcription_speed": transcription_speed,
+            "overall_confidence": overall_confidence
+        }
+
     except Exception as e:
-        logger.error(f"Error transcribing audio for video {video_id}: {str(e)}")
-    finally:
-        if os.path.exists(audio_path):
-            os.remove(audio_path)
+        logger.error(f"Error transcribing audio for video {video_id}: {str(e)}", exc_info=True)
+        return None
+
+async def process_transcription_response(bucket: storage.Bucket, video_id: str):
+    plain_transcript = ""
+    json_transcript = []
+    word_count = 0
+    total_confidence = 0
+
+    try:
+        # Find the transcript JSON file
+        transcript_blobs = list(bucket.list_blobs(prefix=f"{video_id}/transcripts/audio_transcript_"))
+        if not transcript_blobs:
+            raise FileNotFoundError(f"No transcript file found for video {video_id}")
+        
+        transcript_blob = transcript_blobs[0]
+        transcript_content = transcript_blob.download_as_text()
+        transcript_data = json.loads(transcript_content)
+
+        for result in transcript_data.get('results', []):
+            for alternative in result.get('alternatives', []):
+                transcript = alternative.get('transcript', '')
+                plain_transcript += transcript + " "
+
+                for word in alternative.get('words', []):
+                    word_count += 1
+                    confidence = word.get('confidence', 0)
+                    total_confidence += confidence
+                    json_transcript.append({
+                        "start_time": word.get('startOffset', '0s').rstrip('s'),
+                        "end_time": word.get('endOffset', '0s').rstrip('s'),
+                        "word": word.get('word', ''),
+                        "confidence": confidence
+                    })
+
+        # Clean up the plain transcript
+        plain_transcript = plain_transcript.strip()
+
+        # Calculate overall confidence score
+        overall_confidence = total_confidence / word_count if word_count > 0 else 0
+
+    except Exception as e:
+        logger.error(f"Error processing transcription response for video {video_id}: {str(e)}", exc_info=True)
+        plain_transcript = "Error processing transcription."
+        json_transcript = []
+        word_count = 0
+        overall_confidence = 0
+
+    return plain_transcript, json_transcript, word_count, overall_confidence
 
 def process_batch(batch, video_id, bucket):
     try:

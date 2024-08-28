@@ -2,6 +2,7 @@ fastapi
 uvicorn
 gunicorn
 google-cloud-storage
+google-cloud-speech
 torch
 torchvision
 opencv-python-headless
