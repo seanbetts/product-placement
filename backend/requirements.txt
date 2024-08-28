@@ -3,6 +3,7 @@ uvicorn
 gunicorn
 google-cloud-storage
 google-cloud-speech
+google-cloud-vision
 torch
 torchvision
 opencv-python-headless

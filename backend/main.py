@@ -15,6 +15,7 @@ from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from google.cloud import storage
+from google.cloud import vision
 from google.oauth2 import service_account
 from google.auth.transport.requests import AuthorizedSession
 from google.auth import default
@@ -51,7 +52,7 @@ PROCESSING_BUCKET = os.getenv('PROCESSING_BUCKET')
 GOOGLE_APPLICATION_CREDENTIALS = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '20'))
 FRAME_INTERVAL = int(os.getenv('FRAME_INTERVAL', '1'))
-STATUS_UPDATE_INTERVAL = int(os.getenv('STATUS_UPDATE_INTERVAL', '10'))
+STATUS_UPDATE_INTERVAL = int(os.getenv('STATUS_UPDATE_INTERVAL', '5'))
 MAX_WORKERS = int(os.getenv('MAX_WORKERS', '10'))
 
 # Custom transport with larger connection pool
@@ -82,6 +83,60 @@ try:
 except Exception as e:
     logger.error(f"Error setting up Google Cloud Storage client: {str(e)}")
     raise
+
+# Set up Google Cloud Vision client
+vision_client = vision.ImageAnnotatorClient()
+
+# Increase the connection pool size
+urllib3.PoolManager(num_pools=50, maxsize=50)
+
+import asyncio
+import time
+from typing import Dict, Any
+
+class StatusTracker:
+    def __init__(self, video_id: str):
+        self.video_id = video_id
+        self.start_time = time.time()
+        self.status: Dict[str, Any] = {
+            "video_id": video_id,
+            "status": "processing",
+            "progress": 0,
+            "video_processing": {"status": "pending", "progress": 0},
+            "audio_extraction": {"status": "pending", "progress": 0},
+            "transcription": {"status": "pending", "progress": 0},
+            "ocr": {"status": "pending", "progress": 0}
+        }
+        self.process_events = {
+            "video_processing": asyncio.Event(),
+            "audio_extraction": asyncio.Event(),
+            "transcription": asyncio.Event(),
+            "ocr": asyncio.Event()
+        }
+
+    def update_process_status(self, process: str, status: str, progress: float):
+        self.status[process]["status"] = status
+        self.status[process]["progress"] = progress
+        if status == "complete":
+            self.process_events[process].set()
+
+    def calculate_overall_progress(self):
+        total_progress = sum(self.status[process]["progress"] for process in self.process_events)
+        self.status["progress"] = total_progress / len(self.process_events)
+
+    async def wait_for_completion(self):
+        await asyncio.gather(*[event.wait() for event in self.process_events.values()])
+        self.status["status"] = "complete"
+
+    def get_status(self):
+        elapsed_time = time.time() - self.start_time
+        self.status["elapsed_time"] = f"{elapsed_time:.2f} seconds"
+        return self.status
+
+    def update_gcs_status(self, bucket: storage.Bucket):
+        status_blob = bucket.blob(f'{self.video_id}/status.json')
+        current_status = self.get_status()
+        status_blob.upload_from_string(json.dumps(current_status), content_type='application/json')
 
 @app.get("/health")
 async def health_check():
@@ -237,22 +292,43 @@ async def download_file(video_id: str, file_type: str):
     else:
         raise HTTPException(status_code=404, detail=f"{file_type.capitalize()} not found")
 
+@app.get("/video/{video_id}/ocr")
+async def get_ocr_results(video_id: str):
+    logger.info(f"Received request for OCR results of video: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    ocr_blob = bucket.blob(f'{video_id}/ocr_results.json')
+
+    if ocr_blob.exists():
+        ocr_results = json.loads(ocr_blob.download_as_string())
+        return ocr_results
+    else:
+        raise HTTPException(status_code=404, detail="OCR results not found")
+    
+@app.get("/video/{video_id}/processing-stats")
+async def get_processing_stats(video_id: str):
+    logger.info(f"Received request for processing stats of video: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
+
+    if stats_blob.exists():
+        stats = json.loads(stats_blob.download_as_string())
+        return stats
+    else:
+        raise HTTPException(status_code=404, detail="Processing stats not found")
+
 async def run_video_processing(video_id: str):
     try:
         await process_video(video_id)
     except Exception as e:
         logger.error(f"Error processing video {video_id}: {str(e)}", exc_info=True)
-        update_status(video_id, "error", {"error": str(e)})
 
 async def process_video(video_id: str):
     logger.info(f"Starting to process video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
     video_blob = bucket.blob(f'{video_id}/original.mp4')
 
-    update_status(video_id, "processing", {
-        "video_id": video_id,
-        "total_processing_start_time": datetime.datetime.now().isoformat()
-    })
+    status_tracker = StatusTracker(video_id)
+    status_tracker.update_gcs_status(bucket)
 
     with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_video:
         video_blob.download_to_filename(temp_video.name)
@@ -260,24 +336,37 @@ async def process_video(video_id: str):
 
     try:
         total_start_time = time.time()
+        
+        # Start status update task
+        status_update_task = asyncio.create_task(periodic_status_update(video_id, status_tracker, bucket))
 
         # Run video frame processing and audio extraction in parallel
-        video_task = asyncio.create_task(process_video_frames(temp_video_path, video_id, bucket))
-        audio_task = asyncio.create_task(extract_audio(temp_video_path, video_id, bucket))
+        video_task = asyncio.create_task(process_video_frames(temp_video_path, video_id, bucket, status_tracker))
+        audio_task = asyncio.create_task(extract_audio(temp_video_path, video_id, bucket, status_tracker))
 
         # Wait for both tasks to complete
         video_stats, audio_stats = await asyncio.gather(video_task, audio_task)
 
         # Start transcription only after audio extraction is complete
         transcription_start_time = time.time()
-        transcription_stats = await transcribe_audio(video_id, bucket, float(video_stats['video_length'].split()[0]))
+        transcription_stats = await transcribe_audio(video_id, bucket, float(video_stats['video_length'].split()[0]), status_tracker)
         transcription_processing_time = time.time() - transcription_start_time
+
+        # Start OCR processing
+        ocr_start_time = time.time()
+        ocr_stats = await process_ocr(video_id, bucket, status_tracker)
+        ocr_processing_time = time.time() - ocr_start_time
+
+        # Wait for all processes to complete
+        await status_tracker.wait_for_completion()
+
+        # Cancel the status update task
+        status_update_task.cancel()
 
         total_end_time = time.time()
         total_processing_time = total_end_time - total_start_time
-        
 
-        stats = {
+        processing_stats = {
             "video_id": video_id,
             "video_length": video_stats['video_length'],
             "video": {
@@ -299,24 +388,110 @@ async def process_video(video_id: str):
                 "confidence": f"{transcription_stats['overall_confidence']:.1f}%",
                 "transcription_speed": f"{transcription_stats['transcription_speed']:.1f}% of real-time"
             },
+            "ocr": {
+                "ocr_processing_time": ocr_stats['ocr_processing_time'],
+                "frames_processed": ocr_stats['frames_processed'],
+                "frames_with_text": ocr_stats['frames_with_text'],
+            },
             "total_processing_start_time": datetime.datetime.fromtimestamp(total_start_time).isoformat(),
             "total_processing_end_time": datetime.datetime.fromtimestamp(total_end_time).isoformat(),
-            "total_processing_time": f"{(total_end_time - total_start_time):.2f} seconds",
+            "total_processing_time": f"{total_processing_time:.2f} seconds",
             "total_processing_speed": f"{(float(video_stats['video_length'].split()[0]) / total_processing_time * 100):.1f}% of real-time"
         }
 
-        update_status(video_id, "complete", stats)
+        # Save processing stats to a new file
+        stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
+        stats_blob.upload_from_string(json.dumps(processing_stats, indent=2), content_type='application/json')
+
+        # Update final status
+        status_tracker.status["status"] = "complete"
+        status_tracker.update_gcs_status(bucket)
 
         logger.info(f"Completed processing video: {video_id}")
         logger.info(f"Total processing time: {total_processing_time:.2f} seconds")
 
     except Exception as e:
         logger.error(f"Error processing video {video_id}: {str(e)}", exc_info=True)
-        update_status(video_id, "error", {"error": str(e)})
+        status_tracker.status["status"] = "error"
+        status_tracker.status["error"] = str(e)
+        status_tracker.update_gcs_status(bucket)
     finally:
         os.unlink(temp_video_path)
 
-async def process_video_frames(video_path: str, video_id: str, bucket: storage.Bucket):
+async def periodic_status_update(video_id: str, status_tracker: StatusTracker, bucket: storage.Bucket):
+    while True:
+        status_tracker.calculate_overall_progress()
+        status_tracker.update_gcs_status(bucket)
+        await asyncio.sleep(STATUS_UPDATE_INTERVAL)
+
+async def process_ocr(video_id: str, bucket: storage.Bucket, status_tracker: StatusTracker):
+    logger.info(f"Starting OCR processing for video: {video_id}")
+    status_tracker.update_process_status("ocr", "in_progress", 0)
+
+    ocr_start_time = time.time()
+    frame_blobs = list(bucket.list_blobs(prefix=f'{video_id}/frames/'))
+    total_frames = len(frame_blobs)
+
+    ocr_results = []
+    processed_frames = 0
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = []
+        for frame_blob in frame_blobs:
+            frame_number = int(frame_blob.name.split('/')[-1].split('.')[0])
+            future = executor.submit(process_single_frame_ocr, frame_blob, video_id, frame_number)
+            futures.append(future)
+
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            if result:
+                ocr_results.append(result)
+
+            processed_frames += 1
+            progress = (processed_frames / total_frames) * 100
+            status_tracker.update_process_status("ocr", "in_progress", progress)
+
+    # Sort OCR results by frame number
+    ocr_results.sort(key=lambda x: x['frame_number'])
+
+    # Store OCR results
+    ocr_blob = bucket.blob(f'{video_id}/ocr_results.json')
+    ocr_blob.upload_from_string(json.dumps(ocr_results), content_type='application/json')
+
+    ocr_processing_time = time.time() - ocr_start_time
+    frames_with_text = len(ocr_results)
+
+    ocr_stats = {
+        "ocr_processing_time": f"{ocr_processing_time:.2f} seconds",
+        "frames_processed": total_frames,
+        "frames_with_text": frames_with_text,
+    }
+
+    status_tracker.update_process_status("ocr", "complete", 100)
+
+    return ocr_stats
+
+def process_single_frame_ocr(frame_blob, video_id, frame_number):
+    try:
+        image = vision.Image(source=vision.ImageSource(gcs_image_uri=f"gs://{PROCESSING_BUCKET}/{frame_blob.name}"))
+        response = vision_client.text_detection(image=image)
+        texts = response.text_annotations
+
+        if texts:
+            extracted_text = texts[0].description
+            return {
+                "frame_number": frame_number,
+                "text": extracted_text
+            }
+        else:
+            logger.info(f"No text found in frame {frame_number}")
+            return None
+
+    except Exception as e:
+        logger.error(f"Error processing OCR for frame {frame_number}: {str(e)}")
+        return None
+
+async def process_video_frames(video_path: str, video_id: str, bucket: storage.Bucket, status_tracker: StatusTracker):
     start_time = time.time()
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -326,6 +501,8 @@ async def process_video_frames(video_path: str, video_id: str, bucket: storage.B
     frame_number = 0
     batches = []
     current_batch = []
+
+    status_tracker.update_process_status("video_processing", "in_progress", 0)
 
     while True:
         ret, frame = cap.read()
@@ -343,26 +520,22 @@ async def process_video_frames(video_path: str, video_id: str, bucket: storage.B
 
         frame_number += 1
 
-        if frame_number % (STATUS_UPDATE_INTERVAL * int(fps)) == 0:
-            progress = (frame_number / frame_count) * 100
-            update_status(video_id, "processing", {
-                "video": {
-                    "progress": f"{progress:.2f}%",
-                    "frames_processed": f'{frame_number} frames of {frame_count} total frames',
-                }
-            })
+        progress = (frame_number / frame_count) * 100
+        status_tracker.update_process_status("video_processing", "in_progress", progress)
 
     cap.release()
 
     # Process batches in parallel
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(process_batch, batch, video_id, bucket) for batch in batches]
-        await asyncio.get_event_loop().run_in_executor(None, concurrent.futures.wait, futures)
+        frame_futures = [executor.submit(process_batch, batch, video_id, bucket) for batch in batches]
+        await asyncio.get_event_loop().run_in_executor(None, concurrent.futures.wait, frame_futures)
 
     processing_time = time.time() - start_time
     extracted_frames = frame_number // FRAME_INTERVAL
     processing_fps = extracted_frames / processing_time
     processing_speed = (processing_fps / fps) * 100
+
+    status_tracker.update_process_status("video_processing", "complete", 100)
 
     return {
         "video_length": f'{duration:.1f} seconds',
@@ -374,10 +547,12 @@ async def process_video_frames(video_path: str, video_id: str, bucket: storage.B
         "video_processing_speed": processing_speed
     }
 
-async def extract_audio(video_path: str, video_id: str, bucket: storage.Bucket):
+async def extract_audio(video_path: str, video_id: str, bucket: storage.Bucket, status_tracker: StatusTracker):
     logger.info(f"Extracting audio for video: {video_id}")
     audio_path = f"/tmp/{video_id}_audio.mp3"
     start_time = time.time()
+    status_tracker.update_process_status("audio_extraction", "in_progress", 0)
+
     try:
         command = [
             'ffmpeg',
@@ -399,7 +574,7 @@ async def extract_audio(video_path: str, video_id: str, bucket: storage.Bucket):
         audio_blob = bucket.blob(f'{video_id}/audio.mp3')
         audio_blob.upload_from_filename(audio_path)
         logger.info(f"Audio extracted and uploaded for video: {video_id}")
-        
+
         # Extract audio duration using ffprobe
         duration_command = [
             'ffprobe', 
@@ -415,10 +590,12 @@ async def extract_audio(video_path: str, video_id: str, bucket: storage.Bucket):
         )
         stdout, stderr = await duration_process.communicate()
         audio_duration = float(stdout.decode().strip())
-        
+
         processing_time = time.time() - start_time
         processing_speed = (audio_duration / processing_time) * 100
-        
+
+        status_tracker.update_process_status("audio_extraction", "complete", 100)
+
         return {
             "audio_length": f"{audio_duration:.2f} seconds",
             "audio_processing_time": processing_time,
@@ -427,24 +604,29 @@ async def extract_audio(video_path: str, video_id: str, bucket: storage.Bucket):
     except subprocess.CalledProcessError as e:
         logger.error(f"FFmpeg error extracting audio for video {video_id}: {str(e)}")
         logger.error(f"FFmpeg stderr: {e.stderr}")
+        status_tracker.update_process_status("audio_extraction", "error", 0)
     except Exception as e:
         logger.error(f"Unexpected error extracting audio for video {video_id}: {str(e)}", exc_info=True)
+        status_tracker.update_process_status("audio_extraction", "error", 0)
     finally:
         if os.path.exists(audio_path):
             os.remove(audio_path)
-    
+
     return {
         "audio_length": "Unknown",
         "audio_processing_time": time.time() - start_time,
         "audio_processing_speed": 0
     }
 
-async def transcribe_audio(video_id: str, bucket: storage.Bucket, video_length: float):
+async def transcribe_audio(video_id: str, bucket: storage.Bucket, video_length: float, status_tracker: StatusTracker):
     logger.info(f"Transcribing audio for video: {video_id}")
     audio_blob = bucket.blob(f'{video_id}/audio.mp3')
 
+    status_tracker.update_process_status("transcription", "in_progress", 0)
+
     if not audio_blob.exists():
         logger.warning(f"Audio file not found for video: {video_id}")
+        status_tracker.update_process_status("transcription", "error", 0)
         return None
 
     try:
@@ -489,7 +671,13 @@ async def transcribe_audio(video_id: str, bucket: storage.Bucket, video_length: 
 
         # Wait for the operation to complete with a timeout of 2x video length
         timeout = video_length * 2
-        response = await asyncio.to_thread(operation.result, timeout=timeout)
+        while not operation.done():
+            await asyncio.sleep(5)
+            elapsed_time = time.time() - transcription_start_time
+            progress = min(100, (elapsed_time / timeout) * 100)
+            status_tracker.update_process_status("transcription", "in_progress", progress)
+
+        response = operation.result()
         transcription_end_time = time.time()
         logger.info(f"Batch recognition completed for video {video_id}")
 
@@ -506,12 +694,12 @@ async def transcribe_audio(video_id: str, bucket: storage.Bucket, video_length: 
 
         logger.info(f"Transcripts uploaded for video: {video_id}")
 
-        logger.info(f"Video length: {video_length}")
-
         # Calculate transcription stats
         transcription_time = transcription_end_time - transcription_start_time
         transcription_speed = (video_length / transcription_time) * 100 if transcription_time > 0 else 0
         overall_confidence = overall_confidence * 100
+
+        status_tracker.update_process_status("transcription", "complete", 100)
 
         return {
             "word_count": word_count,
@@ -522,6 +710,7 @@ async def transcribe_audio(video_id: str, bucket: storage.Bucket, video_length: 
 
     except Exception as e:
         logger.error(f"Error transcribing audio for video {video_id}: {str(e)}", exc_info=True)
+        status_tracker.update_process_status("transcription", "error", 0)
         return None
 
 async def process_transcription_response(bucket: storage.Bucket, video_id: str):
@@ -586,26 +775,6 @@ def process_batch(batch, video_id, bucket):
         
     except Exception as e:
         logger.error(f"Error processing batch for video {video_id}: {str(e)}")
-
-def update_status(video_id: str, status: str, details: dict):
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    status_blob = bucket.blob(f'{video_id}/status.json')
-    
-    # Read existing status if it exists
-    if status_blob.exists():
-        existing_status = json.loads(status_blob.download_as_string())
-    else:
-        existing_status = {"details": {}}
-    
-    # Update status and last_updated
-    existing_status["status"] = status
-    existing_status["last_updated"] = datetime.datetime.utcnow().isoformat()
-    
-    # Update details
-    existing_status["details"].update(details)
-    
-    # Upload updated status
-    status_blob.upload_from_string(json.dumps(existing_status), content_type='application/json')
 
 if __name__ == "__main__":
     import uvicorn

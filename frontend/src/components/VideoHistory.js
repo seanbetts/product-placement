@@ -44,19 +44,19 @@ const VideoHistory = () => {
 
   const filterAndSortVideos = useCallback(() => {
     let result = videos.filter(video => 
-      video.details.video_id.toLowerCase().includes(searchTerm.toLowerCase()) &&
-      (!startDate || new Date(video.details.total_processing_end_time) >= startDate) &&
-      (!endDate || new Date(video.details.total_processing_end_time) <= endDate)
+      video.video_id.toLowerCase().includes(searchTerm.toLowerCase()) &&
+      (!startDate || new Date(video.total_processing_end_time) >= startDate) &&
+      (!endDate || new Date(video.total_processing_end_time) <= endDate)
     );
 
     result.sort((a, b) => {
       let comparison = 0;
       switch (sortCriteria) {
         case 'date':
-          comparison = new Date(b.details.total_processing_end_time).getTime() - new Date(a.details.total_processing_end_time).getTime();
+          comparison = new Date(b.total_processing_end_time).getTime() - new Date(a.total_processing_end_time).getTime();
           break;
         case 'length':
-          comparison = parseFloat(b.details.video_length) - parseFloat(a.details.video_length);
+          comparison = parseFloat(b.video_length) - parseFloat(a.video_length);
           break;
         default:
           comparison = 0;
@@ -70,13 +70,18 @@ const VideoHistory = () => {
   useEffect(() => {
     const fetchVideos = async () => {
       try {
-        const data = await api.getProcessedVideos();
-        console.log('Fetched videos:', data);
+        const processedVideos = await api.getProcessedVideos();
+        console.log('Fetched videos:', processedVideos);
 
-        // Sort videos by processing date and time in descending order
-        const sortedVideos = data.sort((a, b) => {
-          const dateA = new Date(a.details.total_processing_end_time).getTime();
-          const dateB = new Date(b.details.total_processing_end_time).getTime();
+        const videoDetailsPromises = processedVideos.map(video => 
+          api.getProcessingStats(video.video_id)
+        );
+
+        const videoDetails = await Promise.all(videoDetailsPromises);
+
+        const sortedVideos = videoDetails.sort((a, b) => {
+          const dateA = new Date(a.total_processing_end_time).getTime();
+          const dateB = new Date(b.total_processing_end_time).getTime();
           return dateB - dateA;
         });
 
@@ -257,9 +262,9 @@ const VideoHistory = () => {
                 <CardMedia
                   component="img"
                   height="140"
-                  image={`${process.env.REACT_APP_API_URL}/video-frame/${video.details.video_id}`}
-                  alt={`First frame of video ${video.details.video_id}`}
-                  onClick={() => handleCardClick(video.details.video_id)}
+                  image={`${process.env.REACT_APP_API_URL}/video-frame/${video.video_id}`}
+                  alt={`First frame of video ${video.video_id}`}
+                  onClick={() => handleCardClick(video.video_id)}
                   sx={{
                     cursor: 'pointer',
                     display: imagesLoaded[video.video_id] ? 'block' : 'none'
@@ -269,13 +274,13 @@ const VideoHistory = () => {
               </Box>
               <CardContent>
                 <Typography variant="h6" component="div" noWrap>
-                  {video.details.video_id}
+                  {video.video_id}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Length: {video.details.video_length || 'N/A'}
+                  Length: {video.video_length || 'N/A'}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Processed: {formatDate(new Date(video.details.total_processing_end_time))}
+                  Processed: {formatDate(video.total_processing_end_time)}
                 </Typography>
                 <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
                   <Button
@@ -292,58 +297,69 @@ const VideoHistory = () => {
                   <Divider sx={{ my: 1 }} />
                   <Typography variant="subtitle2">Video:</Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Total Frames: {video.details.video.total_frames.toLocaleString() || 'N/A'}
+                    Total Frames: {video.video.total_frames.toLocaleString() || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Extracted Frames: {video.details.video.extracted_frames.toLocaleString() || 'N/A'}
+                    Extracted Frames: {video.video.extracted_frames.toLocaleString() || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Video FPS: {video.details.video.video_fps || 'N/A'}
+                    Video FPS: {video.video.video_fps || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Processing Time: {video.details.video.video_processing_time || 'N/A'}
+                    Processing Time: {video.video.video_processing_time || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Processing Speed: {video.details.video.video_processing_speed || 'N/A'}
+                    Processing Speed: {video.video.video_processing_speed || 'N/A'}
                   </Typography>
                   <Divider sx={{ my: 1 }} />
                   <Typography variant="subtitle2">Audio:</Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Length: {video.details.audio.audio_length || 'N/A'}
+                    Length: {video.audio.audio_length || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Processing Time: {video.details.audio.audio_processing_time || 'N/A'}
+                    Processing Time: {video.audio.audio_processing_time || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Processing Speed: {video.details.audio.audio_processing_speed || 'N/A'}
+                    Processing Speed: {video.audio.audio_processing_speed || 'N/A'}
                   </Typography>
                   <Divider sx={{ my: 1 }} />
                   <Typography variant="subtitle2">Transcription:</Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Processing Time: {video.details.transcription.transcription_processing_time || 'N/A'}
+                    Processing Time: {video.transcription.transcription_processing_time || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Word Count {video.details.transcription.word_count.toLocaleString() || 'N/A'}
+                    Word Count: {video.transcription.word_count.toLocaleString() || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Confidence {video.details.transcription.confidence || 'N/A'}
+                    Confidence: {video.transcription.confidence || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Transcription Speed {video.details.transcription.transcription_speed || 'N/A'}
+                    Transcription Speed: {video.transcription.transcription_speed || 'N/A'}
+                  </Typography>
+                  <Divider sx={{ my: 1 }} />
+                  <Typography variant="subtitle2">OCR:</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Processing Time: {video.ocr.ocr_processing_time || 'N/A'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Frames Processed: {video.ocr.frames_processed.toLocaleString() || 'N/A'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Frames with Text: {video.ocr.frames_with_text.toLocaleString() || 'N/A'}
                   </Typography>
                   <Divider sx={{ my: 1 }} />
                   <Typography variant="subtitle2">Total Processing:</Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Start Time: {new Date(video.details.total_processing_start_time).toLocaleString()}
+                    Start Time: {formatDate(video.total_processing_start_time)}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    End Time: {new Date(video.details.total_processing_end_time).toLocaleString()}
+                    End Time: {formatDate(video.total_processing_end_time)}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Processing Time: {video.details.total_processing_time || 'N/A'}
+                    Processing Time: {video.total_processing_time || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Processing Speed: {video.details.total_processing_speed || 'N/A'}
+                    Processing Speed: {video.total_processing_speed || 'N/A'}
                   </Typography>
                 </CardContent>
               </Collapse>
