@@ -337,7 +337,7 @@ const VideoHistory = () => {
                     Transcription Speed: {video.transcription.transcription_speed || 'N/A'}
                   </Typography>
                   <Divider sx={{ my: 1 }} />
-                  <Typography variant="subtitle2">OCR:</Typography>
+                  <Typography variant="subtitle2">Text Detection:</Typography>
                   <Typography variant="body2" color="text.secondary">
                     Processing Time: {video.ocr.ocr_processing_time || 'N/A'}
                   </Typography>

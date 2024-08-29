@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { 
   Typography, 
@@ -15,111 +15,56 @@ import {
   TableRow,
   Paper,
   TextField,
-  InputAdornment,
-  Alert
+  InputAdornment
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
-import * as d3 from 'd3';
-import cloud from 'd3-cloud';
 import api from '../services/api';
+import TextDetectionSection from './TextDetectionSection';
 
-const WordCloud = ({ words }) => {
-    const canvasRef = useRef(null);
-  
-    useEffect(() => {
-      if (words.length === 0) return;
-  
-      const width = 800;
-      const height = 400;
-      const padding = 2;
-  
-      const fontSize = d3.scaleLinear()
-        .domain([d3.min(words, d => d.value), d3.max(words, d => d.value)])
-        .range([15, 80]);  // Adjust min and max font sizes as needed
-  
-      const layout = cloud()
-        .size([width - padding * 2, height - padding * 2])
-        .words(words.map(d => ({ ...d, size: fontSize(d.value) })))
-        .padding(3)
-        .rotate(0)
-        .font("Arial")
-        .fontSize(d => d.size)
-        .random(() => 0.5)
-        .spiral("archimedean")
-        .on("end", draw);
-  
-      layout.start();
-  
-      function draw(words) {
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d');
-        
-        // Set background to white
-        ctx.fillStyle = 'white';
-        ctx.fillRect(0, 0, width, height);
-  
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-  
-        const color = d3.scaleOrdinal(d3.schemeCategory10);
-  
-        words.forEach(word => {
-          const x = word.x + width / 2;
-          const y = word.y + height / 2;
-          ctx.font = `${Math.round(word.size)}px Arial`;
-          ctx.fillStyle = color(word.text);
-          ctx.fillText(word.text, x, y);
-        });
-      }
-    }, [words]);
-  
-    return <canvas ref={canvasRef} width={800} height={400}></canvas>;
-  };
+const VideoDetails = () => {
+  const { videoId } = useParams();
+  const [processingStats, setProcessingStats] = useState(null);
+  const [frames, setFrames] = useState([]);
+  const [transcript, setTranscript] = useState([]);
+  const [ocrResults, setOcrResults] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [ocrError, setOcrError] = useState(null);
+  const [imagesLoaded, setImagesLoaded] = useState({});
+  const [searchTerm, setSearchTerm] = useState('');
 
-  const VideoDetails = () => {
-    const { videoId } = useParams();
-    const [processingStats, setProcessingStats] = useState(null);
-    const [frames, setFrames] = useState([]);
-    const [transcript, setTranscript] = useState([]);
-    const [ocrResults, setOcrResults] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [ocrError, setOcrError] = useState(null);
-    const [imagesLoaded, setImagesLoaded] = useState({});
-    const [searchTerm, setSearchTerm] = useState('');
-  
-    useEffect(() => {
-      const fetchVideoDetails = async () => {
+  useEffect(() => {
+    const fetchVideoDetails = async () => {
+      try {
+        setLoading(true);
+        const stats = await api.getProcessingStats(videoId);
+        setProcessingStats(stats);
+
+        const framesData = await api.getVideoFrames(videoId);
+        setFrames(framesData);
+        setImagesLoaded(framesData.reduce((acc, frame) => ({ ...acc, [frame.number]: false }), {}));
+
+        const transcriptData = await api.getTranscript(videoId);
+        setTranscript(transcriptData);
+
         try {
-          setLoading(true);
-          const stats = await api.getProcessingStats(videoId);
-          setProcessingStats(stats);
-  
-          const framesData = await api.getVideoFrames(videoId);
-          setFrames(framesData);
-          setImagesLoaded(framesData.reduce((acc, frame) => ({ ...acc, [frame.number]: false }), {}));
-  
-          const transcriptData = await api.getTranscript(videoId);
-          setTranscript(transcriptData);
-  
-          try {
-            const ocrData = await api.getOcrResults(videoId);
-            setOcrResults(ocrData);
-          } catch (ocrErr) {
-            console.error('Error fetching OCR results:', ocrErr);
-            setOcrError('OCR results not available for this video.');
-          }
-  
-          setLoading(false);
-        } catch (err) {
-          console.error('Error fetching video details:', err);
-          setError('Failed to load video details. Please try again later.');
-          setLoading(false);
+          const ocrData = await api.getOcrResults(videoId);
+          setOcrResults(ocrData);
+        } catch (ocrErr) {
+          console.error('Error fetching Text Detection results:', ocrErr);
+          setOcrError('Text Detection results not available for this video.');
         }
-      };
-  
-      fetchVideoDetails();
-    }, [videoId]);
+
+        setLoading(false);
+      } catch (err) {
+        console.error('Error fetching video details:', err);
+        setError('Failed to load video details. Please try again later.');
+        setLoading(false);
+      }
+    };
+
+    fetchVideoDetails();
+  }, [videoId]);
 
   const formatDate = (isoString) => {
     const date = new Date(isoString);
@@ -146,7 +91,7 @@ const WordCloud = ({ words }) => {
     ocrResults.forEach(result => {
       const words = result.text.toLowerCase().split(/\s+/);
       words.forEach(word => {
-        if (word.length > 2 && !['com', 'www'].includes(word)) {  // Exclude common words
+        if (word.length > 2 && !['com', 'www'].includes(word)) {
           wordCount[word] = (wordCount[word] || 0) + 1;
         }
       });
@@ -155,7 +100,7 @@ const WordCloud = ({ words }) => {
     return Object.entries(wordCount)
       .map(([text, value]) => ({ text, value }))
       .sort((a, b) => b.value - a.value)
-      .slice(0, 50);  // Limit to top 50 words for better visibility
+      .slice(0, 50);
   }, [ocrResults]);
 
   const sentenceTranscript = useMemo(() => {
@@ -227,7 +172,7 @@ const WordCloud = ({ words }) => {
       const a = document.createElement('a');
       a.style.display = 'none';
       a.href = url;
-      
+
       const contentDisposition = response.headers.get('Content-Disposition');
       let filename = `${videoId}_${fileType}`;
       if (contentDisposition) {
@@ -238,35 +183,13 @@ const WordCloud = ({ words }) => {
       } else {
         filename += getFileExtension(fileType);
       }
-      
+
       a.download = filename;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error(`Error downloading ${fileType}:`, error);
-      // You might want to show an error message to the user here
-    }
-  };
-
-  const handleDownloadWordCloud = () => {
-    const canvas = document.querySelector('.word-cloud-container canvas');
-    if (canvas) {
-      // Create a new canvas with white background
-      const downloadCanvas = document.createElement('canvas');
-      downloadCanvas.width = canvas.width;
-      downloadCanvas.height = canvas.height;
-      const ctx = downloadCanvas.getContext('2d');
-      ctx.fillStyle = 'white';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(canvas, 0, 0);
-  
-      const link = document.createElement('a');
-      link.download = 'wordcloud.jpg';
-      link.href = downloadCanvas.toDataURL('image/jpeg', 0.8);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
     }
   };
 
@@ -382,16 +305,11 @@ const WordCloud = ({ words }) => {
         )}
       </Box>
 
-      <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>OCR Word Cloud</Typography>
-      {ocrError ? (
-        <Alert severity="info">{ocrError}</Alert>
-      ) : wordCloudData.length > 0 ? (
-        <Box className="word-cloud-container" sx={{ height: 400, width: '100%', mb: 4, display: 'flex', justifyContent: 'center', alignItems: 'center', bgcolor: 'white' }}>
-          <WordCloud words={wordCloudData} />
-        </Box>
-      ) : (
-        <Alert severity="info">No OCR data available for this video.</Alert>
-      )}
+      <TextDetectionSection 
+        ocrError={ocrError} 
+        wordCloudData={wordCloudData} 
+        videoFps={video.video_fps} 
+      />
 
       <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Processing Stats</Typography>
       <Grid container spacing={3} sx={{ mb: 4 }}>
@@ -449,24 +367,15 @@ const WordCloud = ({ words }) => {
         </Grid>
         <Grid item xs={12} md={3}>
           <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-            <Typography variant="h6" gutterBottom>OCR Stats</Typography>
+            <Typography variant="h6" gutterBottom>Text Detection Stats</Typography>
             {ocr.ocr_processing_time ? (
               <>
                 <Typography>Processing Time: {ocr.ocr_processing_time || 'N/A'}</Typography>
                 <Typography>Frames Processed: {ocr.frames_processed?.toLocaleString() || 'N/A'}</Typography>
                 <Typography>Frames with Text: {ocr.frames_with_text?.toLocaleString() || 'N/A'}</Typography>
-                <Box sx={{ flexGrow: 1 }} />
-                <Button 
-                  variant="contained" 
-                  onClick={handleDownloadWordCloud} 
-                  sx={{ mt: 2 }}
-                  disabled={wordCloudData.length === 0}
-                >
-                  Download Word Cloud
-                </Button>
               </>
             ) : (
-              <Typography>OCR data not available</Typography>
+              <Typography>Text Detection data not available</Typography>
             )}
           </Box>
         </Grid>

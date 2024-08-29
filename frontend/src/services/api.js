@@ -3,14 +3,20 @@ import axios from 'axios';
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
 
 const api = {
-  uploadVideo: async (file) => {
+  uploadVideo: async (file, onProgress) => {
     const formData = new FormData();
     formData.append('video', file);
+
     const response = await axios.post(`${API_BASE_URL}/upload`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      onUploadProgress: (progressEvent) => {
+        const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        onProgress(percentCompleted);
+      },
     });
+
     return response.data;
   },
 

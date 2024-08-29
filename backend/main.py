@@ -9,6 +9,8 @@ import time
 import asyncio
 import subprocess
 import ffmpeg
+import urllib3
+import io
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException
@@ -23,10 +25,10 @@ from google.cloud.speech_v2 import SpeechClient
 from google.cloud.speech_v2.types import cloud_speech
 from dotenv import load_dotenv
 from io import BytesIO
-from typing import List
-import urllib3
+from typing import List, Dict, Any
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from processing.ocr_processing import process_ocr, process_and_save_ocr
 
 # Load environment variables (this will work locally, but not affect GCP environment)
 load_dotenv()
@@ -52,7 +54,7 @@ PROCESSING_BUCKET = os.getenv('PROCESSING_BUCKET')
 GOOGLE_APPLICATION_CREDENTIALS = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '20'))
 FRAME_INTERVAL = int(os.getenv('FRAME_INTERVAL', '1'))
-STATUS_UPDATE_INTERVAL = int(os.getenv('STATUS_UPDATE_INTERVAL', '5'))
+STATUS_UPDATE_INTERVAL = int(os.getenv('STATUS_UPDATE_INTERVAL', '3'))
 MAX_WORKERS = int(os.getenv('MAX_WORKERS', '10'))
 
 # Custom transport with larger connection pool
@@ -89,10 +91,6 @@ vision_client = vision.ImageAnnotatorClient()
 
 # Increase the connection pool size
 urllib3.PoolManager(num_pools=50, maxsize=50)
-
-import asyncio
-import time
-from typing import Dict, Any
 
 class StatusTracker:
     def __init__(self, video_id: str):
@@ -303,6 +301,48 @@ async def get_ocr_results(video_id: str):
         return ocr_results
     else:
         raise HTTPException(status_code=404, detail="OCR results not found")
+
+@app.get("/video/{video_id}/processed-ocr")
+async def get_processed_ocr_results(video_id: str):
+    logger.info(f"Received request for processed OCR results of video: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    processed_ocr_blob = bucket.blob(f'{video_id}/processed_ocr.json')
+
+    if processed_ocr_blob.exists():
+        processed_results = json.loads(processed_ocr_blob.download_as_string())
+        return processed_results
+    else:
+        # If processed results don't exist, try to process them on-the-fly
+        stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
+
+        if stats_blob.exists():
+            stats = json.loads(stats_blob.download_as_string())
+            fps = float(stats['video']['video_processing_fps'])
+        else:
+            raise HTTPException(status_code=404, detail="Processing stats not found")
+        processed_results = await process_and_save_ocr(video_id, fps, bucket)
+        if processed_results:
+            return processed_results
+        else:
+            raise HTTPException(status_code=404, detail="OCR results not found")
+
+@app.post("/video/{video_id}/reprocess-ocr")
+async def reprocess_ocr(video_id: str):
+    logger.info(f"Received request to reprocess OCR for video: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
+
+    if stats_blob.exists():
+        stats = json.loads(stats_blob.download_as_string())
+        fps = float(stats['video']['video_processing_fps'])
+    else:
+        raise HTTPException(status_code=404, detail="Processing stats not found")
+    
+    processed_results = await process_and_save_ocr(video_id, fps, bucket)
+    if processed_results:
+        return {"status": "success", "message": "OCR results reprocessed and saved"}
+    else:
+        raise HTTPException(status_code=404, detail="OCR results not found for reprocessing")
     
 @app.get("/video/{video_id}/processing-stats")
 async def get_processing_stats(video_id: str):
@@ -355,6 +395,10 @@ async def process_video(video_id: str):
         # Start OCR processing
         ocr_start_time = time.time()
         ocr_stats = await process_ocr(video_id, bucket, status_tracker)
+        
+        # Process and save OCR results
+        await process_and_save_ocr(video_id, video_stats['video_fps'], bucket)
+        
         ocr_processing_time = time.time() - ocr_start_time
 
         # Wait for all processes to complete
@@ -392,6 +436,7 @@ async def process_video(video_id: str):
                 "ocr_processing_time": ocr_stats['ocr_processing_time'],
                 "frames_processed": ocr_stats['frames_processed'],
                 "frames_with_text": ocr_stats['frames_with_text'],
+                "total_words_detected": ocr_stats['total_words_detected']
             },
             "total_processing_start_time": datetime.datetime.fromtimestamp(total_start_time).isoformat(),
             "total_processing_end_time": datetime.datetime.fromtimestamp(total_end_time).isoformat(),
@@ -423,73 +468,6 @@ async def periodic_status_update(video_id: str, status_tracker: StatusTracker, b
         status_tracker.calculate_overall_progress()
         status_tracker.update_gcs_status(bucket)
         await asyncio.sleep(STATUS_UPDATE_INTERVAL)
-
-async def process_ocr(video_id: str, bucket: storage.Bucket, status_tracker: StatusTracker):
-    logger.info(f"Starting OCR processing for video: {video_id}")
-    status_tracker.update_process_status("ocr", "in_progress", 0)
-
-    ocr_start_time = time.time()
-    frame_blobs = list(bucket.list_blobs(prefix=f'{video_id}/frames/'))
-    total_frames = len(frame_blobs)
-
-    ocr_results = []
-    processed_frames = 0
-
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = []
-        for frame_blob in frame_blobs:
-            frame_number = int(frame_blob.name.split('/')[-1].split('.')[0])
-            future = executor.submit(process_single_frame_ocr, frame_blob, video_id, frame_number)
-            futures.append(future)
-
-        for future in concurrent.futures.as_completed(futures):
-            result = future.result()
-            if result:
-                ocr_results.append(result)
-
-            processed_frames += 1
-            progress = (processed_frames / total_frames) * 100
-            status_tracker.update_process_status("ocr", "in_progress", progress)
-
-    # Sort OCR results by frame number
-    ocr_results.sort(key=lambda x: x['frame_number'])
-
-    # Store OCR results
-    ocr_blob = bucket.blob(f'{video_id}/ocr_results.json')
-    ocr_blob.upload_from_string(json.dumps(ocr_results), content_type='application/json')
-
-    ocr_processing_time = time.time() - ocr_start_time
-    frames_with_text = len(ocr_results)
-
-    ocr_stats = {
-        "ocr_processing_time": f"{ocr_processing_time:.2f} seconds",
-        "frames_processed": total_frames,
-        "frames_with_text": frames_with_text,
-    }
-
-    status_tracker.update_process_status("ocr", "complete", 100)
-
-    return ocr_stats
-
-def process_single_frame_ocr(frame_blob, video_id, frame_number):
-    try:
-        image = vision.Image(source=vision.ImageSource(gcs_image_uri=f"gs://{PROCESSING_BUCKET}/{frame_blob.name}"))
-        response = vision_client.text_detection(image=image)
-        texts = response.text_annotations
-
-        if texts:
-            extracted_text = texts[0].description
-            return {
-                "frame_number": frame_number,
-                "text": extracted_text
-            }
-        else:
-            logger.info(f"No text found in frame {frame_number}")
-            return None
-
-    except Exception as e:
-        logger.error(f"Error processing OCR for frame {frame_number}: {str(e)}")
-        return None
 
 async def process_video_frames(video_path: str, video_id: str, bucket: storage.Bucket, status_tracker: StatusTracker):
     start_time = time.time()

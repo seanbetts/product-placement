@@ -12,3 +12,4 @@ python-multipart
 opencv-python-headless
 urllib3
 ffmpeg-python
+thefuzz
