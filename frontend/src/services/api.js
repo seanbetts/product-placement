@@ -68,6 +68,26 @@ const api = {
         throw error;
       }),
 
+  getProcessedOcrResults: (videoId) => 
+    axios.get(`${API_BASE_URL}/video/${videoId}/processed-ocr`)
+      .then(response => response.data)
+      .catch(error => {
+        if (error.response && error.response.status === 404) {
+          throw new Error('Processed OCR results not found');
+        }
+        throw error;
+      }),
+
+  getBrandsOcrResults: (videoId) => 
+    axios.get(`${API_BASE_URL}/video/${videoId}/brands-ocr`)
+      .then(response => response.data)
+      .catch(error => {
+        if (error.response && error.response.status === 404) {
+          throw new Error('Brands OCR results not found');
+        }
+        throw error;
+      }),
+
   // New method to get processing stats
   getProcessingStats: async (videoId) => {
     try {

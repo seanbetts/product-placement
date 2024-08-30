@@ -297,10 +297,10 @@ const VideoHistory = () => {
                   <Divider sx={{ my: 1 }} />
                   <Typography variant="subtitle2">Video:</Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Total Frames: {video.video.total_frames.toLocaleString() || 'N/A'}
+                    Total Frames: {video?.video?.total_frames?.toLocaleString() ?? 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Extracted Frames: {video.video.extracted_frames.toLocaleString() || 'N/A'}
+                    Extracted Frames: {video?.video?.extracted_frames?.toLocaleString() ?? 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
                     Video FPS: {video.video.video_fps || 'N/A'}
@@ -328,7 +328,7 @@ const VideoHistory = () => {
                     Processing Time: {video.transcription.transcription_processing_time || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Word Count: {video.transcription.word_count.toLocaleString() || 'N/A'}
+                    Word Count: {video?.transcription?.word_count?.toLocaleString() ?? 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
                     Confidence: {video.transcription.confidence || 'N/A'}
@@ -342,10 +342,13 @@ const VideoHistory = () => {
                     Processing Time: {video.ocr.ocr_processing_time || 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Frames Processed: {video.ocr.frames_processed.toLocaleString() || 'N/A'}
+                    Frames Processed: {video?.ocr?.frames_processed?.toLocaleString() ?? 'N/A'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Frames with Text: {video.ocr.frames_with_text.toLocaleString() || 'N/A'}
+                    Frames with Text: {video?.ocr?.frames_with_text?.toLocaleString() ?? 'N/A'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Words Detected: {video?.ocr?.total_words_detected?.toLocaleString() ?? 'N/A'}
                   </Typography>
                   <Divider sx={{ my: 1 }} />
                   <Typography variant="subtitle2">Total Processing:</Typography>

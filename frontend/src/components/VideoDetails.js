@@ -26,10 +26,12 @@ const VideoDetails = () => {
   const [processingStats, setProcessingStats] = useState(null);
   const [frames, setFrames] = useState([]);
   const [transcript, setTranscript] = useState([]);
-  const [ocrResults, setOcrResults] = useState([]);
+  const [processedOcrResults, setProcessedOcrResults] = useState([]);
+  const [brandsOcrResults, setBrandsOcrResults] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [ocrError, setOcrError] = useState(null);
+  const [processedOcrError, setProcessedOcrError] = useState(null);
+  const [brandsOcrError, setBrandsOcrError] = useState(null);
   const [imagesLoaded, setImagesLoaded] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -48,11 +50,19 @@ const VideoDetails = () => {
         setTranscript(transcriptData);
 
         try {
-          const ocrData = await api.getOcrResults(videoId);
-          setOcrResults(ocrData);
+          const processedOcrData = await api.getProcessedOcrResults(videoId);
+          setProcessedOcrResults(processedOcrData);
         } catch (ocrErr) {
-          console.error('Error fetching Text Detection results:', ocrErr);
-          setOcrError('Text Detection results not available for this video.');
+          console.error('Error fetching Processed Text Detection results:', ocrErr);
+          setProcessedOcrError('Processed Text Detection results not available for this video.');
+        }
+
+        try {
+          const brandsOcrData = await api.getBrandsOcrResults(videoId);
+          setBrandsOcrResults(brandsOcrData);
+        } catch (ocrErr) {
+          console.error('Error fetching Brands Text Detection results:', ocrErr);
+          setBrandsOcrError('Brands Text Detection results not available for this video.');
         }
 
         setLoading(false);
@@ -84,24 +94,6 @@ const VideoDetails = () => {
     return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
 
-  const wordCloudData = useMemo(() => {
-    if (!ocrResults || ocrResults.length === 0) return [];
-
-    const wordCount = {};
-    ocrResults.forEach(result => {
-      const words = result.text.toLowerCase().split(/\s+/);
-      words.forEach(word => {
-        if (word.length > 2 && !['com', 'www'].includes(word)) {
-          wordCount[word] = (wordCount[word] || 0) + 1;
-        }
-      });
-    });
-
-    return Object.entries(wordCount)
-      .map(([text, value]) => ({ text, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 50);
-  }, [ocrResults]);
 
   const sentenceTranscript = useMemo(() => {
     if (!Array.isArray(transcript) || transcript.length === 0) {
@@ -111,7 +103,7 @@ const VideoDetails = () => {
     let sentences = [];
     let currentSentence = { words: [], start_time: null, end_time: null, totalConfidence: 0, totalLength: 0 };
 
-    transcript.forEach((word, index) => {
+    transcript?.forEach((word, index) => {
       if (!currentSentence.start_time) {
         currentSentence.start_time = word.start_time;
       }
@@ -156,7 +148,7 @@ const VideoDetails = () => {
   const filteredTranscript = useMemo(() => {
     if (!searchTerm) return sentenceTranscript;
     return sentenceTranscript.filter(sentence => 
-      sentence.text.toLowerCase().includes(searchTerm.toLowerCase())
+      sentence?.text?.toLowerCase().includes(searchTerm?.toLowerCase())
     );
   }, [sentenceTranscript, searchTerm]);
 
@@ -306,9 +298,10 @@ const VideoDetails = () => {
       </Box>
 
       <TextDetectionSection 
-        ocrError={ocrError} 
-        wordCloudData={wordCloudData} 
-        videoFps={video.video_fps} 
+        videoId={videoId}
+        processedOcrResults={processedOcrResults}
+        brandsOcrResults={brandsOcrResults}
+        videoFps={video.video_fps}
       />
 
       <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Processing Stats</Typography>
@@ -317,8 +310,8 @@ const VideoDetails = () => {
           <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             <Typography variant="h6" gutterBottom>Video Stats</Typography>
             <Typography>Length: {video_length || 'N/A'}</Typography>
-            <Typography>Total Frames: {video.total_frames.toLocaleString() || 'N/A'}</Typography>
-            <Typography>Extracted Frames: {video.extracted_frames.toLocaleString() || 'N/A'}</Typography>
+            <Typography>Total Frames: {video?.total_frames?.toLocaleString() ?? 'N/A'}</Typography>
+            <Typography>Extracted Frames: {video?.extracted_frames?.toLocaleString() ?? 'N/A'}</Typography>
             <Typography>Video FPS: {video.video_fps || 'N/A'}</Typography>
             <Typography>Processing Time: {video.video_processing_time || 'N/A'}</Typography>
             <Typography>Processing Speed: {video.video_processing_speed || 'N/A'}</Typography>
@@ -352,7 +345,7 @@ const VideoDetails = () => {
           <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             <Typography variant="h6" gutterBottom>Transcript Stats</Typography>
             <Typography>Processing Time: {transcription.transcription_processing_time || 'N/A'}</Typography>
-            <Typography>Word Count: {transcription.word_count.toLocaleString() || 'N/A'}</Typography>
+            <Typography>Word Count: {transcription?.word_count?.toLocaleString() ?? 'N/A'}</Typography>
             <Typography>Confidence: {transcription.confidence || 'N/A'}</Typography>
             <Typography>Transcription Speed: {transcription.transcription_speed || 'N/A'}</Typography>
             <Box sx={{ flexGrow: 1 }} />
@@ -370,9 +363,10 @@ const VideoDetails = () => {
             <Typography variant="h6" gutterBottom>Text Detection Stats</Typography>
             {ocr.ocr_processing_time ? (
               <>
-                <Typography>Processing Time: {ocr.ocr_processing_time || 'N/A'}</Typography>
-                <Typography>Frames Processed: {ocr.frames_processed?.toLocaleString() || 'N/A'}</Typography>
-                <Typography>Frames with Text: {ocr.frames_with_text?.toLocaleString() || 'N/A'}</Typography>
+                <Typography>Processing Time: {ocr?.ocr_processing_time || 'N/A'}</Typography>
+                <Typography>Frames Processed: {ocr?.frames_processed?.toLocaleString() ?? 'N/A'}</Typography>
+                <Typography>Frames with Text: {ocr?.frames_with_text?.toLocaleString() ?? 'N/A'}</Typography>
+                <Typography>Words Detected: {ocr?.total_words_detected?.toLocaleString() ?? 'N/A'}</Typography>
               </>
             ) : (
               <Typography>Text Detection data not available</Typography>

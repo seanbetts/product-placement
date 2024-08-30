@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Typography, 
   Box, 
@@ -10,7 +10,7 @@ import {
   TableHead, 
   TableRow, 
   Paper, 
-  Alert 
+  Alert
 } from '@mui/material';
 import * as d3 from 'd3';
 import cloud from 'd3-cloud';
@@ -67,7 +67,36 @@ const WordCloud = ({ words }) => {
   return <canvas ref={canvasRef} width={800} height={400}></canvas>;
 };
 
-const TextDetectionSection = ({ ocrError, wordCloudData, videoFps }) => {
+const TextDetectionSection = ({ videoId, processedOcrResults, brandsOcrResults, videoFps }) => {
+  const [processedOcrError, setProcessedOcrError] = useState(null);
+  const [brandsOcrError, setBrandsOcrError] = useState(null);
+
+  useEffect(() => {
+    if (!processedOcrResults || !brandsOcrResults || processedOcrResults.length === 0 || brandsOcrResults.length === 0) {
+      setProcessedOcrError('Processed Text Detection results not available for this video.');
+      setBrandsOcrError('Brands Text Detection results not available for this video.');
+    }
+  }, [processedOcrResults, brandsOcrResults]);
+
+  const wordCloudData = useMemo(() => {
+    if (!processedOcrResults || processedOcrResults.length === 0) return [];
+
+    const wordCount = {};
+    processedOcrResults.forEach(result => {
+      const words = result?.text?.toLowerCase().split(/\s+/);
+      words?.forEach(word => {
+        if (word.length > 2 && !['com', 'www'].includes(word)) {
+          wordCount[word] = (wordCount[word] || 0) + 1;
+        }
+      });
+    });
+
+    return Object.entries(wordCount)
+      .map(([text, value]) => ({ text, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 50);
+  }, [processedOcrResults]);
+
   const wordTableData = useMemo(() => {
     if (!wordCloudData || wordCloudData.length === 0) return [];
 
@@ -80,18 +109,20 @@ const TextDetectionSection = ({ ocrError, wordCloudData, videoFps }) => {
       .sort((a, b) => b.frequency - a.frequency);
   }, [wordCloudData, videoFps]);
 
-  if (ocrError) {
-    return <Alert severity="info">{ocrError}</Alert>;
+  if (processedOcrError) {
+    return <Alert severity="info">{processedOcrError}</Alert>;
   }
 
-  if (wordCloudData.length === 0) {
-    return <Alert severity="info">No Text Detection data available for this video.</Alert>;
+  if (brandsOcrError) {
+    return <Alert severity="info">{brandsOcrError}</Alert>;
   }
 
   return (
     <Box sx={{ mt: 4 }}>
       <Typography variant="h5" gutterBottom>Text Detection</Typography>
-      <Grid container spacing={2}>
+      
+      {/* Word Cloud and Frequency Table */}
+      <Grid container spacing={2} sx={{ mb: 4 }}>
         <Grid item xs={12} md={6}>
           <Box 
             className="word-cloud-container" 

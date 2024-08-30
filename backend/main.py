@@ -294,7 +294,7 @@ async def download_file(video_id: str, file_type: str):
 async def get_ocr_results(video_id: str):
     logger.info(f"Received request for OCR results of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
-    ocr_blob = bucket.blob(f'{video_id}/ocr_results.json')
+    ocr_blob = bucket.blob(f'{video_id}/ocr/ocr_results.json')
 
     if ocr_blob.exists():
         ocr_results = json.loads(ocr_blob.download_as_string())
@@ -306,25 +306,25 @@ async def get_ocr_results(video_id: str):
 async def get_processed_ocr_results(video_id: str):
     logger.info(f"Received request for processed OCR results of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
-    processed_ocr_blob = bucket.blob(f'{video_id}/processed_ocr.json')
+    ocr_blob = bucket.blob(f'{video_id}/ocr/processed_ocr.json')
 
-    if processed_ocr_blob.exists():
-        processed_results = json.loads(processed_ocr_blob.download_as_string())
-        return processed_results
+    if ocr_blob.exists():
+        ocr_results = json.loads(ocr_blob.download_as_string())
+        return ocr_results
     else:
-        # If processed results don't exist, try to process them on-the-fly
-        stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
+        raise HTTPException(status_code=404, detail="Processed OCR results not found")
+    
+@app.get("/video/{video_id}/brands-ocr")
+async def get_processed_ocr_results(video_id: str):
+    logger.info(f"Received request for brand OCR results of video: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    ocr_blob = bucket.blob(f'{video_id}/ocr/brands_ocr.json')
 
-        if stats_blob.exists():
-            stats = json.loads(stats_blob.download_as_string())
-            fps = float(stats['video']['video_processing_fps'])
-        else:
-            raise HTTPException(status_code=404, detail="Processing stats not found")
-        processed_results = await process_and_save_ocr(video_id, fps, bucket)
-        if processed_results:
-            return processed_results
-        else:
-            raise HTTPException(status_code=404, detail="OCR results not found")
+    if ocr_blob.exists():
+        ocr_results = json.loads(ocr_blob.download_as_string())
+        return ocr_results
+    else:
+        raise HTTPException(status_code=404, detail="Brands OCR results not found")
 
 @app.post("/video/{video_id}/reprocess-ocr")
 async def reprocess_ocr(video_id: str):

@@ -13,3 +13,5 @@ opencv-python-headless
 urllib3
 ffmpeg-python
 thefuzz
+pyenchant
+wordcloud
