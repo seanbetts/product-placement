@@ -3,7 +3,8 @@ import { useParams } from 'react-router-dom';
 import { 
   Typography, 
   Box, 
-  CircularProgress, 
+  CircularProgress,
+  Divider,
   Grid, 
   Button, 
   Skeleton,
@@ -26,12 +27,8 @@ const VideoDetails = () => {
   const [processingStats, setProcessingStats] = useState(null);
   const [frames, setFrames] = useState([]);
   const [transcript, setTranscript] = useState([]);
-  const [processedOcrResults, setProcessedOcrResults] = useState([]);
-  const [brandsOcrResults, setBrandsOcrResults] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [processedOcrError, setProcessedOcrError] = useState(null);
-  const [brandsOcrError, setBrandsOcrError] = useState(null);
   const [imagesLoaded, setImagesLoaded] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -48,22 +45,6 @@ const VideoDetails = () => {
 
         const transcriptData = await api.getTranscript(videoId);
         setTranscript(transcriptData);
-
-        try {
-          const processedOcrData = await api.getProcessedOcrResults(videoId);
-          setProcessedOcrResults(processedOcrData);
-        } catch (ocrErr) {
-          console.error('Error fetching Processed Text Detection results:', ocrErr);
-          setProcessedOcrError('Processed Text Detection results not available for this video.');
-        }
-
-        try {
-          const brandsOcrData = await api.getBrandsOcrResults(videoId);
-          setBrandsOcrResults(brandsOcrData);
-        } catch (ocrErr) {
-          console.error('Error fetching Brands Text Detection results:', ocrErr);
-          setBrandsOcrError('Brands Text Detection results not available for this video.');
-        }
 
         setLoading(false);
       } catch (err) {
@@ -193,6 +174,8 @@ const VideoDetails = () => {
         return '.mp3';
       case 'transcript':
         return '.txt';
+      case 'word-cloud':
+        return '.jpg';
       default:
         return '';
     }
@@ -227,6 +210,8 @@ const VideoDetails = () => {
         </Typography>
       )}
 
+      <Divider sx={{ my: 4 }} />
+
       <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Frames</Typography>
       <Box sx={{ overflowX: 'auto', whiteSpace: 'nowrap', mb: 4 }}>
         {frames.map((frame) => (
@@ -251,6 +236,8 @@ const VideoDetails = () => {
           </Box>
         ))}
       </Box>
+
+      <Divider sx={{ my: 4 }} />
 
       <Box sx={{ mb: 4 }}>
         <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Transcript</Typography>
@@ -293,16 +280,18 @@ const VideoDetails = () => {
             </Table>
           </TableContainer>
         ) : (
-          <Typography>No matching transcript found</Typography>
+          <Typography>No matching words found in the transcript</Typography>
         )}
       </Box>
 
+      <Divider sx={{ my: 4 }} />
+
+      <Typography variant="h5" gutterBottom>Text Detection</Typography>
       <TextDetectionSection 
         videoId={videoId}
-        processedOcrResults={processedOcrResults}
-        brandsOcrResults={brandsOcrResults}
-        videoFps={video.video_fps}
       />
+
+      <Divider sx={{ my: 4 }} />
 
       <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Processing Stats</Typography>
       <Grid container spacing={3} sx={{ mb: 4 }}>
@@ -371,6 +360,14 @@ const VideoDetails = () => {
             ) : (
               <Typography>Text Detection data not available</Typography>
             )}
+            <Box sx={{ flexGrow: 1 }} />
+            <Button 
+              variant="contained" 
+              onClick={() => handleDownload('word-cloud')} 
+              sx={{ mt: 2 }}
+            >
+              Download Word Cloud
+            </Button>
           </Box>
         </Grid>
       </Grid>

@@ -59,7 +59,7 @@ const api = {
   },
 
   getOcrResults: (videoId) => 
-    axios.get(`${API_BASE_URL}/video/${videoId}/ocr`)
+    axios.get(`${API_BASE_URL}/video/${videoId}/ocr/results`)
       .then(response => response.data)
       .catch(error => {
         if (error.response && error.response.status === 404) {
@@ -69,7 +69,7 @@ const api = {
       }),
 
   getProcessedOcrResults: (videoId) => 
-    axios.get(`${API_BASE_URL}/video/${videoId}/processed-ocr`)
+    axios.get(`${API_BASE_URL}/video/${videoId}/ocr/processed-ocr`)
       .then(response => response.data)
       .catch(error => {
         if (error.response && error.response.status === 404) {
@@ -79,11 +79,34 @@ const api = {
       }),
 
   getBrandsOcrResults: (videoId) => 
-    axios.get(`${API_BASE_URL}/video/${videoId}/brands-ocr`)
+    axios.get(`${API_BASE_URL}/video/${videoId}/ocr/brands-ocr`)
       .then(response => response.data)
       .catch(error => {
         if (error.response && error.response.status === 404) {
           throw new Error('Brands OCR results not found');
+        }
+        throw error;
+      }),
+
+  getOcrWordCloud: (videoId) => 
+    axios.get(`${API_BASE_URL}/video/${videoId}/ocr/wordcloud`, { responseType: 'arraybuffer' })
+      .then(response => {
+        const blob = new Blob([response.data], { type: 'image/jpeg' });
+        return URL.createObjectURL(blob);
+      })
+      .catch(error => {
+        if (error.response && error.response.status === 404) {
+          throw new Error('Word cloud not found');
+        }
+        throw error;
+      }),
+      
+  getBrandsOcrTable: (videoId) => 
+    axios.get(`${API_BASE_URL}/video/${videoId}/ocr/brands-ocr-table`)
+      .then(response => response.data)
+      .catch(error => {
+        if (error.response && error.response.status === 404) {
+          throw new Error('Brands OCR table not found');
         }
         throw error;
       }),

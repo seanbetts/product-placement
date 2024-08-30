@@ -280,6 +280,9 @@ async def download_file(video_id: str, file_type: str):
     elif file_type == "transcript":
         blob = bucket.blob(f'{video_id}/transcripts/transcript.txt')
         filename = f"{video_id}_transcript.txt"
+    elif file_type == "word-cloud":
+        blob = bucket.blob(f'{video_id}/ocr/wordcloud.jpg')
+        filename = f"{video_id}_wordcloud.jpg"
     else:
         raise HTTPException(status_code=400, detail="Invalid file type")
 
@@ -290,7 +293,7 @@ async def download_file(video_id: str, file_type: str):
     else:
         raise HTTPException(status_code=404, detail=f"{file_type.capitalize()} not found")
 
-@app.get("/video/{video_id}/ocr")
+@app.get("/video/{video_id}/ocr/results")
 async def get_ocr_results(video_id: str):
     logger.info(f"Received request for OCR results of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
@@ -302,7 +305,7 @@ async def get_ocr_results(video_id: str):
     else:
         raise HTTPException(status_code=404, detail="OCR results not found")
 
-@app.get("/video/{video_id}/processed-ocr")
+@app.get("/video/{video_id}/ocr/processed-ocr")
 async def get_processed_ocr_results(video_id: str):
     logger.info(f"Received request for processed OCR results of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
@@ -314,7 +317,7 @@ async def get_processed_ocr_results(video_id: str):
     else:
         raise HTTPException(status_code=404, detail="Processed OCR results not found")
     
-@app.get("/video/{video_id}/brands-ocr")
+@app.get("/video/{video_id}/ocr/brands-ocr")
 async def get_processed_ocr_results(video_id: str):
     logger.info(f"Received request for brand OCR results of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
@@ -325,8 +328,32 @@ async def get_processed_ocr_results(video_id: str):
         return ocr_results
     else:
         raise HTTPException(status_code=404, detail="Brands OCR results not found")
+    
+@app.get("/video/{video_id}/ocr/brands-ocr-table")
+async def get_processed_ocr_results(video_id: str):
+    logger.info(f"Received request for brand OCR results of video: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    ocr_blob = bucket.blob(f'{video_id}/ocr/brands_table.json')
 
-@app.post("/video/{video_id}/reprocess-ocr")
+    if ocr_blob.exists():
+        ocr_results = json.loads(ocr_blob.download_as_string())
+        return ocr_results
+    else:
+        raise HTTPException(status_code=404, detail="Brands OCR results not found")
+    
+@app.get("/video/{video_id}/ocr/wordcloud")
+async def get_word_cloud(video_id: str):
+    logger.info(f"Received request for word cloud of video: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    wordcloud_blob = bucket.blob(f'{video_id}/ocr/wordcloud.jpg')
+
+    if wordcloud_blob.exists():
+        image_data = wordcloud_blob.download_as_bytes()
+        return StreamingResponse(BytesIO(image_data), media_type="image/jpeg")
+    else:
+        raise HTTPException(status_code=404, detail="Text Detection word cloud not found")
+
+@app.post("/video/{video_id}/ocr/reprocess-ocr")
 async def reprocess_ocr(video_id: str):
     logger.info(f"Received request to reprocess OCR for video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)

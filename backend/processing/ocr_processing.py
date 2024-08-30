@@ -52,36 +52,76 @@ def fuzzy_match_brand(text: str, min_score: int = 95) -> Tuple[str, int]:
         return best_match, score
     return None, 0
 
+def are_words_close(word1: Dict, word2: Dict, proximity_threshold: int = 50) -> bool:
+    """
+    Check if two words are close enough to be considered part of the same brand name.
+    Proximity is measured as the distance between the bounding boxes.
+    """
+    box1 = word1['bounding_box']
+    box2 = word2['bounding_box']
+
+    # Calculate the horizontal and vertical distances between the two bounding boxes
+    hor_distance = abs(box1['vertices'][1]['x'] - box2['vertices'][0]['x'])
+    vert_distance = abs(box1['vertices'][0]['y'] - box2['vertices'][0]['y'])
+
+    return hor_distance < proximity_threshold and vert_distance < proximity_threshold
+
+def merge_bounding_boxes(box1: Dict, box2: Dict) -> Dict:
+    """
+    Merge two bounding boxes into one that encloses both.
+    """
+    all_vertices = box1['vertices'] + box2['vertices']
+    min_x = min(vertex['x'] for vertex in all_vertices)
+    max_x = max(vertex['x'] for vertex in all_vertices)
+    min_y = min(vertex['y'] for vertex in all_vertices)
+    max_y = max(vertex['y'] for vertex in all_vertices)
+    
+    return {
+        "vertices": [
+            {"x": min_x, "y": min_y},
+            {"x": max_x, "y": min_y},
+            {"x": max_x, "y": max_y},
+            {"x": min_x, "y": max_y}
+        ]
+    }
+
 def consolidate_words(words: List[Dict]) -> List[Dict]:
     """
     Consolidate nearby words that might form a multi-word brand name.
     """
+    # Sort words by their top-left x coordinate (assuming left-to-right language)
+    words.sort(key=lambda word: word['bounding_box']['vertices'][0]['x'])
     consolidated = []
     i = 0
+
     while i < len(words):
         current_word = words[i]
         if i + 1 < len(words):
             next_word = words[i + 1]
-            combined_text = f"{current_word['text']} {next_word['text']}"
-            match, score = fuzzy_match_brand(combined_text)
-            if match:
-                # Combine the words
-                consolidated.append({
-                    "text": match,
-                    "original_text": combined_text,
-                    "confidence": score,
-                    "bounding_box": {
-                        "vertices": current_word['bounding_box']['vertices'] + next_word['bounding_box']['vertices']
-                    }
-                })
-                i += 2
-                continue
+            
+            if are_words_close(current_word, next_word):
+                combined_text = f"{current_word['text']} {next_word['text']}"
+                match, score = fuzzy_match_brand(combined_text)
+                
+                if match:
+                    # Combine words based on proximity and matching
+                    bounding_box = merge_bounding_boxes(current_word['bounding_box'], next_word['bounding_box'])
+                    consolidated.append({
+                        "text": match,
+                        "original_text": combined_text,
+                        "confidence": score,
+                        "bounding_box": bounding_box
+                    })
+                    i += 2
+                    continue
+
         match, score = fuzzy_match_brand(current_word['text'])
         if match:
             current_word['text'] = match
             current_word['confidence'] = score
-            consolidated.append(current_word)
+        consolidated.append(current_word)
         i += 1
+
     return consolidated
 
 def interpolate_bounding_box(prev_box, next_box, current_frame, prev_frame, next_frame):
@@ -273,17 +313,17 @@ def create_word_cloud(bucket: storage.Bucket, video_id: str):
         return
 
     processed_ocr_data = json.loads(processed_ocr_blob.download_as_string())
-    
+
     # Extract all text annotations
     all_text = []
     for frame in processed_ocr_data:
         for annotation in frame['cleaned_annotations']:
             all_text.append(annotation['text'].lower())
-    
+
     # Count word frequencies
     word_freq = Counter(all_text)
 
-     # Create a mask image (circle shape)
+    # Create a mask image (circle shape)
     x, y = np.ogrid[:300, :300]
     mask = (x - 150) ** 2 + (y - 150) ** 2 > 130 ** 2
     mask = 255 * mask.astype(int)
@@ -302,8 +342,8 @@ def create_word_cloud(bucket: storage.Bucket, video_id: str):
         logger.info(f"Using font: {font_path}")
 
     # Generate word cloud
-    wordcloud = WordCloud(width=600, height=600, 
-                          background_color='white', 
+    wordcloud = WordCloud(width=600, height=600,
+                          background_color='white',
                           max_words=100,  # Limit to top 100 words for clarity
                           min_font_size=10,
                           max_font_size=120,
@@ -312,23 +352,21 @@ def create_word_cloud(bucket: storage.Bucket, video_id: str):
                           colormap='ocean',  # Use a colorful colormap
                           prefer_horizontal=0.9,
                           scale=2
-                          ).generate_from_frequencies(word_freq)
+                         ).generate_from_frequencies(word_freq)
 
-    # Create a figure with a dark background
-    plt.figure(figsize=(10,10), facecolor='#1C2833')
+    plt.figure(figsize=(10,10), frameon=False)
     plt.imshow(wordcloud, interpolation='bilinear')
     plt.axis("off")
     plt.tight_layout(pad=0)
 
     # Save to a temporary file
     temp_file = '/tmp/wordcloud.jpg'
-    plt.savefig(temp_file, format='jpg', facecolor='#1C2833', edgecolor='none', dpi=300, bbox_inches='tight')
+    plt.savefig(temp_file, format='jpg', dpi=300, bbox_inches='tight', pad_inches=0)
     plt.close()
 
     # Upload to bucket
     wordcloud_blob = bucket.blob(f'{video_id}/ocr/wordcloud.jpg')
     wordcloud_blob.upload_from_filename(temp_file, content_type='image/jpeg')
-
     logger.info(f"Word cloud created and saved for video: {video_id}")
 
 def create_brand_table(bucket: storage.Bucket, video_id: str, fps: float):
@@ -357,7 +395,7 @@ def create_brand_table(bucket: storage.Bucket, video_id: str, fps: float):
     brand_table = dict(brand_stats)
 
     # Save to JSON file
-    brand_table_blob = bucket.blob(f'{video_id}/ocr/brand_table.json')
+    brand_table_blob = bucket.blob(f'{video_id}/ocr/brands_table.json')
     brand_table_blob.upload_from_string(
         json.dumps(brand_table, indent=2),
         content_type='application/json'
