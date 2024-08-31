@@ -201,11 +201,11 @@ async def get_processed_videos():
     logger.info("Received request for processed videos")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
     processed_videos = []
-
+    
     # List all blobs in the bucket without a delimiter
     blobs = list(bucket.list_blobs())
     logger.info(f"Found {len(blobs)} blobs in the bucket")
-
+    
     for blob in blobs:
         # Identify potential video folders by the presence of a status.json file
         if blob.name.endswith('status.json'):
@@ -213,24 +213,27 @@ async def get_processed_videos():
             logger.info(f"Found status.json for video: {video_id}")
             
             status_blob = bucket.blob(blob.name)
-            if status_blob.exists():
+            stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
+            
+            if status_blob.exists() and stats_blob.exists():
                 try:
                     status_data = json.loads(status_blob.download_as_string())
+                    stats_data = json.loads(stats_blob.download_as_string())
                     
                     if status_data.get('status') == 'complete':
                         logger.info(f"Video {video_id} is complete, adding to processed videos")
                         video_data = {
                             'video_id': video_id,
-                            'details': status_data.get('details', {})
+                            'details': stats_data
                         }
                         processed_videos.append(video_data)
                     else:
                         logger.info(f"Video {video_id} is not complete, status: {status_data.get('status')}")
                 except json.JSONDecodeError:
-                    logger.error(f"Failed to parse status.json for video {video_id}")
+                    logger.error(f"Failed to parse JSON for video {video_id}")
             else:
-                logger.info(f"No status file found for video: {video_id}")
-
+                logger.info(f"Missing status or stats file for video: {video_id}")
+    
     logger.info(f"Returning {len(processed_videos)} processed videos")
     return processed_videos
 

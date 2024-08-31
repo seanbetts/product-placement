@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 import {
   Typography,
   Box,
@@ -29,10 +30,11 @@ import enGB from 'date-fns/locale/en-GB';
 import api from '../services/api';
 
 const VideoHistory = () => {
-  const [videos, setVideos] = useState([]);
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
+  const { list: videos, loading, error } = useSelector(state => state.videos);
+  
   const [filteredVideos, setFilteredVideos] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [imagesLoaded, setImagesLoaded] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
@@ -40,9 +42,13 @@ const VideoHistory = () => {
   const [endDate, setEndDate] = useState(null);
   const [sortCriteria, setSortCriteria] = useState('date');
   const [sortOrder, setSortOrder] = useState('desc');
-  const navigate = useNavigate();
 
   const filterAndSortVideos = useCallback(() => {
+    if (!Array.isArray(videos) || videos.length === 0) {
+      setFilteredVideos([]);
+      return;
+    }
+
     let result = videos.filter(video => 
       (video.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
        video.video_id.toLowerCase().includes(searchTerm.toLowerCase())) &&
@@ -67,42 +73,30 @@ const VideoHistory = () => {
 
     setFilteredVideos(result);
   }, [videos, searchTerm, startDate, endDate, sortCriteria, sortOrder]);
+
   useEffect(() => {
     const fetchVideos = async () => {
       try {
-        const processedVideos = await api.getProcessedVideos();
-        console.log('Fetched videos:', processedVideos);
-
-        const videoDetailsPromises = processedVideos.map(video => 
-          api.getProcessingStats(video.video_id)
-        );
-
-        const videoDetails = await Promise.all(videoDetailsPromises);
-
-        const sortedVideos = videoDetails.sort((a, b) => {
-          const dateA = new Date(a.total_processing_end_time).getTime();
-          const dateB = new Date(b.total_processing_end_time).getTime();
-          return dateB - dateA;
-        });
-
-        setVideos(sortedVideos);
-        setFilteredVideos(sortedVideos);
-        setExpanded(sortedVideos.reduce((acc, video) => ({ ...acc, [video.video_id]: false }), {}));
-        setImagesLoaded(sortedVideos.reduce((acc, video) => ({ ...acc, [video.video_id]: false }), {}));
-        setLoading(false);
+        await api.getProcessedVideos(dispatch);
       } catch (err) {
         console.error('Error fetching processed videos:', err);
-        setError('Failed to load video history. Please try again later.');
-        setLoading(false);
       }
     };
 
     fetchVideos();
-  }, []);
+  }, [dispatch]);
 
   useEffect(() => {
     filterAndSortVideos();
   }, [filterAndSortVideos]);
+
+  useEffect(() => {
+    if (Array.isArray(videos) && videos.length > 0) {
+      setExpanded(videos.reduce((acc, video) => ({ ...acc, [video.video_id]: false }), {}));
+      setImagesLoaded(videos.reduce((acc, video) => ({ ...acc, [video.video_id]: false }), {}));
+    }
+  }, [videos]);
+
   const handleExpandClick = (videoId) => {
     setExpanded(prev => ({ ...prev, [videoId]: !prev[videoId] }));
   };
@@ -157,6 +151,112 @@ const VideoHistory = () => {
     );
   }
 
+  if (!Array.isArray(videos)) {
+    return (
+      <Typography color="error" align="center">
+        Error: Video data is not in the expected format. Please try refreshing the page.
+      </Typography>
+    );
+  }
+
+  const renderVideoDetails = (videoItem) => {
+    if (!videoItem || !videoItem.details) {
+      console.error('Video object or details are undefined', videoItem);
+      return null;
+    }
+
+    const { 
+      video_length, 
+      video, 
+      audio, 
+      transcription, 
+      ocr, 
+      total_processing_start_time,
+      total_processing_end_time,
+      total_processing_time,
+      total_processing_speed
+    } = videoItem.details;
+
+    return (
+      <CardContent>
+        <Divider sx={{ my: 1 }} />
+        <Typography variant="subtitle2">Video:</Typography>
+        <Typography variant="body2" color="text.secondary">
+          Length: {video_length || 'N/A'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Total Frames: {video?.total_frames?.toLocaleString() ?? 'N/A'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Extracted Frames: {video?.extracted_frames?.toLocaleString() ?? 'N/A'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Video FPS: {video?.video_fps ?? 'N/A'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Processing Time: {video?.video_processing_time ?? 'N/A'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Processing Speed: {video?.video_processing_speed ?? 'N/A'}
+        </Typography>
+        <Divider sx={{ my: 1 }} />
+        <Typography variant="subtitle2">Audio:</Typography>
+        <Typography variant="body2" color="text.secondary">
+          Length: {audio?.audio_length ?? 'N/A'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Processing Time: {audio?.audio_processing_time ?? 'N/A'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Processing Speed: {audio?.audio_processing_speed ?? 'N/A'}
+        </Typography>
+        <Divider sx={{ my: 1 }} />
+        <Typography variant="subtitle2">Transcription:</Typography>
+        <Typography variant="body2" color="text.secondary">
+          Processing Time: {transcription?.transcription_processing_time ?? 'N/A'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Word Count: {transcription?.word_count?.toLocaleString() ?? 'N/A'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Confidence: {transcription?.confidence ?? 'N/A'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Transcription Speed: {transcription?.transcription_speed ?? 'N/A'}
+        </Typography>
+        <Divider sx={{ my: 1 }} />
+        <Typography variant="subtitle2">Text Detection:</Typography>
+        <Typography variant="body2" color="text.secondary">
+          Processing Time: {ocr?.ocr_processing_time ?? 'N/A'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Frames Processed: {ocr?.frames_processed?.toLocaleString() ?? 'N/A'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Frames with Text: {ocr?.frames_with_text?.toLocaleString() ?? 'N/A'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Words Detected: {ocr?.total_words_detected?.toLocaleString() ?? 'N/A'}
+        </Typography>
+        <Divider sx={{ my: 1 }} />
+        <Typography variant="subtitle2">Total Processing:</Typography>
+        <Typography variant="body2" color="text.secondary">
+          Start Time: {formatDate(total_processing_start_time)}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          End Time: {formatDate(total_processing_end_time)}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Processing Time: {total_processing_time || 'N/A'}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Processing Speed: {total_processing_speed || 'N/A'}
+        </Typography>
+      </CardContent>
+    );
+  };
+
+
   return (
     <Box sx={{ mt: 4 }}>
       <Typography variant="h5" gutterBottom component="div" sx={{ mb: 3 }}>
@@ -182,26 +282,26 @@ const VideoHistory = () => {
             />
           </Grid>
           <Grid item xs={12} sm={3}>
-            <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={enGB}>
-              <DatePicker
-                label="Filter From Date"
-                value={startDate}
-                onChange={setStartDate}
-                renderInput={(params) => <TextField {...params} fullWidth />}
-                inputFormat="dd/MM/yyyy"
-              />
-            </LocalizationProvider>
+          <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={enGB}>
+            <DatePicker
+              label="Filter From Date"
+              value={startDate}
+              onChange={setStartDate}
+              slotProps={{ textField: { fullWidth: true } }}
+              format="dd/MM/yyyy"
+            />
+          </LocalizationProvider>
           </Grid>
           <Grid item xs={12} sm={3}>
-            <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={enGB}>
-              <DatePicker
-                label="Filter To Date"
-                value={endDate}
-                onChange={setEndDate}
-                renderInput={(params) => <TextField {...params} fullWidth />}
-                inputFormat="dd/MM/yyyy"
-              />
-            </LocalizationProvider>
+          <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={enGB}>
+            <DatePicker
+              label="Filter To Date"
+              value={endDate}
+              onChange={setEndDate}
+              slotProps={{ textField: { fullWidth: true } }}
+              format="dd/MM/yyyy"
+            />
+          </LocalizationProvider>
           </Grid>
           <Grid item xs={12} sm={3}>
             <Button
@@ -272,13 +372,13 @@ const VideoHistory = () => {
               </Box>
               <CardContent>
                 <Typography variant="h6" component="div" noWrap>
-                  {video.name || video.video_id}
+                  {video.details.name || video.video_id}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Length: {video.video_length || 'N/A'}
+                  Length: {video.details.video_length || 'N/A'}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Processed: {formatDate(video.total_processing_end_time)}
+                  Processed: {formatDate(video.details.total_processing_end_time)}
                 </Typography>
                 <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
                   <Button
@@ -291,78 +391,7 @@ const VideoHistory = () => {
                 </Box>
               </CardContent>
               <Collapse in={expanded[video.video_id]} timeout="auto" unmountOnExit>
-                <CardContent>
-                  <Divider sx={{ my: 1 }} />
-                  <Typography variant="subtitle2">Video:</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Total Frames: {video?.video?.total_frames?.toLocaleString() ?? 'N/A'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Extracted Frames: {video?.video?.extracted_frames?.toLocaleString() ?? 'N/A'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Video FPS: {video.video.video_fps || 'N/A'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Processing Time: {video.video.video_processing_time || 'N/A'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Processing Speed: {video.video.video_processing_speed || 'N/A'}
-                  </Typography>
-                  <Divider sx={{ my: 1 }} />
-                  <Typography variant="subtitle2">Audio:</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Length: {video.audio.audio_length || 'N/A'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Processing Time: {video.audio.audio_processing_time || 'N/A'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Processing Speed: {video.audio.audio_processing_speed || 'N/A'}
-                  </Typography>
-                  <Divider sx={{ my: 1 }} />
-                  <Typography variant="subtitle2">Transcription:</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Processing Time: {video.transcription.transcription_processing_time || 'N/A'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Word Count: {video?.transcription?.word_count?.toLocaleString() ?? 'N/A'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Confidence: {video.transcription.confidence || 'N/A'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Transcription Speed: {video.transcription.transcription_speed || 'N/A'}
-                  </Typography>
-                  <Divider sx={{ my: 1 }} />
-                  <Typography variant="subtitle2">Text Detection:</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Processing Time: {video.ocr.ocr_processing_time || 'N/A'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Frames Processed: {video?.ocr?.frames_processed?.toLocaleString() ?? 'N/A'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Frames with Text: {video?.ocr?.frames_with_text?.toLocaleString() ?? 'N/A'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Words Detected: {video?.ocr?.total_words_detected?.toLocaleString() ?? 'N/A'}
-                  </Typography>
-                  <Divider sx={{ my: 1 }} />
-                  <Typography variant="subtitle2">Total Processing:</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Start Time: {formatDate(video.total_processing_start_time)}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    End Time: {formatDate(video.total_processing_end_time)}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Processing Time: {video.total_processing_time || 'N/A'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Processing Speed: {video.total_processing_speed || 'N/A'}
-                  </Typography>
-                </CardContent>
+                {renderVideoDetails(video)}
               </Collapse>
             </Card>
           </Grid>

@@ -1,149 +1,228 @@
 import axios from 'axios';
-import { useAppContext } from '../AppContext';
+import { 
+  setVideos, 
+  setVideoDetails, 
+  setLoading as setVideoLoading, 
+  setError as setVideoError 
+} from '../store/videoSlice';
+import { 
+  setTranscript, 
+  setLoading as setTranscriptLoading, 
+  setError as setTranscriptError 
+} from '../store/transcriptSlice';
+import { 
+  setOcrResults, 
+  setWordCloud, 
+  setBrandTable, 
+  setProcessingStats, 
+  setLoading as setOcrLoading, 
+  setError as setOcrError 
+} from '../store/ocrSlice';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
+
+const isCacheValid = (timestamp) => {
+  return timestamp && Date.now() - timestamp < CACHE_DURATION;
+};
+
 const api = {
-  uploadVideo: async (file, onProgress) => {
-    const formData = new FormData();
-    formData.append('video', file);
-
-    const response = await axios.post(`${API_BASE_URL}/upload`, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-      onUploadProgress: (progressEvent) => {
-        const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-        onProgress(percentCompleted);
-      },
-    });
-
-    return response.data;
-  },
-
-  getVideoStatus: async (videoId) => {
-    const response = await axios.get(`${API_BASE_URL}/status/${videoId}`);
-    return response.data;
-  },
-
-  getProcessedVideos: async () => {
-    const response = await axios.get(`${API_BASE_URL}/processed-videos`);
-    return response.data;
-  },
-
-  getVideoDetails: async (videoId) => {
-    const response = await axios.get(`${API_BASE_URL}/video/${videoId}`);
-    return response.data;
-  },
-
-  getVideoFrames: async (videoId) => {
-    const response = await axios.get(`${API_BASE_URL}/video/${videoId}/frames`);
-    return response.data;
-  },
-
-  getTranscript: async (videoId) => {
-    const response = await axios.get(`${API_BASE_URL}/video/${videoId}/transcript`);
-    return response.data;
-  },
-
-  downloadFile: async (videoId, fileType) => {
-    const response = await fetch(`${API_BASE_URL}/video/${videoId}/download/${fileType}`, {
-      method: 'GET',
-      headers: {
-        // Add any necessary headers here
-      },
-    });
-    if (!response.ok) {
-      throw new Error('Network response was not ok');
-    }
-    return response;
-  },
-
-  getOcrResults: (videoId) => 
-    axios.get(`${API_BASE_URL}/video/${videoId}/ocr/results`)
-      .then(response => response.data)
-      .catch(error => {
-        if (error.response && error.response.status === 404) {
-          throw new Error('OCR results not found');
-        }
-        throw error;
-      }),
-
-  getProcessedOcrResults: (videoId) => 
-    axios.get(`${API_BASE_URL}/video/${videoId}/ocr/processed-ocr`)
-      .then(response => response.data)
-      .catch(error => {
-        if (error.response && error.response.status === 404) {
-          throw new Error('Processed OCR results not found');
-        }
-        throw error;
-      }),
-
-  getBrandsOcrResults: (videoId) => 
-    axios.get(`${API_BASE_URL}/video/${videoId}/ocr/brands-ocr`)
-      .then(response => response.data)
-      .catch(error => {
-        if (error.response && error.response.status === 404) {
-          throw new Error('Brands OCR results not found');
-        }
-        throw error;
-      }),
-
-  getOcrWordCloud: (videoId) => 
-    axios.get(`${API_BASE_URL}/video/${videoId}/ocr/wordcloud`, { responseType: 'arraybuffer' })
-      .then(response => {
-        const blob = new Blob([response.data], { type: 'image/jpeg' });
-        return URL.createObjectURL(blob);
-      })
-      .catch(error => {
-        if (error.response && error.response.status === 404) {
-          throw new Error('Word cloud not found');
-        }
-        throw error;
-      }),
-      
-  getBrandsOcrTable: (videoId) => 
-    axios.get(`${API_BASE_URL}/video/${videoId}/ocr/brands-ocr-table`)
-      .then(response => response.data)
-      .catch(error => {
-        if (error.response && error.response.status === 404) {
-          throw new Error('Brands OCR table not found');
-        }
-        throw error;
-      }),
-
-  // New method to get processing stats
-  getProcessingStats: async (videoId) => {
+  getProcessedVideos: async (dispatch) => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/video/${videoId}/processing-stats`);
-      return response.data;
+      dispatch(setVideoLoading(true));
+      const response = await axios.get(`${API_BASE_URL}/processed-videos`);
+      const videos = response.data;
+      
+      // Ensure videos is always an array
+      const videoArray = Array.isArray(videos) ? videos : [];
+      
+      dispatch(setVideos({ videos: videoArray, lastFetched: Date.now() }));
+      dispatch(setVideoLoading(false));
+      return videoArray;
     } catch (error) {
-      if (error.response && error.response.status === 404) {
-        throw new Error('Processing stats not found');
-      }
+      dispatch(setVideoError(error.message));
+      dispatch(setVideoLoading(false));
       throw error;
     }
   },
 
-  updateVideoName: async (videoId, name) => {
+  getVideoDetails: async (videoId, dispatch, getState) => {
+    const state = getState();
+    const videoDetails = state.videos.details[videoId];
+
+    if (videoDetails && isCacheValid(videoDetails.lastFetched)) {
+      return videoDetails;
+    }
+
     try {
+      dispatch(setVideoLoading(true));
+      const response = await axios.get(`${API_BASE_URL}/video/${videoId}`);
+      const details = response.data;
+      dispatch(setVideoDetails({ id: videoId, details: { ...details, lastFetched: Date.now() } }));
+      dispatch(setVideoLoading(false));
+      return details;
+    } catch (error) {
+      dispatch(setVideoError(error.message));
+      dispatch(setVideoLoading(false));
+      throw error;
+    }
+  },
+
+  getTranscript: async (videoId, dispatch, getState) => {
+    const state = getState();
+    const transcript = state.transcripts.data[videoId];
+
+    if (transcript && isCacheValid(transcript.lastFetched)) {
+      return transcript.data;
+    }
+
+    try {
+      dispatch(setTranscriptLoading(true));
+      const response = await axios.get(`${API_BASE_URL}/video/${videoId}/transcript`);
+      const transcriptData = response.data;
+      dispatch(setTranscript({ id: videoId, transcript: { data: transcriptData, lastFetched: Date.now() } }));
+      dispatch(setTranscriptLoading(false));
+      return transcriptData;
+    } catch (error) {
+      dispatch(setTranscriptError(error.message));
+      dispatch(setTranscriptLoading(false));
+      throw error;
+    }
+  },
+
+  getOcrResults: async (videoId, dispatch, getState) => {
+    const state = getState();
+    const ocrResults = state.ocr.results[videoId];
+
+    if (ocrResults && isCacheValid(ocrResults.lastFetched)) {
+      return ocrResults.data;
+    }
+
+    try {
+      dispatch(setOcrLoading(true));
+      const response = await axios.get(`${API_BASE_URL}/video/${videoId}/ocr/results`);
+      const results = response.data;
+      dispatch(setOcrResults({ id: videoId, results: { data: results, lastFetched: Date.now() } }));
+      dispatch(setOcrLoading(false));
+      return results;
+    } catch (error) {
+      dispatch(setOcrError(error.message));
+      dispatch(setOcrLoading(false));
+      throw error;
+    }
+  },
+
+  getOcrWordCloud: async (videoId, dispatch, getState) => {
+    const state = getState();
+    const wordCloud = state.ocr.wordCloud[videoId];
+
+    if (wordCloud && isCacheValid(wordCloud.lastFetched)) {
+      return wordCloud.url;
+    }
+
+    try {
+      dispatch(setOcrLoading(true));
+      const response = await axios.get(`${API_BASE_URL}/video/${videoId}/ocr/wordcloud`, { responseType: 'arraybuffer' });
+      const blob = new Blob([response.data], { type: 'image/jpeg' });
+      const wordCloudUrl = URL.createObjectURL(blob);
+      dispatch(setWordCloud({ id: videoId, wordCloud: { url: wordCloudUrl, lastFetched: Date.now() } }));
+      dispatch(setOcrLoading(false));
+      return wordCloudUrl;
+    } catch (error) {
+      dispatch(setOcrLoading(false));
+      if (error.response && error.response.status === 404) {
+        const errorMessage = 'Word cloud not found';
+        dispatch(setOcrError(errorMessage));
+        throw new Error(errorMessage);
+      }
+      dispatch(setOcrError(error.message));
+      throw error;
+    }
+  },
+
+  getBrandsOcrTable: async (videoId, dispatch, getState) => {
+    const state = getState();
+    const brandTable = state.ocr.brandTable[videoId];
+
+    if (brandTable && isCacheValid(brandTable.lastFetched)) {
+      return brandTable.data;
+    }
+
+    try {
+      dispatch(setOcrLoading(true));
+      const response = await axios.get(`${API_BASE_URL}/video/${videoId}/ocr/brands-ocr-table`);
+      const tableData = response.data;
+      dispatch(setBrandTable({ id: videoId, brandTable: { data: tableData, lastFetched: Date.now() } }));
+      dispatch(setOcrLoading(false));
+      return tableData;
+    } catch (error) {
+      dispatch(setOcrLoading(false));
+      if (error.response && error.response.status === 404) {
+        const errorMessage = 'Brands OCR table not found';
+        dispatch(setOcrError(errorMessage));
+        throw new Error(errorMessage);
+      }
+      dispatch(setOcrError(error.message));
+      throw error;
+    }
+  },
+
+  getProcessingStats: async (videoId, dispatch, getState) => {
+    const state = getState();
+    const stats = state.ocr.processingStats[videoId];
+
+    if (stats && isCacheValid(stats.lastFetched)) {
+      return stats.data;
+    }
+
+    try {
+      dispatch(setOcrLoading(true));
+      const response = await axios.get(`${API_BASE_URL}/video/${videoId}/processing-stats`);
+      const statsData = response.data;
+      dispatch(setProcessingStats({ id: videoId, stats: { data: statsData, lastFetched: Date.now() } }));
+      dispatch(setOcrLoading(false));
+      return statsData;
+    } catch (error) {
+      dispatch(setOcrLoading(false));
+      if (error.response && error.response.status === 404) {
+        const errorMessage = 'Processing stats not found';
+        dispatch(setOcrError(errorMessage));
+        throw new Error(errorMessage);
+      }
+      dispatch(setOcrError(error.message));
+      throw error;
+    }
+  },
+
+  updateVideoName: async (videoId, name, dispatch) => {
+    try {
+      dispatch(setVideoLoading(true));
       const response = await axios.post(`${API_BASE_URL}/video/${videoId}/update-name`, null, {
         params: { name }
       });
+      dispatch(setVideoDetails({ id: videoId, details: { ...response.data, name } }));
+      dispatch(setVideoLoading(false));
       return { success: true, data: response.data };
     } catch (error) {
+      dispatch(setVideoLoading(false));
       console.error('Error updating video name:', error);
+      let errorMessage;
       if (error.response) {
+        errorMessage = error.response.data || error.response.statusText;
+        dispatch(setVideoError(errorMessage));
         return {
           success: false,
-          error: error.response.data || error.response.statusText,
+          error: errorMessage,
           status: error.response.status
         };
       } else if (error.request) {
-        return { success: false, error: 'No response received from server' };
+        errorMessage = 'No response received from server';
       } else {
-        return { success: false, error: 'Error setting up the request' };
+        errorMessage = 'Error setting up the request';
       }
+      dispatch(setVideoError(errorMessage));
+      return { success: false, error: errorMessage };
     }
   },
 };
