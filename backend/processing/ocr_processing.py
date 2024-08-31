@@ -14,7 +14,7 @@ import matplotlib
 from matplotlib import font_manager
 from dotenv import load_dotenv
 from thefuzz import fuzz, process
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional, Set, Callable
 from google.cloud import vision
 from google.cloud import storage
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
@@ -74,39 +74,42 @@ async def save_brands_ocr_results(bucket: storage.Bucket, video_id: str, brand_r
     
     logger.info(f"Saved brands OCR results for video: {video_id}")
 
-async def create_and_save_brand_table(bucket: storage.Bucket, video_id: str, brand_results: List[Dict], fps: float):
-    brand_stats = defaultdict(lambda: {"frame_count": 0, "time_on_screen": 0})
+def create_and_save_brand_table(bucket: storage.Bucket, video_id: str, brand_appearances: Dict[str, Set[int]], fps: float):
+    brand_stats = {}
+    min_frames = int(fps)  # Minimum number of frames (1 second)
 
-    for frame in brand_results:
-        for brand in frame['detected_brands']:
-            brand_name = brand['text']
-            brand_stats[brand_name]['frame_count'] += 1
-
-    for brand, stats in brand_stats.items():
-        stats['time_on_screen'] = round(stats['frame_count'] / fps, 2)
-
-    brand_table = dict(brand_stats)
+    for brand, frames in brand_appearances.items():
+        frame_list = sorted(frames)
+        if len(frame_list) >= min_frames:
+            brand_stats[brand] = {
+                "frame_count": len(frame_list),
+                "time_on_screen": round(len(frame_list) / fps, 2),
+                "first_appearance": frame_list[0],
+                "last_appearance": frame_list[-1]
+            }
+        else:
+            logger.info(f"Discarded brand '{brand}' as it appeared for less than 1 second ({len(frame_list)} frames)")
 
     brand_table_blob = bucket.blob(f'{video_id}/ocr/brands_table.json')
-    
-    await asyncio.to_thread(
-        brand_table_blob.upload_from_string,
-        json.dumps(brand_table, indent=2),
+    brand_table_blob.upload_from_string(
+        json.dumps(brand_stats, indent=2),
         content_type='application/json'
     )
-    
-    logger.info(f"Brand table created and saved for video: {video_id}")
 
-def clean_ocr_data(frame: Dict) -> Dict:
+    logger.info(f"Brand table created and saved for video: {video_id}")
+    return brand_stats
+
+def clean_ocr_data(frame: Dict, preprocess_func: Callable[[str], str]) -> Dict:
     """
     Clean up OCR data in a single frame:
     - Remove single letters/numbers
     - Remove partial words
     - Correct misspelled words
+    - Preprocess OCR text to correct common errors
     """
     cleaned_annotations = []
     for annotation in frame.get('text_annotations', []):
-        text = annotation['text']
+        text = preprocess_func(annotation['text'])
         
         # Skip single letters/numbers
         if len(text) <= 1:
@@ -139,7 +142,7 @@ def clean_ocr_data(frame: Dict) -> Dict:
         
         cleaned_annotations.append({
             "text": final_text,
-            "original_text": text,
+            "original_text": annotation['text'],
             "bounding_box": annotation['bounding_box']
         })
     
@@ -150,40 +153,71 @@ def clean_ocr_data(frame: Dict) -> Dict:
     }
 
 def process_single_frame(frame: Dict) -> Dict:
-    cleaned_frame = clean_ocr_data(frame)
-    return consolidate_words(cleaned_frame)
+    return clean_ocr_data(frame)
 
 def clean_and_consolidate_ocr_data(ocr_results: List[Dict]) -> List[Dict]:
-    total_frames = len(ocr_results)
-    cleaned_results = []
-    
-    # Determine the number of workers (use CPU count - 1 to leave one core free)
-    num_workers = max(1, multiprocessing.cpu_count() - 1)
-    
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        # Use executor.map to process frames in parallel
-        futures = list(executor.map(process_single_frame, ocr_results))
+    def preprocess_ocr_text(text: str) -> str:
+        # Common OCR error corrections
+        corrections = {
+            'rn': 'm',
+            'li': 'h',
+            'ii': 'n',
+            'ln': 'in',
+        }
         
-        # Collect results and log progress
-        for i, result in enumerate(futures):
-            cleaned_results.append(result)
-            if (i + 1) % 100 == 0 or (i + 1) == total_frames:
-                logger.info(f"Cleaned and consolidated {i + 1}/{total_frames} frames")
-    
+        cleaned_text = text.lower()
+        for error, correction in corrections.items():
+            cleaned_text = cleaned_text.replace(error, correction)
+        
+        return cleaned_text
+
+    cleaned_results = []
+    for frame in ocr_results:
+        cleaned_frame = clean_ocr_data(frame, preprocess_ocr_text)
+        consolidated_annotations = consolidate_words(cleaned_frame['cleaned_annotations'])
+        cleaned_frame['cleaned_annotations'] = consolidated_annotations
+        cleaned_frame['full_text'] = ' '.join([ann['text'] for ann in consolidated_annotations])
+        cleaned_results.append(cleaned_frame)
     return cleaned_results
 
-def fuzzy_match_brand(text: str, min_score: int = 95) -> Tuple[str, int]:
+def custom_ratio(s1, s2):
+    """Custom ratio function that gives more weight to the beginning of the string."""
+    base_ratio = fuzz.ratio(s1, s2)
+    if len(s1) >= 3 and len(s2) >= 3:
+        start_ratio = fuzz.ratio(s1[:3], s2[:3])
+        return (base_ratio + start_ratio) / 2
+    return base_ratio
+
+def fuzzy_match_brand(text: str, min_score: int = 80) -> Tuple[Optional[str], int]:
     try:
         cleaned_text = re.sub(r'[^a-zA-Z0-9\s]', '', text.lower()).strip()
         if len(cleaned_text) < 2:
             return None, 0
-        best_match, score = process.extractOne(cleaned_text, BRAND_DATABASE.keys())
+        
+        # Check for exact match first
+        if cleaned_text in BRAND_DATABASE:
+            return cleaned_text, 100
+        
+        # Check for partial matches
+        for brand in BRAND_DATABASE:
+            if brand in cleaned_text or cleaned_text in brand:
+                return brand, 90
+        
+        # Use custom ratio for fuzzy matching
+        best_match, score = process.extractOne(cleaned_text, BRAND_DATABASE.keys(), scorer=custom_ratio)
+        
+        logger.debug(f"Fuzzy match for '{text}': Best match '{best_match}' with score {score}")
+        
+        # Additional check for Doritos-like cases
+        if best_match.lower() == "doritos" and score >= 60:
+            return best_match, score
+        
         return (best_match, score) if score >= min_score else (None, 0)
     except Exception as e:
         logger.error(f"Error in fuzzy_match_brand: {str(e)}")
         return None, 0
 
-def are_words_close(word1: Dict, word2: Dict, proximity_threshold: int = 50) -> bool:
+def are_words_close(word1: Dict, word2: Dict, horizontal_threshold: int = 100, vertical_threshold: int = 50) -> bool:
     """
     Check if two words are close enough to be considered part of the same brand name.
     Proximity is measured as the distance between the bounding boxes.
@@ -192,10 +226,14 @@ def are_words_close(word1: Dict, word2: Dict, proximity_threshold: int = 50) -> 
     box2 = word2['bounding_box']
 
     # Calculate the horizontal and vertical distances between the two bounding boxes
-    hor_distance = abs(box1['vertices'][1]['x'] - box2['vertices'][0]['x'])
-    vert_distance = abs(box1['vertices'][0]['y'] - box2['vertices'][0]['y'])
+    hor_distance = min(abs(box1['vertices'][1]['x'] - box2['vertices'][0]['x']),
+                       abs(box2['vertices'][1]['x'] - box1['vertices'][0]['x']))
+    vert_distance = min(abs(box1['vertices'][0]['y'] - box2['vertices'][0]['y']),
+                        abs(box1['vertices'][2]['y'] - box2['vertices'][2]['y']))
 
-    return hor_distance < proximity_threshold and vert_distance < proximity_threshold
+    is_close = hor_distance < horizontal_threshold and vert_distance < vertical_threshold
+    logger.debug(f"Words '{word1['text']}' and '{word2['text']}' - Horizontal distance: {hor_distance}, Vertical distance: {vert_distance}, Is close: {is_close}")
+    return is_close
 
 def merge_bounding_boxes(box1: Dict, box2: Dict) -> Dict:
     """
@@ -216,46 +254,61 @@ def merge_bounding_boxes(box1: Dict, box2: Dict) -> Dict:
         ]
     }
 
-def consolidate_words(frame: Dict) -> Dict:
-    annotations = frame['cleaned_annotations']
+def consolidate_words(words: List[Dict]) -> List[Dict]:
     consolidated = []
     i = 0
-    while i < len(annotations):
-        current_word = annotations[i]
-        if i + 1 < len(annotations):
-            next_word = annotations[i + 1]
-            if are_words_close(current_word, next_word):
-                combined_text = f"{current_word['text']} {next_word['text']}"
-                match, score = fuzzy_match_brand(combined_text)
-                if match:
-                    consolidated.append({
-                        "text": match,
-                        "original_text": combined_text,
-                        "confidence": score,
-                        "bounding_box": merge_bounding_boxes(current_word['bounding_box'], next_word['bounding_box'])
-                    })
-                    i += 2
-                    continue
+    while i < len(words):
+        current_word = words[i]
+        # Check if the current word alone matches a brand
         match, score = fuzzy_match_brand(current_word['text'])
         if match:
             current_word['text'] = match
             current_word['confidence'] = score
+            consolidated.append(current_word)
+            i += 1
+            continue
+
+        # If not, try to combine with the next word
+        if i + 1 < len(words):
+            next_word = words[i + 1]
+            if are_words_close(current_word, next_word):
+                combined_text = f"{current_word['text']} {next_word['text']}"
+                match, score = fuzzy_match_brand(combined_text)
+                if match:
+                    combined_word = {
+                        "text": match,
+                        "original_text": combined_text,
+                        "confidence": score,
+                        "bounding_box": merge_bounding_boxes(current_word['bounding_box'], next_word['bounding_box'])
+                    }
+                    logger.info(f"Consolidated words: '{current_word['text']}' and '{next_word['text']}' into '{match}' with confidence {score}")
+                    consolidated.append(combined_word)
+                    i += 2
+                    continue
+
+        # If no match found, add the current word as is
         consolidated.append(current_word)
         i += 1
-    frame['cleaned_annotations'] = consolidated
-    return frame
+
+    return consolidated
 
 def interpolate_brand(current_brand: Dict, next_brand: Dict, current_frame: int, next_frame: int, frame_number: int, fps: float) -> Dict:
     t = (frame_number - current_frame) / (next_frame - current_frame)
-    interpolated_box = {
-        'vertices': [
-            {k: int(current_brand['bounding_box']['vertices'][j][k] + 
-                     t * (next_brand['bounding_box']['vertices'][j][k] - 
-                          current_brand['bounding_box']['vertices'][j][k]))
-             for k in ['x', 'y']}
-            for j in range(4)
-        ]
-    }
+    
+    # Check if bounding boxes exist before interpolating
+    if 'bounding_box' in current_brand and 'bounding_box' in next_brand:
+        interpolated_box = {
+            'vertices': [
+                {k: int(current_brand['bounding_box']['vertices'][j][k] + 
+                         t * (next_brand['bounding_box']['vertices'][j][k] - 
+                              current_brand['bounding_box']['vertices'][j][k]))
+                 for k in ['x', 'y']}
+                for j in range(4)
+            ]
+        }
+    else:
+        interpolated_box = None
+
     confidence_decay = np.exp(-0.5 * (frame_number - current_frame) / fps)
     interpolated_confidence = current_brand['confidence'] * confidence_decay
 
@@ -267,9 +320,11 @@ def interpolate_brand(current_brand: Dict, next_brand: Dict, current_frame: int,
         "is_interpolated": True
     }
 
-def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float) -> List[Dict]:
+def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float) -> Tuple[List[Dict], Dict[str, Set[int]]]:
     brand_results = []
-    brand_appearances = defaultdict(list)
+    brand_appearances = defaultdict(list)  # List of (frame_number, confidence) for each brand
+    high_confidence_threshold = 90
+    low_confidence_threshold = 65
 
     # First pass: Detect brands
     for frame in cleaned_results:
@@ -278,7 +333,7 @@ def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float) -> Li
         for annotation in frame['cleaned_annotations']:
             if 'confidence' in annotation:
                 detected_brands.append(annotation)
-                brand_appearances[annotation['text']].append((frame_number, annotation))
+                brand_appearances[annotation['text']].append((frame_number, annotation['confidence']))
         
         brand_results.append({
             "frame_number": frame_number,
@@ -286,24 +341,41 @@ def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float) -> Li
         })
 
     # Second pass: Interpolate brands
-    interpolation_window = int(fps)  # Set to approximately one second
+    final_brand_appearances = {}
     for brand, appearances in brand_appearances.items():
-        for i in range(len(appearances) - 1):
-            current_frame, current_brand = appearances[i]
-            next_frame, next_brand = appearances[i + 1]
+        appearances.sort(key=lambda x: x[0])  # Sort by frame number
+        
+        # Check if there's at least one high-confidence detection
+        if any(conf >= high_confidence_threshold for _, conf in appearances):
+            first_appearance = appearances[0][0]
+            last_appearance = appearances[-1][0]
+            
+            # Include all frames between first and last appearance
+            final_brand_appearances[brand] = set(range(first_appearance, last_appearance + 1))
 
-            for frame_number in range(current_frame + 1, next_frame):
-                if frame_number - current_frame <= interpolation_window:
-                    interpolated_brand = interpolate_brand(current_brand, next_brand, current_frame, next_frame, frame_number, fps)
-                    frame_index = next((i for i, f in enumerate(brand_results) if f['frame_number'] == frame_number), None)
-                    if frame_index is not None:
-                        brand_results[frame_index]['detected_brands'].append(interpolated_brand)
+            # Update brand_results
+            for frame_number in range(first_appearance, last_appearance + 1):
+                frame_index = frame_number - cleaned_results[0]['frame_number']
+                brand_data = next((b for b in brand_results[frame_index]['detected_brands'] if b['text'] == brand), None)
+                if brand_data:
+                    # Keep existing data
+                    continue
+                else:
+                    # Add interpolated data
+                    brand_results[frame_index]['detected_brands'].append({
+                        'text': brand,
+                        'confidence': low_confidence_threshold,
+                        'is_interpolated': True
+                    })
+        else:
+            # If no high-confidence detection, include only frames above low_confidence_threshold
+            final_brand_appearances[brand] = set(frame for frame, conf in appearances if conf >= low_confidence_threshold)
 
     # Sort detected brands in each frame by confidence
     for frame in brand_results:
         frame['detected_brands'].sort(key=lambda x: x['confidence'], reverse=True)
 
-    return brand_results
+    return brand_results, final_brand_appearances
 
 def find_font(font_names):
     """
@@ -429,6 +501,20 @@ async def process_single_frame_ocr(frame_blob, video_id, frame_number):
     except Exception as e:
         logger.error(f"Error processing OCR for frame {frame_number}: {str(e)}")
         return None
+    
+def filter_brand_results(brand_results: List[Dict], brand_appearances: Dict[str, Set[int]], fps: float) -> List[Dict]:
+    min_frames = int(fps)  # Minimum number of frames (1 second)
+    valid_brands = {brand for brand, appearances in brand_appearances.items() if len(appearances) >= min_frames}
+    
+    filtered_results = []
+    for frame in brand_results:
+        filtered_brands = [brand for brand in frame['detected_brands'] if brand['text'] in valid_brands]
+        filtered_results.append({
+            "frame_number": frame['frame_number'],
+            "detected_brands": filtered_brands
+        })
+    
+    return filtered_results
 
 async def post_process_ocr(video_id: str, fps: float, bucket: storage.Bucket):
     try:
@@ -446,16 +532,19 @@ async def post_process_ocr(video_id: str, fps: float, bucket: storage.Bucket):
         
         # Step 3: Detect brands and interpolate
         logger.info(f"Detecting brands and interpolating for video: {video_id}")
-        brand_results = detect_brands_and_interpolate(cleaned_results, fps)
+        brand_results, brand_appearances = detect_brands_and_interpolate(cleaned_results, fps)
         
-        # Step 4: Save brands OCR results
-        await save_brands_ocr_results(bucket, video_id, brand_results)
+        # Step 4: Filter brand results
+        filtered_brand_results = filter_brand_results(brand_results, brand_appearances, fps)
         
-        # Step 5: Create and save brand table
-        await create_and_save_brand_table(bucket, video_id, brand_results, fps)
+        # Step 5: Save filtered brands OCR results
+        await save_brands_ocr_results(bucket, video_id, filtered_brand_results)
+        
+        # Step 6: Create and save brand table
+        brand_stats = create_and_save_brand_table(bucket, video_id, brand_appearances, fps)
         
         logger.info(f"Completed post-processing OCR for video: {video_id}")
-        return brand_results
+        return brand_stats
     except Exception as e:
         logger.error(f"Error in post_process_ocr for video {video_id}: {str(e)}")
         raise
