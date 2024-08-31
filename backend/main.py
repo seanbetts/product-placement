@@ -28,7 +28,7 @@ from io import BytesIO
 from typing import List, Dict, Any
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from processing.ocr_processing import process_ocr, process_and_save_ocr
+from processing.ocr_processing import process_ocr, post_process_ocr
 
 # Load environment variables (this will work locally, but not affect GCP environment)
 load_dotenv()
@@ -365,7 +365,7 @@ async def reprocess_ocr(video_id: str):
     else:
         raise HTTPException(status_code=404, detail="Processing stats not found")
     
-    processed_results = await process_and_save_ocr(video_id, fps, bucket)
+    processed_results = await post_process_ocr(video_id, fps, bucket)
     if processed_results:
         return {"status": "success", "message": "OCR results reprocessed and saved"}
     else:
@@ -422,10 +422,10 @@ async def process_video(video_id: str):
         # Start OCR processing
         ocr_start_time = time.time()
         ocr_stats = await process_ocr(video_id, bucket, status_tracker)
-        
-        # Process and save OCR results
-        await process_and_save_ocr(video_id, video_stats['video_fps'], bucket)
-        
+
+        # Post-process OCR results
+        brand_results = await post_process_ocr(video_id, video_stats['video_fps'], bucket)
+
         ocr_processing_time = time.time() - ocr_start_time
 
         # Wait for all processes to complete
