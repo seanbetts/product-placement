@@ -88,17 +88,42 @@ const VideoDetails = () => {
     }
   
     setIsSubmitting(true);
-    const result = await api.updateVideoName(videoId, editingName);
-    setIsSubmitting(false);
-  
-    if (result.success) {
-      setVideoName(editingName);
-      setIsEditingName(false);
-      setProcessingStats(prevStats => ({ ...prevStats, name: editingName }));
-      setSnackbar({ open: true, message: 'Video name updated successfully', severity: 'success' });
-    } else {
-      console.error('Error updating video name:', result.error);
-      setSnackbar({ open: true, message: result.error || 'Failed to update video name. Please try again later.', severity: 'error' });
+    try {
+      const result = await api.updateVideoName(videoId, editingName);
+      if (result.success) {
+        setVideoName(editingName);
+        setIsEditingName(false);
+        setProcessingStats(prevStats => ({ ...prevStats, name: editingName }));
+        setSnackbar({ open: true, message: 'Video name updated successfully', severity: 'success' });
+      } else {
+        throw new Error(JSON.stringify(result.error));
+      }
+    } catch (error) {
+      console.error('Error updating video name:', error);
+      let errorMessage = 'Failed to update video name. Please try again later.';
+      
+      if (error.response && error.response.data) {
+        if (error.response.data.detail && Array.isArray(error.response.data.detail)) {
+          errorMessage = error.response.data.detail.map(err => err.msg).join(', ');
+        } else if (typeof error.response.data === 'object') {
+          errorMessage = JSON.stringify(error.response.data);
+        }
+      } else if (error.message) {
+        try {
+          const parsedError = JSON.parse(error.message);
+          if (parsedError.detail && Array.isArray(parsedError.detail)) {
+            errorMessage = parsedError.detail.map(err => err.msg).join(', ');
+          } else {
+            errorMessage = JSON.stringify(parsedError);
+          }
+        } catch {
+          errorMessage = error.message;
+        }
+      }
+      
+      setSnackbar({ open: true, message: errorMessage, severity: 'error' });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 

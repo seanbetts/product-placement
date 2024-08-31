@@ -127,14 +127,16 @@ const api = {
 
   updateVideoName: async (videoId, name) => {
     try {
-      const response = await axios.post(`${API_BASE_URL}/video/${videoId}/update-name`, { name });
+      const response = await axios.post(`${API_BASE_URL}/video/${videoId}/update-name`, null, {
+        params: { name }
+      });
       return { success: true, data: response.data };
     } catch (error) {
       console.error('Error updating video name:', error);
       if (error.response) {
         return {
           success: false,
-          error: error.response.data.detail || 'Failed to update video name',
+          error: error.response.data || error.response.statusText,
           status: error.response.status
         };
       } else if (error.request) {

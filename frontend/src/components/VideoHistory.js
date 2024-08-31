@@ -44,7 +44,8 @@ const VideoHistory = () => {
 
   const filterAndSortVideos = useCallback(() => {
     let result = videos.filter(video => 
-      video.video_id.toLowerCase().includes(searchTerm.toLowerCase()) &&
+      (video.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+       video.video_id.toLowerCase().includes(searchTerm.toLowerCase())) &&
       (!startDate || new Date(video.total_processing_end_time) >= startDate) &&
       (!endDate || new Date(video.total_processing_end_time) <= endDate)
     );
@@ -167,7 +168,7 @@ const VideoHistory = () => {
           <Grid item xs={12} sm={3}>
             <TextField
               fullWidth
-              label="Search by Video ID"
+              label="Search by Name or Video ID"
               variant="outlined"
               value={searchTerm}
               onChange={handleSearch}
@@ -260,7 +261,7 @@ const VideoHistory = () => {
                   component="img"
                   height="140"
                   image={`${process.env.REACT_APP_API_URL}/video-frame/${video.video_id}`}
-                  alt={`First frame of video ${video.video_id}`}
+                  alt={`First frame of ${video.name || video.video_id}`}
                   onClick={() => handleCardClick(video.video_id)}
                   sx={{
                     cursor: 'pointer',
@@ -271,7 +272,7 @@ const VideoHistory = () => {
               </Box>
               <CardContent>
                 <Typography variant="h6" component="div" noWrap>
-                  {video.video_id}
+                  {video.name || video.video_id}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   Length: {video.video_length || 'N/A'}
