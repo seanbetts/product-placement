@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { useAppContext } from '../AppContext';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 
@@ -121,6 +122,26 @@ const api = {
         throw new Error('Processing stats not found');
       }
       throw error;
+    }
+  },
+
+  updateVideoName: async (videoId, name) => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/video/${videoId}/update-name`, { name });
+      return { success: true, data: response.data };
+    } catch (error) {
+      console.error('Error updating video name:', error);
+      if (error.response) {
+        return {
+          success: false,
+          error: error.response.data.detail || 'Failed to update video name',
+          status: error.response.status
+        };
+      } else if (error.request) {
+        return { success: false, error: 'No response received from server' };
+      } else {
+        return { success: false, error: 'Error setting up the request' };
+      }
     }
   },
 };

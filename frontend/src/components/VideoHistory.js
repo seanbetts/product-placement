@@ -66,7 +66,6 @@ const VideoHistory = () => {
 
     setFilteredVideos(result);
   }, [videos, searchTerm, startDate, endDate, sortCriteria, sortOrder]);
-
   useEffect(() => {
     const fetchVideos = async () => {
       try {
@@ -103,7 +102,6 @@ const VideoHistory = () => {
   useEffect(() => {
     filterAndSortVideos();
   }, [filterAndSortVideos]);
-
   const handleExpandClick = (videoId) => {
     setExpanded(prev => ({ ...prev, [videoId]: !prev[videoId] }));
   };
@@ -245,7 +243,6 @@ const VideoHistory = () => {
           </Grid>
         </Grid>
       </Box>
-
       <Grid container spacing={3}>
         {filteredVideos.map((video) => (
           <Grid item xs={12} sm={6} md={4} key={video.video_id}>

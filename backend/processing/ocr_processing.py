@@ -14,12 +14,15 @@ import matplotlib
 from matplotlib import font_manager
 from dotenv import load_dotenv
 from thefuzz import fuzz, process
-from typing import List, Dict, Tuple, Optional, Set, Callable
+from typing import List, Dict, Tuple, Optional, Set, Callable, TYPE_CHECKING
 from google.cloud import vision
 from google.cloud import storage
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from wordcloud import WordCloud
 from collections import defaultdict, Counter
+
+if TYPE_CHECKING:
+    from main import StatusTracker
 
 # Load environment variables (this will work locally, but not affect GCP environment)
 load_dotenv()
@@ -561,29 +564,25 @@ async def process_ocr(video_id: str, bucket: storage.Bucket, status_tracker: 'St
     processed_frames = 0
     total_words = 0
 
-    # Create a thread pool executor
-    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        # Submit all frame processing tasks
-        future_to_frame = {executor.submit(process_single_frame_ocr, frame_blob, video_id, int(frame_blob.name.split('/')[-1].split('.')[0])): frame_blob for frame_blob in frame_blobs}
+    # Process frames in batches to limit concurrency
+    batch_size = 10
+    for i in range(0, len(frame_blobs), batch_size):
+        batch = frame_blobs[i:i+batch_size]
+        tasks = [process_single_frame_ocr(frame_blob, video_id, int(frame_blob.name.split('/')[-1].split('.')[0])) for frame_blob in batch]
+        batch_results = await asyncio.gather(*tasks)
 
-        # Process completed tasks
-        for future in concurrent.futures.as_completed(future_to_frame):
-            try:
-                result = future.result()
-                if result:
-                    ocr_results.append(result)
-                    total_words += len(result['full_text'].split())
+        for result in batch_results:
+            if result:
+                ocr_results.append(result)
+                total_words += len(result['full_text'].split())
 
-                processed_frames += 1
-                progress = (processed_frames / total_frames) * 100
-                status_tracker.update_process_status("ocr", "in_progress", progress)
+        processed_frames += len(batch)
+        progress = (processed_frames / total_frames) * 100
+        status_tracker.update_process_status("ocr", "in_progress", progress)
 
-                # Log progress periodically
-                if processed_frames % 100 == 0 or processed_frames == total_frames:
-                    logger.info(f"Processed {processed_frames}/{total_frames} frames for video {video_id}")
-
-            except Exception as exc:
-                logger.error(f"Error processing frame for video {video_id}: {str(exc)}")
+        # Log progress periodically
+        if processed_frames % 100 == 0 or processed_frames == total_frames:
+            logger.info(f"Processed {processed_frames}/{total_frames} frames for video {video_id}")
 
     # Sort OCR results by frame number
     ocr_results.sort(key=lambda x: x['frame_number'])

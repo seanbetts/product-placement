@@ -15,6 +15,10 @@ import {
 } from '@mui/material';
 import api from '../services/api';
 
+const capitalizeWords = (str) => {
+  return str.replace(/\b\w/g, (char) => char.toUpperCase());
+};
+
 const TextDetectionSection = ({ videoId }) => {
   const [wordCloudUrl, setWordCloudUrl] = useState(null);
   const [brandTable, setBrandTable] = useState(null);
@@ -93,18 +97,24 @@ const TextDetectionSection = ({ videoId }) => {
         <Grid item xs={12} md={6}>
           <TableContainer component={Paper} sx={{ maxHeight: 400, overflow: 'auto' }}>
             <Table stickyHeader aria-label="brand frequency table">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Brand</TableCell>
-                  <TableCell align="right"># Frames</TableCell>
-                  <TableCell align="right">Time on Screen (s)</TableCell>
-                </TableRow>
-              </TableHead>
+            <TableHead>
+              <TableRow>
+                <TableCell>
+                  <Typography fontWeight="bold">Brand</Typography>
+                </TableCell>
+                <TableCell align="right">
+                  <Typography fontWeight="bold"># Frames</Typography>
+                </TableCell>
+                <TableCell align="right">
+                  <Typography fontWeight="bold">Time on Screen (s)</Typography>
+                </TableCell>
+              </TableRow>
+            </TableHead>
               <TableBody>
                 {brandTable && Object.entries(brandTable).map(([brand, data]) => (
                   <TableRow key={brand}>
                     <TableCell component="th" scope="row">
-                      {brand.charAt(0).toUpperCase() + brand.slice(1)}
+                      {capitalizeWords(brand)}
                     </TableCell>
                     <TableCell align="right">{data.frame_count}</TableCell>
                     <TableCell align="right">{data.time_on_screen.toFixed(1)}</TableCell>

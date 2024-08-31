@@ -16,9 +16,16 @@ import {
   TableRow,
   Paper,
   TextField,
-  InputAdornment
+  InputAdornment,
+  Tooltip,
+  IconButton,
+  Snackbar,
+  Alert
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
+import EditIcon from '@mui/icons-material/Edit';
+import SaveIcon from '@mui/icons-material/Save';
+import CancelIcon from '@mui/icons-material/Cancel';
 import api from '../services/api';
 import TextDetectionSection from './TextDetectionSection';
 
@@ -31,6 +38,11 @@ const VideoDetails = () => {
   const [error, setError] = useState(null);
   const [imagesLoaded, setImagesLoaded] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
+  const [videoName, setVideoName] = useState('');
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [editingName, setEditingName] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     const fetchVideoDetails = async () => {
@@ -38,12 +50,16 @@ const VideoDetails = () => {
         setLoading(true);
         const stats = await api.getProcessingStats(videoId);
         setProcessingStats(stats);
+        setVideoName(stats.name || '');
 
-        const framesData = await api.getVideoFrames(videoId);
+        // Fetch frames and transcript in parallel
+        const [framesData, transcriptData] = await Promise.all([
+          api.getVideoFrames(videoId),
+          api.getTranscript(videoId)
+        ]);
+
         setFrames(framesData);
         setImagesLoaded(framesData.reduce((acc, frame) => ({ ...acc, [frame.number]: false }), {}));
-
-        const transcriptData = await api.getTranscript(videoId);
         setTranscript(transcriptData);
 
         setLoading(false);
@@ -56,6 +72,40 @@ const VideoDetails = () => {
 
     fetchVideoDetails();
   }, [videoId]);
+  const handleNameEdit = () => {
+    setEditingName(videoName || videoId);
+    setIsEditingName(true);
+  };
+
+  const handleNameChange = (event) => {
+    setEditingName(event.target.value);
+  };
+
+  const handleNameSubmit = async () => {
+    if (editingName === videoName) {
+      setIsEditingName(false);
+      return;
+    }
+  
+    setIsSubmitting(true);
+    const result = await api.updateVideoName(videoId, editingName);
+    setIsSubmitting(false);
+  
+    if (result.success) {
+      setVideoName(editingName);
+      setIsEditingName(false);
+      setProcessingStats(prevStats => ({ ...prevStats, name: editingName }));
+      setSnackbar({ open: true, message: 'Video name updated successfully', severity: 'success' });
+    } else {
+      console.error('Error updating video name:', result.error);
+      setSnackbar({ open: true, message: result.error || 'Failed to update video name. Please try again later.', severity: 'error' });
+    }
+  };
+
+  const handleNameCancel = () => {
+    setIsEditingName(false);
+    setEditingName(videoName || videoId);
+  };
 
   const formatDate = (isoString) => {
     const date = new Date(isoString);
@@ -68,7 +118,6 @@ const VideoDetails = () => {
       hour12: false
     });
   };
-
   const formatTime = (seconds) => {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = Math.floor(seconds % 60);
@@ -106,7 +155,6 @@ const VideoDetails = () => {
 
     return sentences;
   }, [transcript]);
-
   const highlightText = (text, highlight) => {
     if (!highlight.trim()) {
       return <span>{text}</span>;
@@ -165,7 +213,6 @@ const VideoDetails = () => {
       console.error(`Error downloading ${fileType}:`, error);
     }
   };
-
   const getFileExtension = (fileType) => {
     switch(fileType) {
       case 'video':
@@ -183,6 +230,13 @@ const VideoDetails = () => {
 
   const handleImageLoad = (frameNumber) => {
     setImagesLoaded(prev => ({ ...prev, [frameNumber]: true }));
+  };
+
+  const handleSnackbarClose = (event, reason) => {
+    if (reason === 'clickaway') {
+      return;
+    }
+    setSnackbar({ ...snackbar, open: false });
   };
 
   if (loading) return <CircularProgress />;
@@ -203,38 +257,123 @@ const VideoDetails = () => {
 
   return (
     <Box sx={{ mt: 4 }}>
-      <Typography variant="h4" gutterBottom>Video Details: {videoId}</Typography>
-      {total_processing_end_time && (
-        <Typography variant="subtitle1" gutterBottom color="text.secondary">
-          Processed on: {formatDate(total_processing_end_time)}
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+        <Typography variant="h4" component="span" sx={{ whiteSpace: 'nowrap', mr: 1 }}>
+          Video Details:
+        </Typography>
+        {isEditingName ? (
+          <TextField
+            value={editingName}
+            onChange={handleNameChange}
+            onKeyPress={(e) => e.key === 'Enter' && handleNameSubmit()}
+            variant="standard"
+            sx={{ flexGrow: 1 }}
+            InputProps={{
+              style: {
+                fontSize: '2.125rem',
+                fontWeight: 400,
+                lineHeight: 1.235,
+                letterSpacing: '0.00735em',
+              },
+              endAdornment: (
+                <InputAdornment position="end">
+                  <Tooltip title="Save">
+                    <IconButton onClick={handleNameSubmit} size="small" disabled={isSubmitting}>
+                      <SaveIcon />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Cancel">
+                    <IconButton onClick={handleNameCancel} size="small" disabled={isSubmitting}>
+                      <CancelIcon />
+                    </IconButton>
+                  </Tooltip>
+                </InputAdornment>
+              ),
+            }}
+            autoFocus
+          />
+        ) : (
+          <Typography 
+            variant="h4" 
+            component="span"
+            sx={{ 
+              cursor: 'pointer', 
+              flexGrow: 1,
+              '&:hover': { 
+                '& .editIcon': { opacity: 1 } 
+              }
+            }}
+            onDoubleClick={handleNameEdit}
+          >
+            {videoName || videoId}
+            <Tooltip title="Edit name">
+              <IconButton 
+                onClick={handleNameEdit}
+                size="small"
+                sx={{ 
+                  ml: 1, 
+                  opacity: 0, 
+                  transition: 'opacity 0.3s',
+                  '&:hover': { opacity: 1 } 
+                }}
+                className="editIcon"
+              >
+                <EditIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Typography>
+        )}
+      </Box>
+      
+      {!isEditingName && videoName && (
+        <Typography variant="subtitle1" color="text.secondary" gutterBottom>
+          ID: {videoId}
         </Typography>
       )}
 
+      <Box sx={{ mt: 2, mb: 4 }}>
+        <Typography variant="body1">
+          Uploaded: {formatDate(total_processing_start_time)}
+        </Typography>
+        <Typography variant="body1">
+          Processing Time: {total_processing_time}
+        </Typography>
+        <Typography variant="body1">
+          Video Length: {video_length}
+        </Typography>
+        <Typography variant="body1">
+          Frames Processed: {video?.extracted_frames?.toLocaleString() ?? 'N/A'}
+        </Typography>
+      </Box>
       <Divider sx={{ my: 4 }} />
 
       <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Frames</Typography>
       <Box sx={{ overflowX: 'auto', whiteSpace: 'nowrap', mb: 4 }}>
-        {frames.map((frame) => (
-          <Box key={frame.number} sx={{ display: 'inline-block', mr: 2, position: 'relative' }}>
-            {!imagesLoaded[frame.number] && (
-              <Skeleton
-                variant="rectangular"
-                width={150}
-                height={150}
-                animation="wave"
+        {frames.length > 0 ? (
+          frames.map((frame) => (
+            <Box key={frame.number} sx={{ display: 'inline-block', mr: 2, position: 'relative' }}>
+              {!imagesLoaded[frame.number] && (
+                <Skeleton
+                  variant="rectangular"
+                  width={150}
+                  height={150}
+                  animation="wave"
+                />
+              )}
+              <img 
+                src={frame.url} 
+                alt={`Frame from video ${videoId}`}
+                style={{ 
+                  height: '150px',
+                  display: imagesLoaded[frame.number] ? 'block' : 'none'
+                }} 
+                onLoad={() => handleImageLoad(frame.number)}
               />
-            )}
-            <img 
-              src={frame.url} 
-              alt={`Frame from video ${videoId}`}
-              style={{ 
-                height: '150px',
-                display: imagesLoaded[frame.number] ? 'block' : 'none'
-              }} 
-              onLoad={() => handleImageLoad(frame.number)}
-            />
-          </Box>
-        ))}
+            </Box>
+          ))
+        ) : (
+          <Typography>No frames available</Typography>
+        )}
       </Box>
 
       <Divider sx={{ my: 4 }} />
@@ -261,10 +400,10 @@ const VideoDetails = () => {
             <Table stickyHeader aria-label="transcript table">
               <TableHead>
                 <TableRow>
-                  <TableCell>Start Time</TableCell>
-                  <TableCell>End Time</TableCell>
-                  <TableCell>Sentence</TableCell>
-                  <TableCell>Confidence</TableCell>
+                  <TableCell><Typography fontWeight="bold">Start Time</Typography></TableCell>
+                  <TableCell><Typography fontWeight="bold">End Time</Typography></TableCell>
+                  <TableCell><Typography fontWeight="bold">Sentence</Typography></TableCell>
+                  <TableCell><Typography fontWeight="bold">Confidence</Typography></TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -284,14 +423,12 @@ const VideoDetails = () => {
         )}
       </Box>
 
-      <Divider sx={{ my: 4 }} />
+            <Typography variant="h5" gutterBottom>Text Detection</Typography>
+            <TextDetectionSection 
+              videoId={videoId}
+            />
 
-      <Typography variant="h5" gutterBottom>Text Detection</Typography>
-      <TextDetectionSection 
-        videoId={videoId}
-      />
-
-      <Divider sx={{ my: 4 }} />
+            <Divider sx={{ my: 4 }} />
 
       <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Processing Stats</Typography>
       <Grid container spacing={3} sx={{ mb: 4 }}>
@@ -377,6 +514,12 @@ const VideoDetails = () => {
       <Typography>End Time: {formatDate(total_processing_end_time)}</Typography>
       <Typography>Total Processing Time: {total_processing_time}</Typography>
       <Typography>Total Processing Speed: {total_processing_speed}</Typography>
+
+      <Snackbar open={snackbar.open} autoHideDuration={6000} onClose={handleSnackbarClose}>
+        <Alert onClose={handleSnackbarClose} severity={snackbar.severity} sx={{ width: '100%' }}>
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

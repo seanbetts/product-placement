@@ -160,6 +160,27 @@ async def upload_video(video: UploadFile, background_tasks: BackgroundTasks):
     except Exception as e:
         logger.error(f"Error during upload: {str(e)}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": str(e)})
+    
+@app.post("/video/{video_id}/update-name")
+async def update_video_name(video_id: str, name: str):
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    status_blob = bucket.blob(f'{video_id}/status.json')
+    stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
+    
+    if not status_blob.exists() or not stats_blob.exists():
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Update status.json
+    status_data = json.loads(status_blob.download_as_string())
+    status_data['name'] = name
+    status_blob.upload_from_string(json.dumps(status_data), content_type='application/json')
+
+    # Update processing_stats.json
+    stats_data = json.loads(stats_blob.download_as_string())
+    stats_data['name'] = name
+    stats_blob.upload_from_string(json.dumps(stats_data), content_type='application/json')
+
+    return {"message": "Video name updated successfully"}
 
 @app.get("/status/{video_id}")
 async def get_status(video_id: str):
