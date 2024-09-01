@@ -187,11 +187,20 @@ const videoSlice = createSlice({
         state.status.framesLoading = false;
         state.status.error = action.payload || 'Failed to fetch video frames';
       })
+      .addCase(fetchTranscript.pending, (state, action) => {
+        state.status.loading = true;
+        state.status.error = null;
+      })
       .addCase(fetchTranscript.fulfilled, (state, action) => {
+        state.status.loading = false;
         state.data.transcript[action.meta.arg] = {
           data: action.payload,
           lastFetched: Date.now()
         };
+      })
+      .addCase(fetchTranscript.rejected, (state, action) => {
+        state.status.loading = false;
+        state.status.error = action.payload;
       })
       .addCase(updateVideoName.fulfilled, (state, action) => {
         const { videoId, newName } = action.meta.arg;

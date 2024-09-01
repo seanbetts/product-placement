@@ -45,7 +45,7 @@ const VideoDetails = () => {
   
   const video = useSelector(state => state.videos.data.details[videoId]);
   const frames = useSelector(state => state.videos.data.frames[videoId]?.data);
-  const transcript = useSelector(state => state.videos.data.transcript[videoId]);
+  const transcript = useSelector(state => state.videos.data.transcript[videoId]?.data);
   const searchTerm = useSelector(state => state.videos.ui.searchTerm);
   const isEditingName = useSelector(state => state.videos.ui.isEditingName);
   const editingName = useSelector(state => state.videos.ui.editingName);
@@ -445,8 +445,8 @@ return (
               <Table stickyHeader aria-label="transcript table">
                 <TableHead>
                   <TableRow>
-                    <TableCell><Typography fontWeight="bold">Start Time</Typography></TableCell>
-                    <TableCell><Typography fontWeight="bold">End Time</Typography></TableCell>
+                    <TableCell><Typography fontWeight="bold">Start</Typography></TableCell>
+                    <TableCell><Typography fontWeight="bold">End</Typography></TableCell>
                     <TableCell><Typography fontWeight="bold">Sentence</Typography></TableCell>
                     <TableCell><Typography fontWeight="bold">Confidence</Typography></TableCell>
                   </TableRow>
