@@ -44,12 +44,20 @@ const TextDetectionSection = ({ videoId }) => {
   const { wordCloud, brandTable, loading, error } = useSelector(state => selectOcrData(state, videoId));
 
   useEffect(() => {
-    if (!wordCloud) {
-      dispatch(fetchOcrWordCloud(videoId));
-    }
-    if (!brandTable) {
-      dispatch(fetchBrandsOcrTable(videoId));
-    }
+    const fetchData = async () => {
+      if (!wordCloud && !brandTable) {
+        await Promise.all([
+          dispatch(fetchOcrWordCloud(videoId)),
+          dispatch(fetchBrandsOcrTable(videoId))
+        ]);
+      } else if (!wordCloud) {
+        await dispatch(fetchOcrWordCloud(videoId));
+      } else if (!brandTable) {
+        await dispatch(fetchBrandsOcrTable(videoId));
+      }
+    };
+
+    fetchData();
   }, [dispatch, videoId, wordCloud, brandTable]);
 
   if (loading) {
@@ -129,4 +137,4 @@ const TextDetectionSection = ({ videoId }) => {
   );
 };
 
-export default TextDetectionSection;
+export default React.memo(TextDetectionSection);

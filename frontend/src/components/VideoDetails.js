@@ -8,7 +8,6 @@ import {
   Divider,
   Grid, 
   Button, 
-  Skeleton,
   Table,
   TableBody,
   TableCell,
@@ -21,7 +20,8 @@ import {
   Tooltip,
   IconButton,
   Snackbar,
-  Alert
+  Alert,
+  Skeleton
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import EditIcon from '@mui/icons-material/Edit';
@@ -45,7 +45,7 @@ const VideoDetails = () => {
   const dispatch = useDispatch();
   
   const video = useSelector(state => state.videos.data.details[videoId]);
-  const frames = useSelector(state => state.videos.data.frames[videoId]);
+  const frames = useSelector(state => state.videos.data.frames[videoId]?.data);
   const transcript = useSelector(state => state.videos.data.transcript[videoId]);
   const searchTerm = useSelector(state => state.videos.ui.searchTerm);
   const isEditingName = useSelector(state => state.videos.ui.isEditingName);
@@ -53,17 +53,16 @@ const VideoDetails = () => {
   const snackbar = useSelector(state => state.videos.ui.snackbar);
   const loading = useSelector(state => state.videos.status.loading);
   const error = useSelector(state => state.videos.status.error);
+  const framesLoading = useSelector(state => state.videos.status.framesLoading) || false;
 
-  const [imagesLoaded, setImagesLoaded] = useState({});
   const [processedTranscript, setProcessedTranscript] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [framesLoading, setFramesLoading] = useState(true);
   const [transcriptLoading, setTranscriptLoading] = useState(true);
+  const [imagesLoaded, setImagesLoaded] = useState({});
 
   useEffect(() => {
     const fetchData = async () => {
       if (!videoId) {
-        console.error('No videoId provided');
         dispatch(setSnackbar({ open: true, message: 'Error: No video ID provided', severity: 'error' }));
         return;
       }
@@ -72,9 +71,7 @@ const VideoDetails = () => {
           await dispatch(fetchVideoDetails(videoId)).unwrap();
         }
         if (!frames) {
-          setFramesLoading(true);
-          await dispatch(fetchVideoFrames(videoId)).unwrap();
-          setFramesLoading(false);
+          const result = await dispatch(fetchVideoFrames(videoId)).unwrap();
         }
         if (!transcript) {
           setTranscriptLoading(true);
@@ -84,7 +81,6 @@ const VideoDetails = () => {
       } catch (error) {
         console.error('Error fetching video data:', error);
         dispatch(setSnackbar({ open: true, message: 'Error fetching video data', severity: 'error' }));
-        setFramesLoading(false);
         setTranscriptLoading(false);
       }
     };
@@ -201,10 +197,6 @@ const VideoDetails = () => {
     }
   };
 
-  const handleImageLoad = (frameNumber) => {
-    setImagesLoaded(prev => ({ ...prev, [frameNumber]: true }));
-  };
-
   const handleSnackbarClose = (event, reason) => {
     if (reason === 'clickaway') {
       return;
@@ -248,6 +240,10 @@ const VideoDetails = () => {
         )}
       </span>
     );
+  };
+
+  const handleImageLoad = (frameNumber) => {
+    setImagesLoaded(prev => ({ ...prev, [frameNumber]: true }));
   };
 
   if (loading) {
@@ -377,29 +373,29 @@ return (
       
       <Divider sx={{ my: 4 }} />
 
-      <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Frames</Typography>
-      <Box sx={{ overflowX: 'auto', whiteSpace: 'nowrap', mb: 4 }}>
-      {framesLoading ? (
-        <CircularProgress />
-      ) : frames && frames.length > 0 ? (
+      <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Video Frames</Typography>
+      <Box 
+        sx={{ 
+          overflowX: 'auto', 
+          whiteSpace: 'nowrap', 
+          mb: 4,
+        }}
+      >
+        {frames && frames.length > 0 ? (
           frames.map((frame) => (
-            <Box key={frame.number} sx={{ display: 'inline-block', mr: 2, mb: 2 }}>
-              {!imagesLoaded[frame.number] && (
-                <Skeleton 
-                  variant="rectangular" 
-                  width={200} 
-                  height={150}
-                  animation="wave"
-                />
-              )}
+            <Box 
+              key={frame.number} 
+              sx={{ 
+                display: 'inline-block', 
+                mr: 2, 
+              }}
+            >
               <img 
                 src={frame.url} 
                 alt={`Frame ${frame.number} from video ${videoId}`}
                 style={{ 
                   height: '150px',
-                  display: imagesLoaded[frame.number] ? 'block' : 'none'
                 }} 
-                onLoad={() => handleImageLoad(frame.number)}
               />
             </Box>
           ))
@@ -412,46 +408,50 @@ return (
 
       <Box sx={{ mb: 4 }}>
         <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Transcript</Typography>
-        <TextField
-          fullWidth
-          variant="outlined"
-          placeholder="Search transcript..."
-          value={searchTerm}
-          onChange={handleSearchChange}
-          sx={{ mb: 2 }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon />
-              </InputAdornment>
-            ),
-          }}
-        />
         {transcriptLoading ? (
-          <CircularProgress />
+          <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
+            <CircularProgress />
+          </Box>
         ) : processedTranscript && processedTranscript.length > 0 ? (
-          <TableContainer component={Paper} sx={{ maxHeight: 400, overflow: 'auto' }}>
-            <Table stickyHeader aria-label="transcript table">
-              <TableHead>
-                <TableRow>
-                  <TableCell><Typography fontWeight="bold">Start Time</Typography></TableCell>
-                  <TableCell><Typography fontWeight="bold">End Time</Typography></TableCell>
-                  <TableCell><Typography fontWeight="bold">Sentence</Typography></TableCell>
-                  <TableCell><Typography fontWeight="bold">Confidence</Typography></TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {filteredTranscript.map((sentence, index) => (
-                  <TableRow key={index}>
-                    <TableCell>{formatTime(parseFloat(sentence.start_time))}</TableCell>
-                    <TableCell>{formatTime(parseFloat(sentence.end_time))}</TableCell>
-                    <TableCell>{highlightText(sentence.text, searchTerm)}</TableCell>
-                    <TableCell>{(sentence.confidence * 100).toFixed(2)}%</TableCell>
+          <>
+            <TextField
+              fullWidth
+              variant="outlined"
+              placeholder="Search transcript..."
+              value={searchTerm}
+              onChange={handleSearchChange}
+              sx={{ mb: 2 }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon />
+                  </InputAdornment>
+                ),
+              }}
+            />
+            <TableContainer component={Paper} sx={{ maxHeight: 400, overflow: 'auto' }}>
+              <Table stickyHeader aria-label="transcript table">
+                <TableHead>
+                  <TableRow>
+                    <TableCell><Typography fontWeight="bold">Start Time</Typography></TableCell>
+                    <TableCell><Typography fontWeight="bold">End Time</Typography></TableCell>
+                    <TableCell><Typography fontWeight="bold">Sentence</Typography></TableCell>
+                    <TableCell><Typography fontWeight="bold">Confidence</Typography></TableCell>
                   </TableRow>
-                  ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
+                </TableHead>
+                <TableBody>
+                  {filteredTranscript.map((sentence, index) => (
+                    <TableRow key={index}>
+                      <TableCell>{formatTime(parseFloat(sentence.start_time))}</TableCell>
+                      <TableCell>{formatTime(parseFloat(sentence.end_time))}</TableCell>
+                      <TableCell>{highlightText(sentence.text, searchTerm)}</TableCell>
+                      <TableCell>{(sentence.confidence * 100).toFixed(2)}%</TableCell>
+                    </TableRow>
+                    ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </>
         ) : (
           <Typography>No transcript available</Typography>
         )}

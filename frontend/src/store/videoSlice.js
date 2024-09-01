@@ -50,9 +50,13 @@ export const fetchVideoFrames = createAsyncThunk(
   'videos/fetchVideoFrames',
   async (videoId, { rejectWithValue }) => {
     try {
-      return await api.getAllVideoFrames(videoId);
+      const frames = await api.getAllVideoFrames(videoId);
+      if (!frames || frames.length === 0) {
+        return rejectWithValue('No frames available for this video');
+      }
+      return frames;
     } catch (error) {
-      return rejectWithValue(error.message);
+      return rejectWithValue(error.message || 'Failed to fetch video frames');
     }
   }
 );
@@ -104,6 +108,7 @@ const videoSlice = createSlice({
       loading: false,
       error: null,
       lastFetched: null,
+      framesLoading: false,
     },
     ui: {
       searchTerm: '',
@@ -168,11 +173,19 @@ const videoSlice = createSlice({
         state.status.loading = false;
         state.status.error = action.payload;
       })
+      .addCase(fetchVideoFrames.pending, (state) => {
+        state.status.framesLoading = true;
+      })
       .addCase(fetchVideoFrames.fulfilled, (state, action) => {
+        state.status.framesLoading = false;
         state.data.frames[action.meta.arg] = {
           data: action.payload,
           lastFetched: Date.now()
         };
+      })
+      .addCase(fetchVideoFrames.rejected, (state, action) => {
+        state.status.framesLoading = false;
+        state.status.error = action.payload || 'Failed to fetch video frames';
       })
       .addCase(fetchTranscript.fulfilled, (state, action) => {
         state.data.transcript[action.meta.arg] = {
