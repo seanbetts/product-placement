@@ -150,7 +150,7 @@ async def health_check():
 
 ## UPLOAD ENDPOINT (POST)
 ## Uploads a video to the processing bucket and schedules the video processing
-@app.post("/upload")
+@app.post("/video/upload")
 async def upload_video(video: UploadFile, background_tasks: BackgroundTasks):
     logger.info(f"Received upload request for file: {video.filename}")
     video_id = str(uuid.uuid4())
@@ -171,26 +171,9 @@ async def upload_video(video: UploadFile, background_tasks: BackgroundTasks):
         return JSONResponse(status_code=500, content={"error": str(e)})
 ########################################################
 
-## STATUS ENDPOINT (GET)
-## Returns status.json for a given video ID 
-@app.get("/status/{video_id}")
-async def get_status(video_id: str):
-    logger.info(f"Received status request for video ID: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    status_blob = bucket.blob(f'{video_id}/status.json')
-    
-    if status_blob.exists():
-        status_data = json.loads(status_blob.download_as_string())
-        logger.info(f"Status for video ID {video_id}: {status_data}")
-        return status_data
-    else:
-        logger.warning(f"Status not found for video ID: {video_id}")
-        raise HTTPException(status_code=404, detail="Video status not found")
-########################################################
-
 ## PROCESSED VIDEOS ENDPOINT (GET)
 ## Returns a list of all processed videos
-@app.get("/processed-videos")
+@app.get("video/processed-videos")
 async def get_processed_videos():
     logger.info("Received request for processed videos")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
@@ -230,11 +213,28 @@ async def get_processed_videos():
     
     logger.info(f"Returning {len(processed_videos)} processed videos")
     return processed_videos
-########################################################    
+########################################################  
+
+## STATUS ENDPOINT (GET)
+## Returns status.json for a given video ID 
+@app.get("{video_id}/video/status")
+async def get_status(video_id: str):
+    logger.info(f"Received status request for video ID: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    status_blob = bucket.blob(f'{video_id}/status.json')
+    
+    if status_blob.exists():
+        status_data = json.loads(status_blob.download_as_string())
+        logger.info(f"Status for video ID {video_id}: {status_data}")
+        return status_data
+    else:
+        logger.warning(f"Status not found for video ID: {video_id}")
+        raise HTTPException(status_code=404, detail="Video status not found")
+########################################################  
 
 ## PROCESSING STATS ENDPOINT (GET)
 ## Returns the processing_stats.json for a given video ID
-@app.get("/video/{video_id}/processing-stats")
+@app.get("{video_id}/video/processing-stats")
 async def get_processing_stats(video_id: str):
     logger.info(f"Received request for processing stats of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
@@ -249,7 +249,7 @@ async def get_processing_stats(video_id: str):
 
 ## VIDEO FRAME ENDPOINT (GET)   
 ## Returns the first frame of the video as a JPEG image
-@app.get("/video/{video_id}/first-frame")
+@app.get("{video_id}/images/first-frame")
 async def get_video_frame(video_id: str):
     logger.info(f"Received request for first frame of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
@@ -264,7 +264,7 @@ async def get_video_frame(video_id: str):
 
 ## VIDEO FRAMES ENDPOINT (GET)
 ## Returns a list of all video frames
-@app.get("/video/{video_id}/frames")
+@app.get("{video_id}/images/all-frames")
 async def get_video_frames(video_id: str) -> List[dict]:
     logger.info(f"Received request for video frames: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
@@ -285,7 +285,7 @@ async def get_video_frames(video_id: str) -> List[dict]:
 
 ## TRANSCRIPT ENDPOINT (GET)
 ## Returns the transcript.json for a given video ID
-@app.get("/video/{video_id}/transcript")
+@app.get("{video_id}/transcript")
 async def get_transcript(video_id: str):
     bucket = storage_client.bucket(PROCESSING_BUCKET)
     transcript_blob = bucket.blob(f'{video_id}/transcripts/transcript.json')
@@ -299,7 +299,7 @@ async def get_transcript(video_id: str):
 
 ## UPDATE VIDEO NAME ENDPOINT (POST)
 ## Updates the name of a video
-@app.post("/video/{video_id}/update-name")
+@app.post("{video_id}/video/update-name")
 async def update_video_name(video_id: str, name: str):
     bucket = storage_client.bucket(PROCESSING_BUCKET)
     status_blob = bucket.blob(f'{video_id}/status.json')
@@ -323,7 +323,7 @@ async def update_video_name(video_id: str, name: str):
 
 ## DOWNLOAD ENDPOINT (GET)
 ## Downloads a file for a given video ID and file type
-@app.get("/video/{video_id}/download/{file_type}")
+@app.get("{video_id}/files/download/{file_type}")
 async def download_file(video_id: str, file_type: str):
     logger.info(f"Received download request for {file_type} of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
@@ -353,7 +353,7 @@ async def download_file(video_id: str, file_type: str):
 
 ## WORD CLOUD ENDPOINT (GET)
 ## Returns the wordcloud.jpg for a given video ID
-@app.get("/video/{video_id}/ocr/wordcloud")
+@app.get("{video_id}/ocr/wordcloud")
 async def get_word_cloud(video_id: str):
     logger.info(f"Received request for word cloud of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
@@ -368,7 +368,7 @@ async def get_word_cloud(video_id: str):
 
 ## BRANDS OCR TABLE ENDPOINT (GET)
 ## Returns the brands_table.json for a given video ID
-@app.get("/video/{video_id}/ocr/brands-ocr-table")
+@app.get("{video_id}/ocr/brands-ocr-table")
 async def get_processed_ocr_results(video_id: str):
     logger.info(f"Received request for brand OCR results of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
@@ -383,7 +383,7 @@ async def get_processed_ocr_results(video_id: str):
 
 ## REPROCESS OCR ENDPOINT (POST)
 ## Reprocesses the OCR for a given video ID
-@app.post("/video/{video_id}/ocr/reprocess-ocr")
+@app.post("{video_id}/ocr/reprocess-ocr")
 async def reprocess_ocr(video_id: str):
     logger.info(f"Received request to reprocess OCR for video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
@@ -404,7 +404,7 @@ async def reprocess_ocr(video_id: str):
 
 ## OCR RESULTS ENDPOINT (GET)
 ## Returns the ocr_results.json for a given video ID
-@app.get("/video/{video_id}/ocr/results")
+@app.get("{video_id}/ocr/results")
 async def get_ocr_results(video_id: str):
     logger.info(f"Received request for OCR results of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
@@ -419,7 +419,7 @@ async def get_ocr_results(video_id: str):
 
 ## PROCESSED OCR RESULTS ENDPOINT (GET)
 ## Returns the processed_ocr.json for a given video ID
-@app.get("/video/{video_id}/ocr/processed-ocr")
+@app.get("{video_id}/ocr/processed-ocr")
 async def get_processed_ocr_results(video_id: str):
     logger.info(f"Received request for processed OCR results of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
@@ -434,7 +434,7 @@ async def get_processed_ocr_results(video_id: str):
 
 ## BRANDS OCR ENDPOINT (GET)
 ## Returns the brands_ocr.json for a given video ID
-@app.get("/video/{video_id}/ocr/brands-ocr")
+@app.get("{video_id}/ocr/brands-ocr")
 async def get_processed_ocr_results(video_id: str):
     logger.info(f"Received request for brand OCR results of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)

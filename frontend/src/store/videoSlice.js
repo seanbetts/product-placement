@@ -38,7 +38,7 @@ export const fetchVideoFrames = createAsyncThunk(
   'videos/fetchVideoFrames',
   async (videoId, { rejectWithValue }) => {
     try {
-      return await api.getVideoFrames(videoId);
+      return await api.getAllVideoFrames(videoId);
     } catch (error) {
       return rejectWithValue(error.message);
     }
