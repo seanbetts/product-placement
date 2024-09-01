@@ -78,20 +78,43 @@ const api = {
     }
   },
 
+  updateVideoName: async (videoId, newName) => {
+    try {
+      const response = await axios.put(`${API_BASE_URL}/${videoId}/video/update-name`, { name: newName });
+      // Invalidate relevant caches
+      localStorage.removeItem(`videoDetails_${videoId}`);
+      localStorage.removeItem(`videoDetails_${videoId}_timestamp`);
+      localStorage.removeItem(`processedVideos`);
+      localStorage.removeItem(`processedVideos_timestamp`);
+      return response.data;
+    } catch (error) {
+      throw handleApiError(error);
+    }
+  },
+
   getFirstVideoFrame: async (videoId) => {
     const cacheKey = `firstVideoFrame_${videoId}`;
     const cachedData = localStorage.getItem(cacheKey);
     const cachedTimestamp = localStorage.getItem(`${cacheKey}_timestamp`);
   
     if (cachedData && isCacheValid(parseInt(cachedTimestamp))) {
-      return JSON.parse(cachedData);
+      return JSON.parse(cachedData); // Return the cached base64 data
     }
   
     try {
-      const response = await axios.get(`${API_BASE_URL}/${videoId}/images/first-frame`);
-      localStorage.setItem(cacheKey, JSON.stringify(response.data));
+      const response = await axios.get(`${API_BASE_URL}/${videoId}/images/first-frame`, {
+        responseType: 'arraybuffer' // Get the raw binary data
+      });
+      const base64 = btoa(
+        new Uint8Array(response.data).reduce(
+          (data, byte) => data + String.fromCharCode(byte),
+          ''
+        )
+      );
+      const imageData = `data:image/jpeg;base64,${base64}`;
+      localStorage.setItem(cacheKey, JSON.stringify(imageData));
       localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
-      return response.data;
+      return imageData;
     } catch (error) {
       throw handleApiError(error);
     }
@@ -129,20 +152,6 @@ const api = {
       const response = await axios.get(`${API_BASE_URL}/${videoId}/transcript`);
       localStorage.setItem(cacheKey, JSON.stringify(response.data));
       localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
-      return response.data;
-    } catch (error) {
-      throw handleApiError(error);
-    }
-  },
-
-  updateVideoName: async (videoId, newName) => {
-    try {
-      const response = await axios.put(`${API_BASE_URL}/${videoId}/video/update-name`, { name: newName });
-      // Invalidate relevant caches
-      localStorage.removeItem(`videoDetails_${videoId}`);
-      localStorage.removeItem(`videoDetails_${videoId}_timestamp`);
-      localStorage.removeItem(`processedVideos`);
-      localStorage.removeItem(`processedVideos_timestamp`);
       return response.data;
     } catch (error) {
       throw handleApiError(error);

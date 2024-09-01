@@ -27,12 +27,13 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { format } from 'date-fns';
 import enGB from 'date-fns/locale/en-GB';
-import { fetchProcessedVideos } from '../store/videoSlice';
+import { fetchProcessedVideos, fetchFirstVideoFrame } from '../store/videoSlice';
 
 const VideoHistory = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const videos = useSelector(state => state.videos.data.list);
+  const firstFrames = useSelector(state => state.videos.data.firstFrames);
   const loading = useSelector(state => state.videos.status.loading);
   const error = useSelector(state => state.videos.status.error);
   
@@ -75,6 +76,14 @@ const VideoHistory = () => {
 
     setFilteredVideos(result);
   }, [videos, searchTerm, startDate, endDate, sortCriteria, sortOrder]);
+
+  useEffect(() => {
+    videos.forEach(video => {
+      if (!firstFrames[video.video_id]) {
+        dispatch(fetchFirstVideoFrame(video.video_id));
+      }
+    });
+  }, [dispatch, videos, firstFrames]);
 
   useEffect(() => {
     dispatch(fetchProcessedVideos());
@@ -343,29 +352,36 @@ const VideoHistory = () => {
       
       <Grid container spacing={3}>
         {filteredVideos.map((video) => (
-          <Grid item xs={12} sm={6} md={4} key={video.video_id}>
-            <Card>
-              <Box sx={{ position: 'relative' }}>
-                {!imagesLoaded[video.video_id] && (
-                  <Skeleton
-                    variant="rectangular"
-                    width="100%"
-                    height={140}
-                    animation="wave"
-                  />
-                )}
+        <Grid item xs={12} sm={6} md={4} key={video.video_id}>
+          <Card>
+            <Box sx={{ position: 'relative', height: 140 }}>
+              {(!firstFrames[video.video_id] || !imagesLoaded[video.video_id]) && (
+                <Skeleton variant="rectangular" width="100%" height={140} />
+              )}
+              {firstFrames[video.video_id] && (
                 <CardMedia
                   component="img"
                   height="140"
-                  image={`${process.env.REACT_APP_API_URL}/video-frame/${video.video_id}`}
+                  image={firstFrames[video.video_id]}
                   alt={`First frame of ${video.name || video.video_id}`}
                   onClick={() => handleCardClick(video.video_id)}
+                  onLoad={() => handleImageLoad(video.video_id)}
+                  onError={(e) => {
+                    console.error('Error loading image for:', video.video_id);
+                    e.target.src = '/path/to/fallback-image.jpg';
+                  }}
                   sx={{
                     cursor: 'pointer',
-                    display: imagesLoaded[video.video_id] ? 'block' : 'none'
+                    display: imagesLoaded[video.video_id] ? 'block' : 'none',
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
                   }}
-                  onLoad={() => handleImageLoad(video.video_id)}
                 />
+              )}
               </Box>
               <CardContent>
                 <Typography variant="h6" component="div" noWrap>

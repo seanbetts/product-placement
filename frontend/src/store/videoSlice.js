@@ -12,6 +12,17 @@ export const fetchProcessedVideos = createAsyncThunk(
   }
 );
 
+export const fetchVideoStatus = createAsyncThunk(
+  'videos/fetchVideoStatus',
+  async (_, { rejectWithValue }) => {
+    try {
+      return await api.getVideoStatus();
+    } catch (error) {
+      return rejectWithValue(error.message);
+    }
+  }
+);
+
 export const fetchVideoDetails = createAsyncThunk(
   'videos/fetchVideoDetails',
   async (videoId, { rejectWithValue }) => {
@@ -27,7 +38,8 @@ export const fetchFirstVideoFrame = createAsyncThunk(
   'videos/fetchFirstVideoFrame',
   async (videoId, { rejectWithValue }) => {
     try {
-      return await api.getFirstVideoFrame(videoId);
+      const imageData = await api.getFirstVideoFrame(videoId);
+      return { videoId, imageData };
     } catch (error) {
       return rejectWithValue(error.message);
     }
@@ -86,6 +98,7 @@ const videoSlice = createSlice({
       details: {},
       frames: {},
       transcript: {},
+      firstFrames: {},
     },
     status: {
       loading: false,
@@ -138,6 +151,9 @@ const videoSlice = createSlice({
       .addCase(fetchProcessedVideos.rejected, (state, action) => {
         state.status.loading = false;
         state.status.error = action.payload;
+      })
+      .addCase(fetchFirstVideoFrame.fulfilled, (state, action) => {
+        state.data.firstFrames[action.payload.videoId] = action.payload.imageData;
       })
       .addCase(fetchVideoDetails.pending, (state) => {
         state.status.loading = true;
