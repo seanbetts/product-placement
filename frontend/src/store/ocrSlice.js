@@ -28,62 +28,66 @@ export const fetchBrandsOcrTable = createAsyncThunk(
 const ocrSlice = createSlice({
   name: 'ocr',
   initialState: {
-    results: {},
-    wordCloud: {},
-    brandTable: {},
-    processingStats: {},
-    loading: false,
-    error: null,
+    data: {
+      results: {},
+      wordCloud: {},
+      brandTable: {},
+      processingStats: {},
+    },
+    status: {
+      loading: false,
+      error: null,
+    },
   },
   reducers: {
     setOcrResults: (state, action) => {
       const { id, results } = action.payload;
-      state.results[id] = results;
+      state.data.results[id] = results;
     },
     setWordCloud: (state, action) => {
       const { id, wordCloud } = action.payload;
-      state.wordCloud[id] = wordCloud;
+      state.data.wordCloud[id] = wordCloud;
     },
     setBrandTable: (state, action) => {
       const { id, brandTable } = action.payload;
-      state.brandTable[id] = brandTable;
+      state.data.brandTable[id] = brandTable;
     },
     setProcessingStats: (state, action) => {
       const { id, stats } = action.payload;
-      state.processingStats[id] = stats;
+      state.data.processingStats[id] = stats;
     },
     setLoading: (state, action) => {
-      state.loading = action.payload;
+      state.status.loading = action.payload;
     },
     setError: (state, action) => {
-      state.error = action.payload;
+      state.status.error = action.payload;
     },
   },
   extraReducers: (builder) => {
     builder
       .addCase(fetchOcrWordCloud.pending, (state) => {
-        state.loading = true;
+        state.status.loading = true;
       })
       .addCase(fetchOcrWordCloud.fulfilled, (state, action) => {
-        state.loading = false;
-        state.wordCloud[action.payload.videoId] = { url: action.payload.wordCloudUrl };
-        state.error = null;
+        state.status.loading = false;
+        state.data.wordCloud[action.payload.videoId] = { url: action.payload.wordCloudUrl };
+        state.status.error = null;
       })
       .addCase(fetchOcrWordCloud.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload.error;
+        state.status.loading = false;
+        state.status.error = action.payload.error;
       })
       .addCase(fetchBrandsOcrTable.pending, (state) => {
-        state.loading = true;
+        state.status.loading = true;
       })
       .addCase(fetchBrandsOcrTable.fulfilled, (state, action) => {
-        state.loading = false;
-        state.brandTable[action.payload.videoId] = { data: action.payload.brandTableData };
-        state.error = null;
+        state.status.loading = false;
+        state.data.brandTable[action.payload.videoId] = { data: action.payload.brandTableData };
+        state.status.error = null;
       })
       .addCase(fetchBrandsOcrTable.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload.error;
+        state.status.loading = false;
+        state.status.error = action.payload.error;
       });
   },
 });

@@ -43,35 +43,44 @@ import TextDetectionSection from './TextDetectionSection';
 const VideoDetails = () => {
   const { videoId } = useParams();
   const dispatch = useDispatch();
-  const { list: videos } = useSelector(state => state.videos);
-
-  const video = videos.find(v => v.video_id === videoId);
-  const videoDetails = useSelector(state => state.videos.details[videoId]);
-  const frames = useSelector(state => state.videos.frames[videoId]?.data);
-  const transcript = useSelector(state => state.videos.transcript[videoId]?.data);
-  const searchTerm = useSelector(state => state.videos.searchTerm);
-  const isEditingName = useSelector(state => state.videos.isEditingName);
-  const editingName = useSelector(state => state.videos.editingName);
-  const snackbar = useSelector(state => state.videos.snackbar);
+  
+  const video = useSelector(state => state.videos.data.details[videoId]);
+  const frames = useSelector(state => state.videos.data.frames[videoId]);
+  const transcript = useSelector(state => state.videos.data.transcript[videoId]);
+  const searchTerm = useSelector(state => state.videos.ui.searchTerm);
+  const isEditingName = useSelector(state => state.videos.ui.isEditingName);
+  const editingName = useSelector(state => state.videos.ui.editingName);
+  const snackbar = useSelector(state => state.videos.ui.snackbar);
+  const loading = useSelector(state => state.videos.status.loading);
+  const error = useSelector(state => state.videos.status.error);
 
   const [imagesLoaded, setImagesLoaded] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
+      if (!videoId) {
+        console.error('No videoId provided');
+        dispatch(setSnackbar({ open: true, message: 'Error: No video ID provided', severity: 'error' }));
+        return;
+      }
       try {
         if (!video) {
           await dispatch(fetchVideoDetails(videoId)).unwrap();
         }
-        await dispatch(fetchVideoFrames(videoId)).unwrap();
-        await dispatch(fetchTranscript(videoId)).unwrap();
+        if (!frames) {
+          await dispatch(fetchVideoFrames(videoId)).unwrap();
+        }
+        if (!transcript) {
+          await dispatch(fetchTranscript(videoId)).unwrap();
+        }
       } catch (error) {
         console.error('Error fetching video data:', error);
         dispatch(setSnackbar({ open: true, message: 'Error fetching video data', severity: 'error' }));
       }
     };
     fetchData();
-  }, [dispatch, videoId, video]);
+  }, [dispatch, videoId, video, frames, transcript]);
 
   const sentenceTranscript = useMemo(() => {
     if (!Array.isArray(transcript) || transcript.length === 0) {
@@ -121,7 +130,7 @@ const VideoDetails = () => {
   };
 
   const handleNameSubmit = async () => {
-    if (editingName === videoDetails?.name) {
+    if (editingName === videoName) {
       dispatch(setIsEditingName(false));
       return;
     }
@@ -203,14 +212,7 @@ const VideoDetails = () => {
     );
   };
 
-  const videoLoading = useSelector(state => state.videos.loading);
-  const framesLoading = useSelector(state => state.videos.framesLoading);
-  const transcriptLoading = useSelector(state => state.videos.transcriptLoading);
-  const videoError = useSelector(state => state.videos.error);
-  const framesError = useSelector(state => state.videos.framesError);
-  const transcriptError = useSelector(state => state.videos.transcriptError);
-
-  if (videoLoading || framesLoading || transcriptLoading) {
+  if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
         <CircularProgress />
@@ -218,10 +220,10 @@ const VideoDetails = () => {
     );
   }
 
-  if (videoError || framesError || transcriptError) {
+  if (error) {
     return (
       <Typography color="error" align="center">
-        Error: {videoError || framesError || transcriptError}
+        Error: {error}
       </Typography>
     );
   }
@@ -230,19 +232,20 @@ const VideoDetails = () => {
     return <Typography>No video details available</Typography>;
   }
 
-  // Destructure video.details here
-  const {
-    name: videoName,
-    video_length, 
-    video: videoStats,
-    audio, 
-    transcription, 
-    ocr, 
-    total_processing_start_time,
-    total_processing_end_time,
-    total_processing_time = 'N/A',
-    total_processing_speed = 'N/A'
-  } = video.details || {};
+  // Destructure video properties here
+  // Destructure video properties here
+const {
+  name: videoName = '',
+  video_length = 'N/A', 
+  video: videoStats = {},
+  audio = {}, 
+  transcription = {}, 
+  ocr = {}, 
+  total_processing_start_time = null,
+  total_processing_end_time = null,
+  total_processing_time = 'N/A',
+  total_processing_speed = 'N/A'
+} = video || {};
 
   return (
     <Box sx={{ mt: 4 }}>
@@ -338,31 +341,31 @@ const VideoDetails = () => {
 
       <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Frames</Typography>
       <Box sx={{ overflowX: 'auto', whiteSpace: 'nowrap', mb: 4 }}>
-        {frames && frames.length > 0 ? (
-          frames.map((frame) => (
-            <Box key={frame.number} sx={{ display: 'inline-block', mr: 2, position: 'relative' }}>
-              {!imagesLoaded[frame.number] && (
-                <Skeleton
-                  variant="rectangular"
-                  width={150}
-                  height={150}
-                  animation="wave"
-                />
-              )}
-              <img 
-                src={frame.url} 
-                alt={`Frame from video ${videoId}`}
-                style={{ 
-                  height: '150px',
-                  display: imagesLoaded[frame.number] ? 'block' : 'none'
-                }} 
-                onLoad={() => handleImageLoad(frame.number)}
+      {Array.isArray(frames) && frames.length > 0 ? (
+        frames.map((frame) => (
+          <Box key={frame.number} sx={{ mr: 2, mb: 2 }}>
+            {!imagesLoaded[frame.number] && (
+              <Skeleton 
+                variant="rectangular" 
+                width={200} 
+                height={150}
+                animation="wave"
               />
-            </Box>
-          ))
-        ) : (
-          <Typography>No frames available</Typography>
-        )}
+            )}
+            <img 
+              src={frame.url} 
+              alt={`Frame from video ${videoId}`}
+              style={{ 
+                height: '150px',
+                display: imagesLoaded[frame.number] ? 'block' : 'none'
+              }} 
+              onLoad={() => handleImageLoad(frame.number)}
+            />
+          </Box>
+        ))
+      ) : (
+        <Typography>No frames available</Typography>
+      )}
       </Box>
 
       <Divider sx={{ my: 4 }} />
@@ -413,9 +416,13 @@ const VideoDetails = () => {
       </Box>
 
       <Typography variant="h5" gutterBottom>Text Detection</Typography>
-      <TextDetectionSection 
-        videoId={videoId}
-      />
+      {video && video.ocr ? (
+        <TextDetectionSection 
+          videoId={videoId}
+        />
+      ) : (
+        <Typography>Text detection data not available</Typography>
+      )}
 
       <Divider sx={{ my: 4 }} />
 

@@ -32,7 +32,9 @@ import { fetchProcessedVideos } from '../store/videoSlice';
 const VideoHistory = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const { list: videos, loading, error } = useSelector(state => state.videos);
+  const videos = useSelector(state => state.videos.data.list);
+  const loading = useSelector(state => state.videos.status.loading);
+  const error = useSelector(state => state.videos.status.error);
   
   const [filteredVideos, setFilteredVideos] = useState([]);
   const [expanded, setExpanded] = useState({});
@@ -367,13 +369,13 @@ const VideoHistory = () => {
               </Box>
               <CardContent>
                 <Typography variant="h6" component="div" noWrap>
-                  {video.details.name || video.video_id}
+                  {video.name || video.video_id}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Length: {video.details.video_length || 'N/A'}
+                  Length: {video.video_length || 'N/A'}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Processed: {formatDate(video.details.total_processing_end_time)}
+                  Processed: {formatDate(video.total_processing_end_time)}
                 </Typography>
                 <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
                   <Button

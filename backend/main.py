@@ -136,11 +136,20 @@ class StatusTracker:
         current_status = self.get_status()
         status_blob.upload_from_string(json.dumps(current_status), content_type='application/json')
 
+########################################################
+## FAST API ENDPOINTS                                 ##
+########################################################
+
+## HEALTH CHECK ENDPOINT (GET)
+## Returns a 200 status if the server is healthy
 @app.get("/health")
 async def health_check():
     logger.info("Health check called")
     return {"status": "ok"}
+########################################################
 
+## UPLOAD ENDPOINT (POST)
+## Uploads a video to the processing bucket and schedules the video processing
 @app.post("/upload")
 async def upload_video(video: UploadFile, background_tasks: BackgroundTasks):
     logger.info(f"Received upload request for file: {video.filename}")
@@ -160,28 +169,10 @@ async def upload_video(video: UploadFile, background_tasks: BackgroundTasks):
     except Exception as e:
         logger.error(f"Error during upload: {str(e)}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": str(e)})
-    
-@app.post("/video/{video_id}/update-name")
-async def update_video_name(video_id: str, name: str):
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    status_blob = bucket.blob(f'{video_id}/status.json')
-    stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
-    
-    if not status_blob.exists() or not stats_blob.exists():
-        raise HTTPException(status_code=404, detail="Video not found")
+########################################################
 
-    # Update status.json
-    status_data = json.loads(status_blob.download_as_string())
-    status_data['name'] = name
-    status_blob.upload_from_string(json.dumps(status_data), content_type='application/json')
-
-    # Update processing_stats.json
-    stats_data = json.loads(stats_blob.download_as_string())
-    stats_data['name'] = name
-    stats_blob.upload_from_string(json.dumps(stats_data), content_type='application/json')
-
-    return {"message": "Video name updated successfully"}
-
+## STATUS ENDPOINT (GET)
+## Returns status.json for a given video ID 
 @app.get("/status/{video_id}")
 async def get_status(video_id: str):
     logger.info(f"Received status request for video ID: {video_id}")
@@ -195,7 +186,10 @@ async def get_status(video_id: str):
     else:
         logger.warning(f"Status not found for video ID: {video_id}")
         raise HTTPException(status_code=404, detail="Video status not found")
+########################################################
 
+## PROCESSED VIDEOS ENDPOINT (GET)
+## Returns a list of all processed videos
 @app.get("/processed-videos")
 async def get_processed_videos():
     logger.info("Received request for processed videos")
@@ -236,8 +230,26 @@ async def get_processed_videos():
     
     logger.info(f"Returning {len(processed_videos)} processed videos")
     return processed_videos
+########################################################    
 
-@app.get("/video-frame/{video_id}")
+## PROCESSING STATS ENDPOINT (GET)
+## Returns the processing_stats.json for a given video ID
+@app.get("/video/{video_id}/processing-stats")
+async def get_processing_stats(video_id: str):
+    logger.info(f"Received request for processing stats of video: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
+
+    if stats_blob.exists():
+        stats = json.loads(stats_blob.download_as_string())
+        return stats
+    else:
+        raise HTTPException(status_code=404, detail="Processing stats not found")
+########################################################
+
+## VIDEO FRAME ENDPOINT (GET)   
+## Returns the first frame of the video as a JPEG image
+@app.get("/video/{video_id}/first-frame")
 async def get_video_frame(video_id: str):
     logger.info(f"Received request for first frame of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
@@ -248,19 +260,10 @@ async def get_video_frame(video_id: str):
         return StreamingResponse(BytesIO(frame_data), media_type="image/jpeg")
     else:
         raise HTTPException(status_code=404, detail="First frame not found")
-    
-@app.get("/video/{video_id}")
-async def get_video_details(video_id: str):
-    logger.info(f"Received request for video details: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    status_blob = bucket.blob(f'{video_id}/status.json')
+########################################################
 
-    if status_blob.exists():
-        status_data = json.loads(status_blob.download_as_string())
-        return status_data
-    else:
-        raise HTTPException(status_code=404, detail="Video not found")
-
+## VIDEO FRAMES ENDPOINT (GET)
+## Returns a list of all video frames
 @app.get("/video/{video_id}/frames")
 async def get_video_frames(video_id: str) -> List[dict]:
     logger.info(f"Received request for video frames: {video_id}")
@@ -278,7 +281,10 @@ async def get_video_frames(video_id: str) -> List[dict]:
             })
     
     return sorted(frames, key=lambda x: x["number"])
+########################################################
 
+## TRANSCRIPT ENDPOINT (GET)
+## Returns the transcript.json for a given video ID
 @app.get("/video/{video_id}/transcript")
 async def get_transcript(video_id: str):
     bucket = storage_client.bucket(PROCESSING_BUCKET)
@@ -289,7 +295,34 @@ async def get_transcript(video_id: str):
         return transcript
     else:
         raise HTTPException(status_code=404, detail="Transcript not found")
+########################################################
 
+## UPDATE VIDEO NAME ENDPOINT (POST)
+## Updates the name of a video
+@app.post("/video/{video_id}/update-name")
+async def update_video_name(video_id: str, name: str):
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    status_blob = bucket.blob(f'{video_id}/status.json')
+    stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
+    
+    if not status_blob.exists() or not stats_blob.exists():
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Update status.json
+    status_data = json.loads(status_blob.download_as_string())
+    status_data['name'] = name
+    status_blob.upload_from_string(json.dumps(status_data), content_type='application/json')
+
+    # Update processing_stats.json
+    stats_data = json.loads(stats_blob.download_as_string())
+    stats_data['name'] = name
+    stats_blob.upload_from_string(json.dumps(stats_data), content_type='application/json')
+
+    return {"message": "Video name updated successfully"}
+########################################################
+
+## DOWNLOAD ENDPOINT (GET)
+## Downloads a file for a given video ID and file type
 @app.get("/video/{video_id}/download/{file_type}")
 async def download_file(video_id: str, file_type: str):
     logger.info(f"Received download request for {file_type} of video: {video_id}")
@@ -316,43 +349,25 @@ async def download_file(video_id: str, file_type: str):
         return FileResponse(temp_file.name, media_type='application/octet-stream', filename=filename)
     else:
         raise HTTPException(status_code=404, detail=f"{file_type.capitalize()} not found")
+########################################################
 
-@app.get("/video/{video_id}/ocr/results")
-async def get_ocr_results(video_id: str):
-    logger.info(f"Received request for OCR results of video: {video_id}")
+## WORD CLOUD ENDPOINT (GET)
+## Returns the wordcloud.jpg for a given video ID
+@app.get("/video/{video_id}/ocr/wordcloud")
+async def get_word_cloud(video_id: str):
+    logger.info(f"Received request for word cloud of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
-    ocr_blob = bucket.blob(f'{video_id}/ocr/ocr_results.json')
+    wordcloud_blob = bucket.blob(f'{video_id}/ocr/wordcloud.jpg')
 
-    if ocr_blob.exists():
-        ocr_results = json.loads(ocr_blob.download_as_string())
-        return ocr_results
+    if wordcloud_blob.exists():
+        image_data = wordcloud_blob.download_as_bytes()
+        return StreamingResponse(BytesIO(image_data), media_type="image/jpeg")
     else:
-        raise HTTPException(status_code=404, detail="OCR results not found")
+            raise HTTPException(status_code=404, detail="Text Detection word cloud not found")
+########################################################
 
-@app.get("/video/{video_id}/ocr/processed-ocr")
-async def get_processed_ocr_results(video_id: str):
-    logger.info(f"Received request for processed OCR results of video: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    ocr_blob = bucket.blob(f'{video_id}/ocr/processed_ocr.json')
-
-    if ocr_blob.exists():
-        ocr_results = json.loads(ocr_blob.download_as_string())
-        return ocr_results
-    else:
-        raise HTTPException(status_code=404, detail="Processed OCR results not found")
-    
-@app.get("/video/{video_id}/ocr/brands-ocr")
-async def get_processed_ocr_results(video_id: str):
-    logger.info(f"Received request for brand OCR results of video: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    ocr_blob = bucket.blob(f'{video_id}/ocr/brands_ocr.json')
-
-    if ocr_blob.exists():
-        ocr_results = json.loads(ocr_blob.download_as_string())
-        return ocr_results
-    else:
-        raise HTTPException(status_code=404, detail="Brands OCR results not found")
-    
+## BRANDS OCR TABLE ENDPOINT (GET)
+## Returns the brands_table.json for a given video ID
 @app.get("/video/{video_id}/ocr/brands-ocr-table")
 async def get_processed_ocr_results(video_id: str):
     logger.info(f"Received request for brand OCR results of video: {video_id}")
@@ -364,19 +379,10 @@ async def get_processed_ocr_results(video_id: str):
         return ocr_results
     else:
         raise HTTPException(status_code=404, detail="Brands OCR results not found")
-    
-@app.get("/video/{video_id}/ocr/wordcloud")
-async def get_word_cloud(video_id: str):
-    logger.info(f"Received request for word cloud of video: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    wordcloud_blob = bucket.blob(f'{video_id}/ocr/wordcloud.jpg')
+########################################################
 
-    if wordcloud_blob.exists():
-        image_data = wordcloud_blob.download_as_bytes()
-        return StreamingResponse(BytesIO(image_data), media_type="image/jpeg")
-    else:
-        raise HTTPException(status_code=404, detail="Text Detection word cloud not found")
-
+## REPROCESS OCR ENDPOINT (POST)
+## Reprocesses the OCR for a given video ID
 @app.post("/video/{video_id}/ocr/reprocess-ocr")
 async def reprocess_ocr(video_id: str):
     logger.info(f"Received request to reprocess OCR for video: {video_id}")
@@ -394,18 +400,56 @@ async def reprocess_ocr(video_id: str):
         return {"status": "success", "message": "OCR results reprocessed and saved"}
     else:
         raise HTTPException(status_code=404, detail="OCR results not found for reprocessing")
-    
-@app.get("/video/{video_id}/processing-stats")
-async def get_processing_stats(video_id: str):
-    logger.info(f"Received request for processing stats of video: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
+########################################################
 
-    if stats_blob.exists():
-        stats = json.loads(stats_blob.download_as_string())
-        return stats
+## OCR RESULTS ENDPOINT (GET)
+## Returns the ocr_results.json for a given video ID
+@app.get("/video/{video_id}/ocr/results")
+async def get_ocr_results(video_id: str):
+    logger.info(f"Received request for OCR results of video: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    ocr_blob = bucket.blob(f'{video_id}/ocr/ocr_results.json')
+
+    if ocr_blob.exists():
+        ocr_results = json.loads(ocr_blob.download_as_string())
+        return ocr_results
     else:
-        raise HTTPException(status_code=404, detail="Processing stats not found")
+        raise HTTPException(status_code=404, detail="OCR results not found")
+########################################################
+
+## PROCESSED OCR RESULTS ENDPOINT (GET)
+## Returns the processed_ocr.json for a given video ID
+@app.get("/video/{video_id}/ocr/processed-ocr")
+async def get_processed_ocr_results(video_id: str):
+    logger.info(f"Received request for processed OCR results of video: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    ocr_blob = bucket.blob(f'{video_id}/ocr/processed_ocr.json')
+
+    if ocr_blob.exists():
+        ocr_results = json.loads(ocr_blob.download_as_string())
+        return ocr_results
+    else:
+        raise HTTPException(status_code=404, detail="Processed OCR results not found")
+########################################################
+
+## BRANDS OCR ENDPOINT (GET)
+## Returns the brands_ocr.json for a given video ID
+@app.get("/video/{video_id}/ocr/brands-ocr")
+async def get_processed_ocr_results(video_id: str):
+    logger.info(f"Received request for brand OCR results of video: {video_id}")
+    bucket = storage_client.bucket(PROCESSING_BUCKET)
+    ocr_blob = bucket.blob(f'{video_id}/ocr/brands_ocr.json')
+
+    if ocr_blob.exists():
+        ocr_results = json.loads(ocr_blob.download_as_string())
+        return ocr_results
+    else:
+        raise HTTPException(status_code=404, detail="Brands OCR results not found")
+########################################################
+    
+########################################################
+## FUNCTIONS                                          ##
+########################################################
 
 async def run_video_processing(video_id: str):
     try:

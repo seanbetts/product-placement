@@ -23,12 +23,21 @@ const capitalizeWords = (str) => {
 const TextDetectionSection = ({ videoId }) => {
   const dispatch = useDispatch();
 
-  const { wordCloud, brandTable, loading, error } = useSelector(state => state.ocr);
+  const { wordCloud, brandTable, loading, error } = useSelector(state => ({
+    wordCloud: state.ocr.data.wordCloud[videoId],
+    brandTable: state.ocr.data.brandTable[videoId],
+    loading: state.ocr.status.loading,
+    error: state.ocr.status.error
+  }));
 
   useEffect(() => {
-    dispatch(fetchOcrWordCloud(videoId));
-    dispatch(fetchBrandsOcrTable(videoId));
-  }, [dispatch, videoId]);
+    if (!wordCloud) {
+      dispatch(fetchOcrWordCloud(videoId));
+    }
+    if (!brandTable) {
+      dispatch(fetchBrandsOcrTable(videoId));
+    }
+  }, [dispatch, videoId, wordCloud, brandTable]);
 
   if (loading) {
     return <CircularProgress />;
@@ -36,6 +45,10 @@ const TextDetectionSection = ({ videoId }) => {
 
   if (error) {
     return <Alert severity="error">{error}</Alert>;
+  }
+
+  if (!wordCloud || !brandTable) {
+    return <Typography>Loading text detection data...</Typography>;
   }
 
   return (
@@ -52,9 +65,9 @@ const TextDetectionSection = ({ videoId }) => {
               bgcolor: 'white'
             }}
           >
-            {wordCloud[videoId] && (
+            {wordCloud && wordCloud.url && (
               <img 
-                src={wordCloud[videoId].url} 
+                src={wordCloud.url} 
                 alt="Word Cloud" 
                 style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
               />
@@ -79,7 +92,7 @@ const TextDetectionSection = ({ videoId }) => {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {brandTable[videoId] && Object.entries(brandTable[videoId].data).map(([brand, data]) => (
+                {brandTable && brandTable.data && Object.entries(brandTable.data).map(([brand, data]) => (
                   <TableRow key={brand}>
                     <TableCell component="th" scope="row">
                       {capitalizeWords(brand)}

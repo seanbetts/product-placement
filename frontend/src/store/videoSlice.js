@@ -16,7 +16,18 @@ export const fetchVideoDetails = createAsyncThunk(
   'videos/fetchVideoDetails',
   async (videoId, { rejectWithValue }) => {
     try {
-      return await api.getVideoDetails(videoId);
+      return await api.getProcessingStats(videoId);
+    } catch (error) {
+      return rejectWithValue(error.message);
+    }
+  }
+);
+
+export const fetchFirstVideoFrame = createAsyncThunk(
+  'videos/fetchFirstVideoFrame',
+  async (videoId, { rejectWithValue }) => {
+    try {
+      return await api.getFirstVideoFrame(videoId);
     } catch (error) {
       return rejectWithValue(error.message);
     }
@@ -70,92 +81,98 @@ export const downloadFile = createAsyncThunk(
 const videoSlice = createSlice({
   name: 'videos',
   initialState: {
-    list: [],
-    details: {},
-    frames: {},
-    transcript: {},
-    loading: false,
-    error: null,
-    lastFetched: null,
-    searchTerm: '',
-    isEditingName: false,
-    editingName: '',
-    snackbar: { open: false, message: '', severity: 'success' },
+    data: {
+      list: [],
+      details: {},
+      frames: {},
+      transcript: {},
+    },
+    status: {
+      loading: false,
+      error: null,
+      lastFetched: null,
+    },
+    ui: {
+      searchTerm: '',
+      isEditingName: false,
+      editingName: '',
+      snackbar: { open: false, message: '', severity: 'success' },
+    },
   },
   reducers: {
     setVideos: (state, action) => {
-      state.list = action.payload.videos;
-      state.lastFetched = action.payload.lastFetched;
+      state.data.list = action.payload.videos;
+      state.status.lastFetched = action.payload.lastFetched;
     },
     setVideoFrames: (state, action) => {
-      state.frames[action.payload.id] = action.payload.frames;
+      state.data.frames[action.payload.id] = action.payload.frames;
     },
     setLoading: (state, action) => {
-      state.loading = action.payload;
+      state.status.loading = action.payload;
     },
     setError: (state, action) => {
-      state.error = action.payload;
+      state.status.error = action.payload;
     },
     setSearchTerm: (state, action) => {
-      state.searchTerm = action.payload;
+      state.ui.searchTerm = action.payload;
     },
     setIsEditingName: (state, action) => {
-      state.isEditingName = action.payload;
+      state.ui.isEditingName = action.payload;
     },
     setEditingName: (state, action) => {
-      state.editingName = action.payload;
+      state.ui.editingName = action.payload;
     },
     setSnackbar: (state, action) => {
-      state.snackbar = action.payload;
+      state.ui.snackbar = action.payload;
     },
   },
   extraReducers: (builder) => {
     builder
       .addCase(fetchProcessedVideos.pending, (state) => {
-        state.loading = true;
+        state.status.loading = true;
       })
       .addCase(fetchProcessedVideos.fulfilled, (state, action) => {
-        state.loading = false;
-        state.list = action.payload;
+        state.status.loading = false;
+        state.data.list = action.payload;
       })
       .addCase(fetchProcessedVideos.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
+        state.status.loading = false;
+        state.status.error = action.payload;
       })
       .addCase(fetchVideoDetails.pending, (state) => {
-        state.loading = true;
-        state.error = null;
+        state.status.loading = true;
+        state.status.error = null;
       })
       .addCase(fetchVideoDetails.fulfilled, (state, action) => {
-        state.loading = false;
-        state.error = null;
-        state.details[action.payload.video_id] = action.payload;
+        state.status.loading = false;
+        state.status.error = null;
+        state.data.details[action.payload.video_id] = action.payload;
       })
       .addCase(fetchVideoDetails.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
+        state.status.loading = false;
+        state.status.error = action.payload;
       })
       .addCase(fetchVideoFrames.fulfilled, (state, action) => {
-        state.frames[action.meta.arg] = {
+        state.data.frames[action.meta.arg] = {
           data: action.payload,
           lastFetched: Date.now()
         };
       })
       .addCase(fetchTranscript.fulfilled, (state, action) => {
-        state.transcript[action.meta.arg] = {
+        state.data.transcript[action.meta.arg] = {
           data: action.payload,
           lastFetched: Date.now()
         };
       })
       .addCase(updateVideoName.fulfilled, (state, action) => {
         const { videoId, newName } = action.meta.arg;
-        if (state.details[videoId]) {
-          state.details[videoId].name = newName;
+        if (state.data.details[videoId]) {
+          state.data.details[videoId].name = newName;
         }
-        state.isEditingName = false;
+        state.ui.isEditingName = false;
       })
       .addCase(downloadFile.rejected, (state, action) => {
-        state.snackbar = { open: true, message: 'Failed to download file', severity: 'error' };
+        state.ui.snackbar = { open: true, message: 'Failed to download file', severity: 'error' };
       });
   },
 });

@@ -50,6 +50,8 @@ test_upload_local.py
 processing_optimisation_test.py
 wwpp-full.mp4
 wwpp-pepsi.mov
+dataRoutes.xlsx
+~$dataRoutes.xlsx
 
 # OS generated files
 .DS_Store

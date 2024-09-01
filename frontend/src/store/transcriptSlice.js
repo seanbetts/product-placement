@@ -16,23 +16,25 @@ const transcriptSlice = createSlice({
   name: 'transcripts',
   initialState: {
     data: {},
-    loading: false,
-    error: null,
+    status: {
+      loading: false,
+      error: null,
+    },
   },
   reducers: {},
   extraReducers: (builder) => {
     builder
       .addCase(fetchTranscript.pending, (state) => {
-        state.loading = true;
-        state.error = null;
+        state.status.loading = true;
+        state.status.error = null;
       })
       .addCase(fetchTranscript.fulfilled, (state, action) => {
-        state.loading = false;
+        state.status.loading = false;
         state.data[action.meta.arg] = action.payload;
       })
       .addCase(fetchTranscript.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
+        state.status.loading = false;
+        state.status.error = action.payload;
       });
   },
 });
