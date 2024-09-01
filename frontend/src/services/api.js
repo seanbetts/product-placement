@@ -10,17 +10,38 @@ const isCacheValid = (timestamp) => {
 
 const api = {
   getProcessedVideos: async () => {
+    const cacheKey = 'processedVideos';
+    const cachedData = localStorage.getItem(cacheKey);
+    const cachedTimestamp = localStorage.getItem(`${cacheKey}_timestamp`);
+
+    if (cachedData && isCacheValid(parseInt(cachedTimestamp))) {
+      return JSON.parse(cachedData);
+    }
+
     try {
       const response = await axios.get(`${API_BASE_URL}/processed-videos`);
-      return Array.isArray(response.data) ? response.data : [];
+      const data = Array.isArray(response.data) ? response.data : [];
+      localStorage.setItem(cacheKey, JSON.stringify(data));
+      localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
+      return data;
     } catch (error) {
       throw error;
     }
   },
 
   getVideoDetails: async (videoId) => {
+    const cacheKey = `videoDetails_${videoId}`;
+    const cachedData = localStorage.getItem(cacheKey);
+    const cachedTimestamp = localStorage.getItem(`${cacheKey}_timestamp`);
+
+    if (cachedData && isCacheValid(parseInt(cachedTimestamp))) {
+      return JSON.parse(cachedData);
+    }
+
     try {
       const response = await axios.get(`${API_BASE_URL}/video/${videoId}`);
+      localStorage.setItem(cacheKey, JSON.stringify(response.data));
+      localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
       return response.data;
     } catch (error) {
       throw error;
@@ -28,8 +49,18 @@ const api = {
   },
 
   getVideoFrames: async (videoId) => {
+    const cacheKey = `videoFrames_${videoId}`;
+    const cachedData = localStorage.getItem(cacheKey);
+    const cachedTimestamp = localStorage.getItem(`${cacheKey}_timestamp`);
+  
+    if (cachedData && isCacheValid(parseInt(cachedTimestamp))) {
+      return JSON.parse(cachedData);
+    }
+  
     try {
       const response = await axios.get(`${API_BASE_URL}/video/${videoId}/frames`);
+      localStorage.setItem(cacheKey, JSON.stringify(response.data));
+      localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
       return response.data;
     } catch (error) {
       throw error;
@@ -37,8 +68,18 @@ const api = {
   },
 
   getTranscript: async (videoId) => {
+    const cacheKey = `transcript_${videoId}`;
+    const cachedData = localStorage.getItem(cacheKey);
+    const cachedTimestamp = localStorage.getItem(`${cacheKey}_timestamp`);
+  
+    if (cachedData && isCacheValid(parseInt(cachedTimestamp))) {
+      return JSON.parse(cachedData);
+    }
+  
     try {
       const response = await axios.get(`${API_BASE_URL}/video/${videoId}/transcript`);
+      localStorage.setItem(cacheKey, JSON.stringify(response.data));
+      localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
       return response.data;
     } catch (error) {
       throw error;
@@ -46,8 +87,18 @@ const api = {
   },
 
   getOcrResults: async (videoId) => {
+    const cacheKey = `ocrResults_${videoId}`;
+    const cachedData = localStorage.getItem(cacheKey);
+    const cachedTimestamp = localStorage.getItem(`${cacheKey}_timestamp`);
+  
+    if (cachedData && isCacheValid(parseInt(cachedTimestamp))) {
+      return JSON.parse(cachedData);
+    }
+  
     try {
       const response = await axios.get(`${API_BASE_URL}/video/${videoId}/ocr/results`);
+      localStorage.setItem(cacheKey, JSON.stringify(response.data));
+      localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
       return response.data;
     } catch (error) {
       throw error;
@@ -55,8 +106,18 @@ const api = {
   },
 
   getOcrWordCloud: async (videoId) => {
+    const cacheKey = `ocrWordCloud_${videoId}`;
+    const cachedData = localStorage.getItem(cacheKey);
+    const cachedTimestamp = localStorage.getItem(`${cacheKey}_timestamp`);
+  
+    if (cachedData && isCacheValid(parseInt(cachedTimestamp))) {
+      return JSON.parse(cachedData);
+    }
+  
     try {
       const response = await axios.get(`${API_BASE_URL}/video/${videoId}/ocr/wordcloud`);
+      localStorage.setItem(cacheKey, JSON.stringify(response.data));
+      localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
       return response.data;
     } catch (error) {
       throw error;
@@ -64,8 +125,18 @@ const api = {
   },
 
   getBrandsOcrTable: async (videoId) => {
+    const cacheKey = `brandsOcrTable_${videoId}`;
+    const cachedData = localStorage.getItem(cacheKey);
+    const cachedTimestamp = localStorage.getItem(`${cacheKey}_timestamp`);
+  
+    if (cachedData && isCacheValid(parseInt(cachedTimestamp))) {
+      return JSON.parse(cachedData);
+    }
+  
     try {
       const response = await axios.get(`${API_BASE_URL}/video/${videoId}/ocr/brands-ocr-table`);
+      localStorage.setItem(cacheKey, JSON.stringify(response.data));
+      localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
       return response.data;
     } catch (error) {
       throw error;
@@ -73,8 +144,18 @@ const api = {
   },
 
   getProcessingStats: async (videoId) => {
+    const cacheKey = `processingStats_${videoId}`;
+    const cachedData = localStorage.getItem(cacheKey);
+    const cachedTimestamp = localStorage.getItem(`${cacheKey}_timestamp`);
+  
+    if (cachedData && isCacheValid(parseInt(cachedTimestamp))) {
+      return JSON.parse(cachedData);
+    }
+  
     try {
       const response = await axios.get(`${API_BASE_URL}/video/${videoId}/processing-stats`);
+      localStorage.setItem(cacheKey, JSON.stringify(response.data));
+      localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
       return response.data;
     } catch (error) {
       throw error;
@@ -84,6 +165,11 @@ const api = {
   updateVideoName: async (videoId, newName) => {
     try {
       const response = await axios.put(`${API_BASE_URL}/video/${videoId}/update-name`, { name: newName });
+      // Invalidate relevant caches
+      localStorage.removeItem(`videoDetails_${videoId}`);
+      localStorage.removeItem(`videoDetails_${videoId}_timestamp`);
+      localStorage.removeItem(`processedVideos`);
+      localStorage.removeItem(`processedVideos_timestamp`);
       return response.data;
     } catch (error) {
       throw error;
