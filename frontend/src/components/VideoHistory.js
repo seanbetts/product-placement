@@ -344,6 +344,9 @@ const VideoHistory = () => {
           </Grid>
         </Grid>
       </Box>
+
+      <Divider sx={{ my: 4 }} />
+      
       <Grid container spacing={3}>
         {filteredVideos.map((video) => (
           <Grid item xs={12} sm={6} md={4} key={video.video_id}>

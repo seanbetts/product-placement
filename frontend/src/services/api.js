@@ -1,9 +1,12 @@
 import axios from 'axios';
 import { 
-  setVideos, 
-  setVideoDetails, 
-  setLoading as setVideoLoading, 
-  setError as setVideoError 
+  setVideos,
+  fetchVideoDetails,
+  updateVideoName,
+  setSnackbar,
+  setVideoFrames,
+  setLoading,
+  setError
 } from '../store/videoSlice';
 import { 
   setTranscript, 
@@ -12,11 +15,11 @@ import {
 } from '../store/transcriptSlice';
 import { 
   setOcrResults, 
-  setWordCloud, 
-  setBrandTable, 
   setProcessingStats, 
   setLoading as setOcrLoading, 
-  setError as setOcrError 
+  setError as setOcrError,
+  fetchOcrWordCloud,
+  fetchBrandsOcrTable
 } from '../store/ocrSlice';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
@@ -30,7 +33,6 @@ const isCacheValid = (timestamp) => {
 const api = {
   getProcessedVideos: async (dispatch) => {
     try {
-      dispatch(setVideoLoading(true));
       const response = await axios.get(`${API_BASE_URL}/processed-videos`);
       const videos = response.data;
       
@@ -38,11 +40,9 @@ const api = {
       const videoArray = Array.isArray(videos) ? videos : [];
       
       dispatch(setVideos({ videos: videoArray, lastFetched: Date.now() }));
-      dispatch(setVideoLoading(false));
       return videoArray;
     } catch (error) {
-      dispatch(setVideoError(error.message));
-      dispatch(setVideoLoading(false));
+      dispatch(setSnackbar({ open: true, message: 'Error fetching processed videos', severity: 'error' }));
       throw error;
     }
   },
@@ -56,15 +56,32 @@ const api = {
     }
 
     try {
-      dispatch(setVideoLoading(true));
-      const response = await axios.get(`${API_BASE_URL}/video/${videoId}`);
-      const details = response.data;
-      dispatch(setVideoDetails({ id: videoId, details: { ...details, lastFetched: Date.now() } }));
-      dispatch(setVideoLoading(false));
-      return details;
+      const action = await dispatch(fetchVideoDetails(videoId));
+      return action.payload;
     } catch (error) {
-      dispatch(setVideoError(error.message));
-      dispatch(setVideoLoading(false));
+      dispatch(setSnackbar({ open: true, message: 'Error fetching video details', severity: 'error' }));
+      throw error;
+    }
+  },
+
+  getVideoFrames: async (videoId, dispatch, getState) => {
+    const state = getState();
+    const frames = state.videos.frames[videoId];
+
+    if (frames && isCacheValid(frames.lastFetched)) {
+      return frames.data;
+    }
+
+    try {
+      dispatch(setLoading(true));
+      const response = await axios.get(`${API_BASE_URL}/video/${videoId}/frames`);
+      const framesData = response.data;
+      dispatch(setVideoFrames({ id: videoId, frames: { data: framesData, lastFetched: Date.now() } }));
+      dispatch(setLoading(false));
+      return framesData;
+    } catch (error) {
+      dispatch(setError(error.message));
+      dispatch(setLoading(false));
       throw error;
     }
   },
@@ -122,21 +139,9 @@ const api = {
     }
 
     try {
-      dispatch(setOcrLoading(true));
-      const response = await axios.get(`${API_BASE_URL}/video/${videoId}/ocr/wordcloud`, { responseType: 'arraybuffer' });
-      const blob = new Blob([response.data], { type: 'image/jpeg' });
-      const wordCloudUrl = URL.createObjectURL(blob);
-      dispatch(setWordCloud({ id: videoId, wordCloud: { url: wordCloudUrl, lastFetched: Date.now() } }));
-      dispatch(setOcrLoading(false));
-      return wordCloudUrl;
+      const action = await dispatch(fetchOcrWordCloud(videoId));
+      return action.payload.wordCloudUrl;
     } catch (error) {
-      dispatch(setOcrLoading(false));
-      if (error.response && error.response.status === 404) {
-        const errorMessage = 'Word cloud not found';
-        dispatch(setOcrError(errorMessage));
-        throw new Error(errorMessage);
-      }
-      dispatch(setOcrError(error.message));
       throw error;
     }
   },
@@ -150,20 +155,9 @@ const api = {
     }
 
     try {
-      dispatch(setOcrLoading(true));
-      const response = await axios.get(`${API_BASE_URL}/video/${videoId}/ocr/brands-ocr-table`);
-      const tableData = response.data;
-      dispatch(setBrandTable({ id: videoId, brandTable: { data: tableData, lastFetched: Date.now() } }));
-      dispatch(setOcrLoading(false));
-      return tableData;
+      const action = await dispatch(fetchBrandsOcrTable(videoId));
+      return action.payload.brandTableData;
     } catch (error) {
-      dispatch(setOcrLoading(false));
-      if (error.response && error.response.status === 404) {
-        const errorMessage = 'Brands OCR table not found';
-        dispatch(setOcrError(errorMessage));
-        throw new Error(errorMessage);
-      }
-      dispatch(setOcrError(error.message));
       throw error;
     }
   },
@@ -197,32 +191,17 @@ const api = {
 
   updateVideoName: async (videoId, name, dispatch) => {
     try {
-      dispatch(setVideoLoading(true));
-      const response = await axios.post(`${API_BASE_URL}/video/${videoId}/update-name`, null, {
-        params: { name }
-      });
-      dispatch(setVideoDetails({ id: videoId, details: { ...response.data, name } }));
-      dispatch(setVideoLoading(false));
-      return { success: true, data: response.data };
-    } catch (error) {
-      dispatch(setVideoLoading(false));
-      console.error('Error updating video name:', error);
-      let errorMessage;
-      if (error.response) {
-        errorMessage = error.response.data || error.response.statusText;
-        dispatch(setVideoError(errorMessage));
-        return {
-          success: false,
-          error: errorMessage,
-          status: error.response.status
-        };
-      } else if (error.request) {
-        errorMessage = 'No response received from server';
+      const action = await dispatch(updateVideoName({ videoId, newName: name }));
+      if (action.payload.success) {
+        dispatch(setSnackbar({ open: true, message: 'Video name updated successfully', severity: 'success' }));
       } else {
-        errorMessage = 'Error setting up the request';
+        throw new Error(action.payload.error);
       }
-      dispatch(setVideoError(errorMessage));
-      return { success: false, error: errorMessage };
+      return action.payload;
+    } catch (error) {
+      console.error('Error updating video name:', error);
+      dispatch(setSnackbar({ open: true, message: `Error updating video name: ${error.message}`, severity: 'error' }));
+      return { success: false, error: error.message };
     }
   },
 };

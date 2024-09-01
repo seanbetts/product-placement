@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
 import { 
   Typography, 
   Box, 
@@ -26,129 +27,51 @@ import SearchIcon from '@mui/icons-material/Search';
 import EditIcon from '@mui/icons-material/Edit';
 import SaveIcon from '@mui/icons-material/Save';
 import CancelIcon from '@mui/icons-material/Cancel';
-import api from '../services/api';
+import {
+  fetchVideoDetails,
+  fetchVideoFrames,
+  fetchTranscript,
+  updateVideoName,
+  downloadFile,
+  setSearchTerm,
+  setIsEditingName,
+  setEditingName,
+  setSnackbar
+} from '../store/videoSlice';
 import TextDetectionSection from './TextDetectionSection';
 
 const VideoDetails = () => {
   const { videoId } = useParams();
-  const [processingStats, setProcessingStats] = useState(null);
-  const [frames, setFrames] = useState([]);
-  const [transcript, setTranscript] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const dispatch = useDispatch();
+  const { list: videos } = useSelector(state => state.videos);
+
+  const video = videos.find(v => v.video_id === videoId);
+  const videoDetails = useSelector(state => state.videos.details[videoId]);
+  const frames = useSelector(state => state.videos.frames[videoId]?.data);
+  const transcript = useSelector(state => state.videos.transcript[videoId]?.data);
+  const searchTerm = useSelector(state => state.videos.searchTerm);
+  const isEditingName = useSelector(state => state.videos.isEditingName);
+  const editingName = useSelector(state => state.videos.editingName);
+  const snackbar = useSelector(state => state.videos.snackbar);
+
   const [imagesLoaded, setImagesLoaded] = useState({});
-  const [searchTerm, setSearchTerm] = useState('');
-  const [videoName, setVideoName] = useState('');
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
-  const [editingName, setEditingName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    const fetchVideoDetails = async () => {
+    const fetchData = async () => {
       try {
-        setLoading(true);
-        const stats = await api.getProcessingStats(videoId);
-        setProcessingStats(stats);
-        setVideoName(stats.name || '');
-
-        // Fetch frames and transcript in parallel
-        const [framesData, transcriptData] = await Promise.all([
-          api.getVideoFrames(videoId),
-          api.getTranscript(videoId)
-        ]);
-
-        setFrames(framesData);
-        setImagesLoaded(framesData.reduce((acc, frame) => ({ ...acc, [frame.number]: false }), {}));
-        setTranscript(transcriptData);
-
-        setLoading(false);
-      } catch (err) {
-        console.error('Error fetching video details:', err);
-        setError('Failed to load video details. Please try again later.');
-        setLoading(false);
+        if (!video) {
+          await dispatch(fetchVideoDetails(videoId)).unwrap();
+        }
+        await dispatch(fetchVideoFrames(videoId)).unwrap();
+        await dispatch(fetchTranscript(videoId)).unwrap();
+      } catch (error) {
+        console.error('Error fetching video data:', error);
+        dispatch(setSnackbar({ open: true, message: 'Error fetching video data', severity: 'error' }));
       }
     };
-
-    fetchVideoDetails();
-  }, [videoId]);
-  const handleNameEdit = () => {
-    setEditingName(videoName || videoId);
-    setIsEditingName(true);
-  };
-
-  const handleNameChange = (event) => {
-    setEditingName(event.target.value);
-  };
-
-  const handleNameSubmit = async () => {
-    if (editingName === videoName) {
-      setIsEditingName(false);
-      return;
-    }
-  
-    setIsSubmitting(true);
-    try {
-      const result = await api.updateVideoName(videoId, editingName);
-      if (result.success) {
-        setVideoName(editingName);
-        setIsEditingName(false);
-        setProcessingStats(prevStats => ({ ...prevStats, name: editingName }));
-        setSnackbar({ open: true, message: 'Video name updated successfully', severity: 'success' });
-      } else {
-        throw new Error(JSON.stringify(result.error));
-      }
-    } catch (error) {
-      console.error('Error updating video name:', error);
-      let errorMessage = 'Failed to update video name. Please try again later.';
-      
-      if (error.response && error.response.data) {
-        if (error.response.data.detail && Array.isArray(error.response.data.detail)) {
-          errorMessage = error.response.data.detail.map(err => err.msg).join(', ');
-        } else if (typeof error.response.data === 'object') {
-          errorMessage = JSON.stringify(error.response.data);
-        }
-      } else if (error.message) {
-        try {
-          const parsedError = JSON.parse(error.message);
-          if (parsedError.detail && Array.isArray(parsedError.detail)) {
-            errorMessage = parsedError.detail.map(err => err.msg).join(', ');
-          } else {
-            errorMessage = JSON.stringify(parsedError);
-          }
-        } catch {
-          errorMessage = error.message;
-        }
-      }
-      
-      setSnackbar({ open: true, message: errorMessage, severity: 'error' });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleNameCancel = () => {
-    setIsEditingName(false);
-    setEditingName(videoName || videoId);
-  };
-
-  const formatDate = (isoString) => {
-    const date = new Date(isoString);
-    return date.toLocaleString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    });
-  };
-  const formatTime = (seconds) => {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.floor(seconds % 60);
-    return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
-  };
-
+    fetchData();
+  }, [dispatch, videoId, video]);
 
   const sentenceTranscript = useMemo(() => {
     if (!Array.isArray(transcript) || transcript.length === 0) {
@@ -158,7 +81,7 @@ const VideoDetails = () => {
     let sentences = [];
     let currentSentence = { words: [], start_time: null, end_time: null, totalConfidence: 0, totalLength: 0 };
 
-    transcript?.forEach((word, index) => {
+    transcript.forEach((word, index) => {
       if (!currentSentence.start_time) {
         currentSentence.start_time = word.start_time;
       }
@@ -180,6 +103,87 @@ const VideoDetails = () => {
 
     return sentences;
   }, [transcript]);
+
+  const filteredTranscript = useMemo(() => {
+    if (!searchTerm) return sentenceTranscript;
+    return sentenceTranscript.filter(sentence => 
+      sentence?.text?.toLowerCase().includes(searchTerm?.toLowerCase())
+    );
+  }, [sentenceTranscript, searchTerm]);
+
+  const handleNameEdit = () => {
+    dispatch(setEditingName(videoName || videoId));
+    dispatch(setIsEditingName(true));
+  };  
+
+  const handleNameChange = (event) => {
+    dispatch(setEditingName(event.target.value));
+  };
+
+  const handleNameSubmit = async () => {
+    if (editingName === videoDetails?.name) {
+      dispatch(setIsEditingName(false));
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      await dispatch(updateVideoName({ videoId, newName: editingName })).unwrap();
+    } catch (error) {
+      console.error('Error updating video name:', error);
+      dispatch(setSnackbar({ open: true, message: 'Error updating video name', severity: 'error' }));
+    }
+    setIsSubmitting(false);
+  };
+
+  const handleNameCancel = () => {
+    dispatch(setIsEditingName(false));
+    dispatch(setEditingName(videoName || videoId));
+  };
+
+  const handleSearchChange = (event) => {
+    dispatch(setSearchTerm(event.target.value));
+  };
+
+  const handleDownload = async (fileType) => {
+    try {
+      await dispatch(downloadFile({ videoId, fileType })).unwrap();
+      // Handle successful download (e.g., open the file in a new tab)
+    } catch (error) {
+      console.error('Error downloading file:', error);
+      dispatch(setSnackbar({ open: true, message: 'Error downloading file', severity: 'error' }));
+    }
+  };
+
+  const handleImageLoad = (frameNumber) => {
+    setImagesLoaded(prev => ({ ...prev, [frameNumber]: true }));
+  };
+
+  const handleSnackbarClose = (event, reason) => {
+    if (reason === 'clickaway') {
+      return;
+    }
+    dispatch(setSnackbar({ ...snackbar, open: false }));
+  };
+
+  const formatDate = (isoString) => {
+    if (!isoString) return 'N/A';
+    const date = new Date(isoString);
+    return date?.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
+  };
+
+  const formatTime = (seconds) => {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+  };
+
   const highlightText = (text, highlight) => {
     if (!highlight.trim()) {
       return <span>{text}</span>;
@@ -199,86 +203,46 @@ const VideoDetails = () => {
     );
   };
 
-  const filteredTranscript = useMemo(() => {
-    if (!searchTerm) return sentenceTranscript;
-    return sentenceTranscript.filter(sentence => 
-      sentence?.text?.toLowerCase().includes(searchTerm?.toLowerCase())
+  const videoLoading = useSelector(state => state.videos.loading);
+  const framesLoading = useSelector(state => state.videos.framesLoading);
+  const transcriptLoading = useSelector(state => state.videos.transcriptLoading);
+  const videoError = useSelector(state => state.videos.error);
+  const framesError = useSelector(state => state.videos.framesError);
+  const transcriptError = useSelector(state => state.videos.transcriptError);
+
+  if (videoLoading || framesLoading || transcriptLoading) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
+        <CircularProgress />
+      </Box>
     );
-  }, [sentenceTranscript, searchTerm]);
+  }
 
-  const handleSearchChange = (event) => {
-    setSearchTerm(event.target.value);
-  };
+  if (videoError || framesError || transcriptError) {
+    return (
+      <Typography color="error" align="center">
+        Error: {videoError || framesError || transcriptError}
+      </Typography>
+    );
+  }
 
-  const handleDownload = async (fileType) => {
-    try {
-      const response = await api.downloadFile(videoId, fileType);
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.style.display = 'none';
-      a.href = url;
+  if (!video) {
+    return <Typography>No video details available</Typography>;
+  }
 
-      const contentDisposition = response.headers.get('Content-Disposition');
-      let filename = `${videoId}_${fileType}`;
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/i);
-        if (filenameMatch) {
-          filename = filenameMatch[1];
-        }
-      } else {
-        filename += getFileExtension(fileType);
-      }
-
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error(`Error downloading ${fileType}:`, error);
-    }
-  };
-  const getFileExtension = (fileType) => {
-    switch(fileType) {
-      case 'video':
-        return '.mp4';
-      case 'audio':
-        return '.mp3';
-      case 'transcript':
-        return '.txt';
-      case 'word-cloud':
-        return '.jpg';
-      default:
-        return '';
-    }
-  };
-
-  const handleImageLoad = (frameNumber) => {
-    setImagesLoaded(prev => ({ ...prev, [frameNumber]: true }));
-  };
-
-  const handleSnackbarClose = (event, reason) => {
-    if (reason === 'clickaway') {
-      return;
-    }
-    setSnackbar({ ...snackbar, open: false });
-  };
-
-  if (loading) return <CircularProgress />;
-  if (error) return <Typography color="error">{error}</Typography>;
-  if (!processingStats) return <Typography>No video details available</Typography>;
-
+  // Destructure video.details here
   const {
-    video_length,
-    video,
-    audio,
-    transcription,
-    ocr,
+    name: videoName,
+    video_length, 
+    video: videoStats,
+    audio, 
+    transcription, 
+    ocr, 
     total_processing_start_time,
     total_processing_end_time,
-    total_processing_time,
-    total_processing_speed
-  } = processingStats;
+    total_processing_time = 'N/A',
+    total_processing_speed = 'N/A'
+  } = video.details || {};
 
   return (
     <Box sx={{ mt: 4 }}>
@@ -330,7 +294,7 @@ const VideoDetails = () => {
             }}
             onDoubleClick={handleNameEdit}
           >
-            {videoName || videoId}
+            {videoName}
             <Tooltip title="Edit name">
               <IconButton 
                 onClick={handleNameEdit}
@@ -358,23 +322,23 @@ const VideoDetails = () => {
 
       <Box sx={{ mt: 2, mb: 4 }}>
         <Typography variant="body1">
-          Uploaded: {formatDate(total_processing_start_time)}
+          Uploaded: {formatDate(total_processing_start_time ?? 'N/A')}
         </Typography>
         <Typography variant="body1">
-          Processing Time: {total_processing_time}
+          Processing Time: {total_processing_time ?? 'N/A'}
         </Typography>
         <Typography variant="body1">
-          Video Length: {video_length}
+          Video Length: {video_length ?? 'N/A'}
         </Typography>
         <Typography variant="body1">
-          Frames Processed: {video?.extracted_frames?.toLocaleString() ?? 'N/A'}
+          Frames Processed: {videoStats?.total_frames?.toLocaleString() ?? 'N/A'}
         </Typography>
       </Box>
       <Divider sx={{ my: 4 }} />
 
       <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Frames</Typography>
       <Box sx={{ overflowX: 'auto', whiteSpace: 'nowrap', mb: 4 }}>
-        {frames.length > 0 ? (
+        {frames && frames.length > 0 ? (
           frames.map((frame) => (
             <Box key={frame.number} sx={{ display: 'inline-block', mr: 2, position: 'relative' }}>
               {!imagesLoaded[frame.number] && (
@@ -420,7 +384,7 @@ const VideoDetails = () => {
             ),
           }}
         />
-        {filteredTranscript.length > 0 ? (
+        {filteredTranscript && filteredTranscript.length > 0 ? (
           <TableContainer component={Paper} sx={{ maxHeight: 400, overflow: 'auto' }}>
             <Table stickyHeader aria-label="transcript table">
               <TableHead>
@@ -448,24 +412,24 @@ const VideoDetails = () => {
         )}
       </Box>
 
-            <Typography variant="h5" gutterBottom>Text Detection</Typography>
-            <TextDetectionSection 
-              videoId={videoId}
-            />
+      <Typography variant="h5" gutterBottom>Text Detection</Typography>
+      <TextDetectionSection 
+        videoId={videoId}
+      />
 
-            <Divider sx={{ my: 4 }} />
+      <Divider sx={{ my: 4 }} />
 
       <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Processing Stats</Typography>
       <Grid container spacing={3} sx={{ mb: 4 }}>
         <Grid item xs={12} md={3}>
           <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             <Typography variant="h6" gutterBottom>Video Stats</Typography>
-            <Typography>Length: {video_length || 'N/A'}</Typography>
-            <Typography>Total Frames: {video?.total_frames?.toLocaleString() ?? 'N/A'}</Typography>
-            <Typography>Extracted Frames: {video?.extracted_frames?.toLocaleString() ?? 'N/A'}</Typography>
-            <Typography>Video FPS: {video.video_fps || 'N/A'}</Typography>
-            <Typography>Processing Time: {video.video_processing_time || 'N/A'}</Typography>
-            <Typography>Processing Speed: {video.video_processing_speed || 'N/A'}</Typography>
+            <Typography>Length: {video_length ?? 'N/A'}</Typography>
+            <Typography>Total Frames: {videoStats?.total_frames?.toLocaleString() ?? 'N/A'}</Typography>
+            <Typography>Extracted Frames: {videoStats?.extracted_frames?.toLocaleString() ?? 'N/A'}</Typography>
+            <Typography>Video FPS: {videoStats?.video_fps ?? 'N/A'}</Typography>
+            <Typography>Processing Time: {videoStats?.video_processing_time ?? 'N/A'}</Typography>
+            <Typography>Processing Speed: {videoStats?.video_processing_speed ?? 'N/A'}</Typography>
             <Box sx={{ flexGrow: 1 }} />
             <Button 
               variant="contained" 
@@ -479,9 +443,9 @@ const VideoDetails = () => {
         <Grid item xs={12} md={3}>
           <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             <Typography variant="h6" gutterBottom>Audio Stats</Typography>
-            <Typography>Length: {audio.audio_length || 'N/A'}</Typography>
-            <Typography>Processing Time: {audio.audio_processing_time || 'N/A'}</Typography>
-            <Typography>Processing Speed: {audio.audio_processing_speed || 'N/A'}</Typography>
+            <Typography>Length: {audio?.audio_length ?? 'N/A'}</Typography>
+            <Typography>Processing Time: {audio?.audio_processing_time ?? 'N/A'}</Typography>
+            <Typography>Processing Speed: {audio?.audio_processing_speed ?? 'N/A'}</Typography>
             <Box sx={{ flexGrow: 1 }} />
             <Button 
               variant="contained" 
@@ -495,10 +459,10 @@ const VideoDetails = () => {
         <Grid item xs={12} md={3}>
           <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             <Typography variant="h6" gutterBottom>Transcript Stats</Typography>
-            <Typography>Processing Time: {transcription.transcription_processing_time || 'N/A'}</Typography>
+            <Typography>Processing Time: {transcription?.transcription_processing_time ?? 'N/A'}</Typography>
             <Typography>Word Count: {transcription?.word_count?.toLocaleString() ?? 'N/A'}</Typography>
-            <Typography>Confidence: {transcription.confidence || 'N/A'}</Typography>
-            <Typography>Transcription Speed: {transcription.transcription_speed || 'N/A'}</Typography>
+            <Typography>Confidence: {transcription?.confidence ?? 'N/A'}</Typography>
+            <Typography>Transcription Speed: {transcription?.transcription_speed ?? 'N/A'}</Typography>
             <Box sx={{ flexGrow: 1 }} />
             <Button 
               variant="contained" 
@@ -512,9 +476,9 @@ const VideoDetails = () => {
         <Grid item xs={12} md={3}>
           <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             <Typography variant="h6" gutterBottom>Text Detection Stats</Typography>
-            {ocr.ocr_processing_time ? (
+            {video?.ocr?.ocr_processing_time ? (
               <>
-                <Typography>Processing Time: {ocr?.ocr_processing_time || 'N/A'}</Typography>
+                <Typography>Processing Time: {ocr?.ocr_processing_time ?? 'N/A'}</Typography>
                 <Typography>Frames Processed: {ocr?.frames_processed?.toLocaleString() ?? 'N/A'}</Typography>
                 <Typography>Frames with Text: {ocr?.frames_with_text?.toLocaleString() ?? 'N/A'}</Typography>
                 <Typography>Words Detected: {ocr?.total_words_detected?.toLocaleString() ?? 'N/A'}</Typography>

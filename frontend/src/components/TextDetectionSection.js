@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 import {
   Typography,
   Box,
@@ -13,51 +14,21 @@ import {
   Alert,
   CircularProgress
 } from '@mui/material';
-import api from '../services/api';
+import { fetchOcrWordCloud, fetchBrandsOcrTable } from '../store/ocrSlice';
 
 const capitalizeWords = (str) => {
   return str.replace(/\b\w/g, (char) => char.toUpperCase());
 };
 
 const TextDetectionSection = ({ videoId }) => {
-  const [wordCloudUrl, setWordCloudUrl] = useState(null);
-  const [brandTable, setBrandTable] = useState(null);
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const dispatch = useDispatch();
+
+  const { wordCloud, brandTable, loading, error } = useSelector(state => state.ocr);
 
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        // Fetch word cloud
-        const wordCloudUrl = await api.getOcrWordCloud(videoId);
-        setWordCloudUrl(wordCloudUrl);
-
-        // Fetch brand table data
-        const brandTableData = await api.getBrandsOcrTable(videoId);
-        setBrandTable(brandTableData);
-      } catch (err) {
-        console.error('Error fetching data:', err);
-        setError(err.message || 'Failed to load text detection results. Please try again later.');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (videoId) {
-      fetchData();
-    }
-  }, [videoId]);
-
-  useEffect(() => {
-    // Cleanup function to revoke the blob URL when component unmounts or URL changes
-    return () => {
-      if (wordCloudUrl) {
-        URL.revokeObjectURL(wordCloudUrl);
-      }
-    };
-  }, [wordCloudUrl]);
+    dispatch(fetchOcrWordCloud(videoId));
+    dispatch(fetchBrandsOcrTable(videoId));
+  }, [dispatch, videoId]);
 
   if (loading) {
     return <CircularProgress />;
@@ -69,8 +40,6 @@ const TextDetectionSection = ({ videoId }) => {
 
   return (
     <Box sx={{ mt: 4 }}>
-
-      {/* Word Cloud */}
       <Grid container spacing={2} sx={{ mb: 4 }}>
         <Grid item xs={12} md={6}>
           <Box
@@ -83,9 +52,9 @@ const TextDetectionSection = ({ videoId }) => {
               bgcolor: 'white'
             }}
           >
-            {wordCloudUrl && (
+            {wordCloud[videoId] && (
               <img 
-                src={wordCloudUrl} 
+                src={wordCloud[videoId].url} 
                 alt="Word Cloud" 
                 style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
               />
@@ -93,25 +62,24 @@ const TextDetectionSection = ({ videoId }) => {
           </Box>
         </Grid>
 
-        {/* Brand Table */}
         <Grid item xs={12} md={6}>
           <TableContainer component={Paper} sx={{ maxHeight: 400, overflow: 'auto' }}>
             <Table stickyHeader aria-label="brand frequency table">
-            <TableHead>
-              <TableRow>
-                <TableCell>
-                  <Typography fontWeight="bold">Brand</Typography>
-                </TableCell>
-                <TableCell align="right">
-                  <Typography fontWeight="bold"># Frames</Typography>
-                </TableCell>
-                <TableCell align="right">
-                  <Typography fontWeight="bold">Time on Screen (s)</Typography>
-                </TableCell>
-              </TableRow>
-            </TableHead>
+              <TableHead>
+                <TableRow>
+                  <TableCell>
+                    <Typography fontWeight="bold">Brand</Typography>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Typography fontWeight="bold"># Frames</Typography>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Typography fontWeight="bold">Time on Screen (s)</Typography>
+                  </TableCell>
+                </TableRow>
+              </TableHead>
               <TableBody>
-                {brandTable && Object.entries(brandTable).map(([brand, data]) => (
+                {brandTable[videoId] && Object.entries(brandTable[videoId].data).map(([brand, data]) => (
                   <TableRow key={brand}>
                     <TableCell component="th" scope="row">
                       {capitalizeWords(brand)}

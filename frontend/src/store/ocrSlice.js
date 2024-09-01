@@ -1,4 +1,29 @@
-import { createSlice } from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import api from '../services/api';
+
+export const fetchOcrWordCloud = createAsyncThunk(
+  'ocr/fetchWordCloud',
+  async (videoId, { rejectWithValue }) => {
+    try {
+      const wordCloudUrl = await api.getOcrWordCloud(videoId);
+      return { videoId, wordCloudUrl };
+    } catch (error) {
+      return rejectWithValue({ videoId, error: error.message });
+    }
+  }
+);
+
+export const fetchBrandsOcrTable = createAsyncThunk(
+  'ocr/fetchBrandsTable',
+  async (videoId, { rejectWithValue }) => {
+    try {
+      const brandTableData = await api.getBrandsOcrTable(videoId);
+      return { videoId, brandTableData };
+    } catch (error) {
+      return rejectWithValue({ videoId, error: error.message });
+    }
+  }
+);
 
 const ocrSlice = createSlice({
   name: 'ocr',
@@ -12,16 +37,20 @@ const ocrSlice = createSlice({
   },
   reducers: {
     setOcrResults: (state, action) => {
-      state.results[action.payload.id] = action.payload.results;
+      const { id, results } = action.payload;
+      state.results[id] = results;
     },
     setWordCloud: (state, action) => {
-      state.wordCloud[action.payload.id] = action.payload.wordCloud;
+      const { id, wordCloud } = action.payload;
+      state.wordCloud[id] = wordCloud;
     },
     setBrandTable: (state, action) => {
-      state.brandTable[action.payload.id] = action.payload.brandTable;
+      const { id, brandTable } = action.payload;
+      state.brandTable[id] = brandTable;
     },
     setProcessingStats: (state, action) => {
-      state.processingStats[action.payload.id] = action.payload.stats;
+      const { id, stats } = action.payload;
+      state.processingStats[id] = stats;
     },
     setLoading: (state, action) => {
       state.loading = action.payload;
@@ -29,6 +58,33 @@ const ocrSlice = createSlice({
     setError: (state, action) => {
       state.error = action.payload;
     },
+  },
+  extraReducers: (builder) => {
+    builder
+      .addCase(fetchOcrWordCloud.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(fetchOcrWordCloud.fulfilled, (state, action) => {
+        state.loading = false;
+        state.wordCloud[action.payload.videoId] = { url: action.payload.wordCloudUrl };
+        state.error = null;
+      })
+      .addCase(fetchOcrWordCloud.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload.error;
+      })
+      .addCase(fetchBrandsOcrTable.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(fetchBrandsOcrTable.fulfilled, (state, action) => {
+        state.loading = false;
+        state.brandTable[action.payload.videoId] = { data: action.payload.brandTableData };
+        state.error = null;
+      })
+      .addCase(fetchBrandsOcrTable.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload.error;
+      });
   },
 });
 
