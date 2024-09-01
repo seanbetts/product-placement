@@ -20,8 +20,7 @@ import {
   Tooltip,
   IconButton,
   Snackbar,
-  Alert,
-  Skeleton
+  Alert
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import EditIcon from '@mui/icons-material/Edit';
@@ -58,7 +57,6 @@ const VideoDetails = () => {
   const [processedTranscript, setProcessedTranscript] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [transcriptLoading, setTranscriptLoading] = useState(true);
-  const [imagesLoaded, setImagesLoaded] = useState({});
 
   useEffect(() => {
     const fetchData = async () => {
@@ -71,7 +69,7 @@ const VideoDetails = () => {
           await dispatch(fetchVideoDetails(videoId)).unwrap();
         }
         if (!frames) {
-          const result = await dispatch(fetchVideoFrames(videoId)).unwrap();
+          await dispatch(fetchVideoFrames(videoId)).unwrap();
         }
         if (!transcript) {
           setTranscriptLoading(true);
@@ -242,10 +240,6 @@ const VideoDetails = () => {
     );
   };
 
-  const handleImageLoad = (frameNumber) => {
-    setImagesLoaded(prev => ({ ...prev, [frameNumber]: true }));
-  };
-
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
@@ -376,29 +370,47 @@ return (
       <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Video Frames</Typography>
       <Box 
         sx={{ 
-          overflowX: 'auto', 
-          whiteSpace: 'nowrap', 
           mb: 4,
         }}
       >
-        {frames && frames.length > 0 ? (
-          frames.map((frame) => (
-            <Box 
-              key={frame.number} 
-              sx={{ 
-                display: 'inline-block', 
-                mr: 2, 
+        {framesLoading ? (
+          <Box display="flex" justifyContent="center" alignItems="center" minHeight="150px">
+            <CircularProgress />
+          </Box>
+        ) : frames && frames.length > 0 ? (
+          <Box
+            sx={{
+              overflowX: 'auto',
+              overflowY: 'hidden',
+              whiteSpace: 'nowrap',
+              pb: 2,
+            }}
+          >
+            <Box
+              sx={{
+                display: 'inline-block',
+                minWidth: '100%',
               }}
             >
-              <img 
-                src={frame.url} 
-                alt={`Frame ${frame.number} from video ${videoId}`}
-                style={{ 
-                  height: '150px',
-                }} 
-              />
+              {frames.map((frame) => (
+                <Box 
+                  key={frame.number} 
+                  sx={{ 
+                    display: 'inline-block', 
+                    mr: 2, 
+                  }}
+                >
+                  <img 
+                    src={frame.url} 
+                    alt={`Frame ${frame.number} from video ${videoId}`}
+                    style={{ 
+                      height: '150px',
+                    }} 
+                  />
+                </Box>
+              ))}
             </Box>
-          ))
+          </Box>
         ) : (
           <Typography>No frames available</Typography>
         )}
