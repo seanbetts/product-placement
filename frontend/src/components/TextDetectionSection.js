@@ -62,8 +62,9 @@ const TextDetectionSection = ({ videoId }) => {
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" height="200px">
+      <Box display="flex" flexDirection="column" justifyContent="center" alignItems="center" minHeight="200px">
         <CircularProgress />
+        <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Loading...</Typography>
       </Box>
     );
   }

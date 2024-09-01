@@ -242,8 +242,9 @@ const VideoDetails = () => {
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
+      <Box display="flex" flexDirection="column" justifyContent="center" alignItems="center" minHeight="200px">
         <CircularProgress />
+        <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Loading...</Typography>
       </Box>
     );
   }
@@ -374,8 +375,9 @@ return (
         }}
       >
         {framesLoading ? (
-          <Box display="flex" justifyContent="center" alignItems="center" minHeight="150px">
+          <Box display="flex" flexDirection="column" justifyContent="center" alignItems="center" minHeight="200px">
             <CircularProgress />
+            <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Loading...</Typography>
           </Box>
         ) : frames && frames.length > 0 ? (
           <Box
@@ -421,8 +423,9 @@ return (
       <Box sx={{ mb: 4 }}>
         <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Transcript</Typography>
         {transcriptLoading ? (
-          <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
+          <Box display="flex" flexDirection="column" justifyContent="center" alignItems="center" minHeight="200px">
             <CircularProgress />
+            <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Loading...</Typography>
           </Box>
         ) : processedTranscript && processedTranscript.length > 0 ? (
           <>
