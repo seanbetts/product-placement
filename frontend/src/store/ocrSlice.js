@@ -5,8 +5,8 @@ export const fetchOcrWordCloud = createAsyncThunk(
   'ocr/fetchWordCloud',
   async (videoId, { rejectWithValue }) => {
     try {
-      const wordCloudUrl = await api.getOcrWordCloud(videoId);
-      return { videoId, wordCloudUrl };
+      const wordCloudData = await api.getOcrWordCloud(videoId);
+      return { videoId, wordCloudData };
     } catch (error) {
       return rejectWithValue({ videoId, error: error.message });
     }
@@ -67,11 +67,11 @@ const ocrSlice = createSlice({
     builder
       .addCase(fetchOcrWordCloud.pending, (state) => {
         state.status.loading = true;
+        state.status.error = null;
       })
       .addCase(fetchOcrWordCloud.fulfilled, (state, action) => {
         state.status.loading = false;
-        state.data.wordCloud[action.payload.videoId] = { url: action.payload.wordCloudUrl };
-        state.status.error = null;
+        state.data.wordCloud[action.payload.videoId] = action.payload.wordCloudData;
       })
       .addCase(fetchOcrWordCloud.rejected, (state, action) => {
         state.status.loading = false;

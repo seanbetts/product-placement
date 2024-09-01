@@ -55,7 +55,10 @@ const VideoDetails = () => {
   const error = useSelector(state => state.videos.status.error);
 
   const [imagesLoaded, setImagesLoaded] = useState({});
+  const [processedTranscript, setProcessedTranscript] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [framesLoading, setFramesLoading] = useState(true);
+  const [transcriptLoading, setTranscriptLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -69,18 +72,53 @@ const VideoDetails = () => {
           await dispatch(fetchVideoDetails(videoId)).unwrap();
         }
         if (!frames) {
+          setFramesLoading(true);
           await dispatch(fetchVideoFrames(videoId)).unwrap();
+          setFramesLoading(false);
         }
         if (!transcript) {
+          setTranscriptLoading(true);
           await dispatch(fetchTranscript(videoId)).unwrap();
+          setTranscriptLoading(false);
         }
       } catch (error) {
         console.error('Error fetching video data:', error);
         dispatch(setSnackbar({ open: true, message: 'Error fetching video data', severity: 'error' }));
+        setFramesLoading(false);
+        setTranscriptLoading(false);
       }
     };
     fetchData();
   }, [dispatch, videoId, video, frames, transcript]);
+
+  useEffect(() => {
+    if (transcript && transcript.length > 0) {
+      const sentences = [];
+      let currentSentence = { words: [], start_time: null, end_time: null, totalConfidence: 0, totalLength: 0 };
+  
+      transcript.forEach((word, index) => {
+        if (!currentSentence.start_time) {
+          currentSentence.start_time = word.start_time;
+        }
+        currentSentence.words.push(word.word);
+        currentSentence.totalConfidence += word.confidence * word.word.length;
+        currentSentence.totalLength += word.word.length;
+        currentSentence.end_time = word.end_time;
+  
+        if (word.word.match(/[.!?]$/) || index === transcript.length - 1) {
+          sentences.push({
+            text: currentSentence.words.join(' '),
+            start_time: currentSentence.start_time,
+            end_time: currentSentence.end_time,
+            confidence: currentSentence.totalConfidence / currentSentence.totalLength
+          });
+          currentSentence = { words: [], start_time: null, end_time: null, totalConfidence: 0, totalLength: 0 };
+        }
+      });
+  
+      setProcessedTranscript(sentences);
+    }
+  }, [transcript]);
 
   const sentenceTranscript = useMemo(() => {
     if (!Array.isArray(transcript) || transcript.length === 0) {
@@ -233,7 +271,6 @@ const VideoDetails = () => {
   }
 
   // Destructure video properties here
-  // Destructure video properties here
 const {
   name: videoName = '',
   video_length = 'N/A', 
@@ -247,7 +284,7 @@ const {
   total_processing_speed = 'N/A'
 } = video || {};
 
-  return (
+return (
     <Box sx={{ mt: 4 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
         <Typography variant="h4" component="span" sx={{ whiteSpace: 'nowrap', mr: 1 }}>
@@ -328,7 +365,7 @@ const {
           Uploaded: {formatDate(total_processing_start_time ?? 'N/A')}
         </Typography>
         <Typography variant="body1">
-          Processing Time: {total_processing_time ?? 'N/A'}
+          Processing Time: {total_processing_time ? parseFloat(total_processing_time).toFixed(1) : 'N/A'} seconds
         </Typography>
         <Typography variant="body1">
           Video Length: {video_length ?? 'N/A'}
@@ -337,35 +374,38 @@ const {
           Frames Processed: {videoStats?.total_frames?.toLocaleString() ?? 'N/A'}
         </Typography>
       </Box>
+      
       <Divider sx={{ my: 4 }} />
 
       <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Frames</Typography>
       <Box sx={{ overflowX: 'auto', whiteSpace: 'nowrap', mb: 4 }}>
-      {Array.isArray(frames) && frames.length > 0 ? (
-        frames.map((frame) => (
-          <Box key={frame.number} sx={{ mr: 2, mb: 2 }}>
-            {!imagesLoaded[frame.number] && (
-              <Skeleton 
-                variant="rectangular" 
-                width={200} 
-                height={150}
-                animation="wave"
+      {framesLoading ? (
+        <CircularProgress />
+      ) : frames && frames.length > 0 ? (
+          frames.map((frame) => (
+            <Box key={frame.number} sx={{ display: 'inline-block', mr: 2, mb: 2 }}>
+              {!imagesLoaded[frame.number] && (
+                <Skeleton 
+                  variant="rectangular" 
+                  width={200} 
+                  height={150}
+                  animation="wave"
+                />
+              )}
+              <img 
+                src={frame.url} 
+                alt={`Frame ${frame.number} from video ${videoId}`}
+                style={{ 
+                  height: '150px',
+                  display: imagesLoaded[frame.number] ? 'block' : 'none'
+                }} 
+                onLoad={() => handleImageLoad(frame.number)}
               />
-            )}
-            <img 
-              src={frame.url} 
-              alt={`Frame from video ${videoId}`}
-              style={{ 
-                height: '150px',
-                display: imagesLoaded[frame.number] ? 'block' : 'none'
-              }} 
-              onLoad={() => handleImageLoad(frame.number)}
-            />
-          </Box>
-        ))
-      ) : (
-        <Typography>No frames available</Typography>
-      )}
+            </Box>
+          ))
+        ) : (
+          <Typography>No frames available</Typography>
+        )}
       </Box>
 
       <Divider sx={{ my: 4 }} />
@@ -387,7 +427,9 @@ const {
             ),
           }}
         />
-        {filteredTranscript && filteredTranscript.length > 0 ? (
+        {transcriptLoading ? (
+          <CircularProgress />
+        ) : processedTranscript && processedTranscript.length > 0 ? (
           <TableContainer component={Paper} sx={{ maxHeight: 400, overflow: 'auto' }}>
             <Table stickyHeader aria-label="transcript table">
               <TableHead>
@@ -406,14 +448,16 @@ const {
                     <TableCell>{highlightText(sentence.text, searchTerm)}</TableCell>
                     <TableCell>{(sentence.confidence * 100).toFixed(2)}%</TableCell>
                   </TableRow>
-                ))}
+                  ))}
               </TableBody>
             </Table>
           </TableContainer>
         ) : (
-          <Typography>No matching words found in the transcript</Typography>
+          <Typography>No transcript available</Typography>
         )}
       </Box>
+
+      <Divider sx={{ my: 4 }} />
 
       <Typography variant="h5" gutterBottom>Text Detection</Typography>
       {video && video.ocr ? (
@@ -435,7 +479,7 @@ const {
             <Typography>Total Frames: {videoStats?.total_frames?.toLocaleString() ?? 'N/A'}</Typography>
             <Typography>Extracted Frames: {videoStats?.extracted_frames?.toLocaleString() ?? 'N/A'}</Typography>
             <Typography>Video FPS: {videoStats?.video_fps ?? 'N/A'}</Typography>
-            <Typography>Processing Time: {videoStats?.video_processing_time ?? 'N/A'}</Typography>
+            <Typography>Processing Time: {videoStats?.video_processing_time ? parseFloat(videoStats?.video_processing_time).toFixed(1) : 'N/A'} seconds</Typography>
             <Typography>Processing Speed: {videoStats?.video_processing_speed ?? 'N/A'}</Typography>
             <Box sx={{ flexGrow: 1 }} />
             <Button 
@@ -508,7 +552,7 @@ const {
       <Typography variant="h6" gutterBottom>Total Processing Stats</Typography>
       <Typography>Start Time: {formatDate(total_processing_start_time)}</Typography>
       <Typography>End Time: {formatDate(total_processing_end_time)}</Typography>
-      <Typography>Total Processing Time: {total_processing_time}</Typography>
+      <Typography>Total Processing Time: {total_processing_time ? parseFloat(total_processing_time).toFixed(1) : 'N/A'} seconds</Typography>
       <Typography>Total Processing Speed: {total_processing_speed}</Typography>
 
       <Snackbar open={snackbar.open} autoHideDuration={6000} onClose={handleSnackbarClose}>

@@ -11,10 +11,27 @@ import {
   TableHead,
   TableRow,
   Paper,
-  Alert,
   CircularProgress
 } from '@mui/material';
 import { fetchOcrWordCloud, fetchBrandsOcrTable } from '../store/ocrSlice';
+import { createSelector } from '@reduxjs/toolkit';
+
+// Create a memoized selector
+const selectOcrData = createSelector(
+  [
+    (state) => state.ocr.data.wordCloud,
+    (state) => state.ocr.data.brandTable,
+    (state) => state.ocr.status.loading,
+    (state) => state.ocr.status.error,
+    (_, videoId) => videoId
+  ],
+  (wordCloud, brandTable, loading, error, videoId) => ({
+    wordCloud: wordCloud[videoId],
+    brandTable: brandTable[videoId],
+    loading,
+    error
+  })
+);
 
 const capitalizeWords = (str) => {
   return str.replace(/\b\w/g, (char) => char.toUpperCase());
@@ -23,12 +40,8 @@ const capitalizeWords = (str) => {
 const TextDetectionSection = ({ videoId }) => {
   const dispatch = useDispatch();
 
-  const { wordCloud, brandTable, loading, error } = useSelector(state => ({
-    wordCloud: state.ocr.data.wordCloud[videoId],
-    brandTable: state.ocr.data.brandTable[videoId],
-    loading: state.ocr.status.loading,
-    error: state.ocr.status.error
-  }));
+  // Use the memoized selector
+  const { wordCloud, brandTable, loading, error } = useSelector(state => selectOcrData(state, videoId));
 
   useEffect(() => {
     if (!wordCloud) {
@@ -40,15 +53,15 @@ const TextDetectionSection = ({ videoId }) => {
   }, [dispatch, videoId, wordCloud, brandTable]);
 
   if (loading) {
-    return <CircularProgress />;
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" height="200px">
+        <CircularProgress />
+      </Box>
+    );
   }
 
   if (error) {
-    return <Alert severity="error">{error}</Alert>;
-  }
-
-  if (!wordCloud || !brandTable) {
-    return <Typography>Loading text detection data...</Typography>;
+    return <Typography color="error">{error}</Typography>;
   }
 
   return (
@@ -62,15 +75,21 @@ const TextDetectionSection = ({ videoId }) => {
               display: 'flex',
               justifyContent: 'center',
               alignItems: 'center',
-              bgcolor: 'white'
+              bgcolor: 'white',
+              border: '1px solid #ccc',
+              borderRadius: '4px',
             }}
           >
-            {wordCloud && wordCloud.url && (
+            {wordCloud ? (
               <img 
-                src={wordCloud.url} 
+                src={wordCloud} 
                 alt="Word Cloud" 
                 style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
               />
+            ) : (
+              <Typography color="text.secondary">
+                No word cloud available
+              </Typography>
             )}
           </Box>
         </Grid>

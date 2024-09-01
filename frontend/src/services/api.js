@@ -80,7 +80,7 @@ const api = {
 
   updateVideoName: async (videoId, newName) => {
     try {
-      const response = await axios.put(`${API_BASE_URL}/${videoId}/video/update-name`, { name: newName });
+      const response = await axios.post(`${API_BASE_URL}/${videoId}/video/update-name`, { name: newName });
       // Invalidate relevant caches
       localStorage.removeItem(`videoDetails_${videoId}`);
       localStorage.removeItem(`videoDetails_${videoId}_timestamp`);
@@ -179,10 +179,22 @@ const api = {
     }
   
     try {
-      const response = await axios.get(`${API_BASE_URL}/${videoId}/ocr/wordcloud`);
-      localStorage.setItem(cacheKey, JSON.stringify(response.data));
+      const response = await axios.get(`${API_BASE_URL}/${videoId}/ocr/wordcloud`, {
+        responseType: 'arraybuffer'
+      });
+      
+      const base64 = btoa(
+        new Uint8Array(response.data).reduce(
+          (data, byte) => data + String.fromCharCode(byte),
+          ''
+        )
+      );
+      const imageData = `data:image/jpeg;base64,${base64}`;
+      
+      localStorage.setItem(cacheKey, JSON.stringify(imageData));
       localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
-      return response.data;
+      
+      return imageData;
     } catch (error) {
       throw handleApiError(error);
     }
