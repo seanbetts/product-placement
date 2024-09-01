@@ -1,11 +1,22 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import api from '../services/api';
 
+export const fetchProcessedVideos = createAsyncThunk(
+  'videos/fetchProcessedVideos',
+  async (_, { rejectWithValue }) => {
+    try {
+      return await api.getProcessedVideos();
+    } catch (error) {
+      return rejectWithValue(error.message);
+    }
+  }
+);
+
 export const fetchVideoDetails = createAsyncThunk(
   'videos/fetchVideoDetails',
-  async (videoId, { dispatch, getState, rejectWithValue }) => {
+  async (videoId, { rejectWithValue }) => {
     try {
-      return await api.getVideoDetails(videoId, dispatch, getState);
+      return await api.getVideoDetails(videoId);
     } catch (error) {
       return rejectWithValue(error.message);
     }
@@ -14,9 +25,9 @@ export const fetchVideoDetails = createAsyncThunk(
 
 export const fetchVideoFrames = createAsyncThunk(
   'videos/fetchVideoFrames',
-  async (videoId, { dispatch, getState, rejectWithValue }) => {
+  async (videoId, { rejectWithValue }) => {
     try {
-      return await api.getVideoFrames(videoId, dispatch, getState);
+      return await api.getVideoFrames(videoId);
     } catch (error) {
       return rejectWithValue(error.message);
     }
@@ -25,9 +36,9 @@ export const fetchVideoFrames = createAsyncThunk(
 
 export const fetchTranscript = createAsyncThunk(
   'videos/fetchTranscript',
-  async (videoId, { dispatch, getState, rejectWithValue }) => {
+  async (videoId, { rejectWithValue }) => {
     try {
-      return await api.getTranscript(videoId, dispatch, getState);
+      return await api.getTranscript(videoId);
     } catch (error) {
       return rejectWithValue(error.message);
     }
@@ -36,9 +47,9 @@ export const fetchTranscript = createAsyncThunk(
 
 export const updateVideoName = createAsyncThunk(
   'videos/updateVideoName',
-  async ({ videoId, newName }, { dispatch, rejectWithValue }) => {
+  async ({ videoId, newName }, { rejectWithValue }) => {
     try {
-      return await api.updateVideoName(videoId, newName, dispatch);
+      return await api.updateVideoName(videoId, newName);
     } catch (error) {
       return rejectWithValue(error.message);
     }
@@ -47,9 +58,9 @@ export const updateVideoName = createAsyncThunk(
 
 export const downloadFile = createAsyncThunk(
   'videos/downloadFile',
-  async ({ videoId, fileType }, { dispatch, rejectWithValue }) => {
+  async ({ videoId, fileType }, { rejectWithValue }) => {
     try {
-      return await api.downloadFile(videoId, fileType, dispatch);
+      return await api.downloadFile(videoId, fileType);
     } catch (error) {
       return rejectWithValue(error.message);
     }
@@ -100,6 +111,17 @@ const videoSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
+      .addCase(fetchProcessedVideos.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(fetchProcessedVideos.fulfilled, (state, action) => {
+        state.loading = false;
+        state.list = action.payload;
+      })
+      .addCase(fetchProcessedVideos.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+      })
       .addCase(fetchVideoDetails.pending, (state) => {
         state.loading = true;
         state.error = null;

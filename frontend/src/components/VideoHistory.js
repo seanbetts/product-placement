@@ -27,7 +27,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { format } from 'date-fns';
 import enGB from 'date-fns/locale/en-GB';
-import api from '../services/api';
+import { fetchProcessedVideos } from '../store/videoSlice';
 
 const VideoHistory = () => {
   const dispatch = useDispatch();
@@ -75,15 +75,7 @@ const VideoHistory = () => {
   }, [videos, searchTerm, startDate, endDate, sortCriteria, sortOrder]);
 
   useEffect(() => {
-    const fetchVideos = async () => {
-      try {
-        await api.getProcessedVideos(dispatch);
-      } catch (err) {
-        console.error('Error fetching processed videos:', err);
-      }
-    };
-
-    fetchVideos();
+    dispatch(fetchProcessedVideos());
   }, [dispatch]);
 
   useEffect(() => {
