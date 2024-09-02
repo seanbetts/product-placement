@@ -8,24 +8,25 @@ import datetime
 import time
 import asyncio
 import subprocess
-import ffmpeg
 import urllib3
-import io
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException, Body
+from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException, Form
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from google.cloud import storage
+from google.cloud.exceptions import GoogleCloudError
+from google.resumable_media import DataCorruption
+from google.auth.transport.requests import AuthorizedSession
+from google.api_core import retry
 from google.cloud import vision
 from google.oauth2 import service_account
-from google.auth.transport.requests import AuthorizedSession
 from google.auth import default
 from google.cloud.speech_v2 import SpeechClient
 from google.cloud.speech_v2.types import cloud_speech
 from dotenv import load_dotenv
 from io import BytesIO
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from pydantic import BaseModel
@@ -140,6 +141,10 @@ class StatusTracker:
 class NameUpdate(BaseModel):
     name: str
 
+@retry.Retry(predicate=retry.if_exception_type(DataCorruption))
+def resumable_upload_with_retry(resumable_upload, session, stream):
+    return resumable_upload.transmit_next_chunk(session, stream)
+
 ########################################################
 ## FAST API ENDPOINTS                                 ##
 ########################################################
@@ -155,24 +160,65 @@ async def health_check():
 ## UPLOAD ENDPOINT (POST)
 ## Uploads a video to the processing bucket and schedules the video processing
 @app.post("/video/upload")
-async def upload_video(video: UploadFile, background_tasks: BackgroundTasks):
-    logger.info(f"Received upload request for file: {video.filename}")
-    video_id = str(uuid.uuid4())
+async def upload_video(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    chunk_number: int = Form(...),
+    total_chunks: int = Form(...),
+    video_id: Optional[str] = Form(None),
+):
+    if not video_id:
+        video_id = str(uuid.uuid4())
+    
+    log_context = {
+        "video_id": video_id,
+        "chunk_number": chunk_number,
+        "total_chunks": total_chunks,
+        "upload_filename": file.filename,
+        "content_type": file.content_type,
+    }
+    logger.info("Received upload request", extra=log_context)
+
     bucket = storage_client.bucket(PROCESSING_BUCKET)
     blob = bucket.blob(f'{video_id}/original.mp4')
 
     try:
-        logger.info(f"Uploading file to bucket: {PROCESSING_BUCKET}")
-        blob.upload_from_file(video.file, content_type=video.content_type)
-        logger.info(f"File uploaded successfully. Video ID: {video_id}")
+        chunk = await file.read()
         
-        # Schedule the video processing task
-        background_tasks.add_task(run_video_processing, video_id)
+        # Create a temporary file to store the video chunks
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            temp_filename = temp_file.name
+            
+            if chunk_number > 1:
+                # If not the first chunk, download existing content
+                blob.download_to_filename(temp_filename)
+            
+            # Append the new chunk
+            with open(temp_filename, 'ab') as f:
+                f.write(chunk)
+            
+            # Upload the combined content back to GCS
+            blob.upload_from_filename(temp_filename)
         
-        return {"video_id": video_id, "status": "processing"}
+        # Clean up the temporary file
+        os.unlink(temp_filename)
+        
+        logger.info(f"Chunk {chunk_number}/{total_chunks} uploaded successfully", extra=log_context)
+        
+        if chunk_number == total_chunks:
+            logger.info("File upload completed successfully", extra=log_context)
+            background_tasks.add_task(run_video_processing, video_id)
+            return {"video_id": video_id, "status": "processing"}
+        else:
+            return {
+                "video_id": video_id,
+                "status": "uploading",
+                "chunk": chunk_number,
+            }
+
     except Exception as e:
-        logger.error(f"Error during upload: {str(e)}", exc_info=True)
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        logger.error("Error during chunk upload", exc_info=True, extra={**log_context, "error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "Upload failed", "video_id": video_id, "chunk": chunk_number, "details": str(e)})
 ########################################################
 
 ## PROCESSED VIDEOS ENDPOINT (GET)

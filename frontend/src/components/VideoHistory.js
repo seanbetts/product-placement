@@ -28,7 +28,6 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { format } from 'date-fns';
-import enGB from 'date-fns/locale/en-GB';
 import { fetchProcessedVideos, fetchFirstVideoFrame } from '../store/videoSlice';
 
 const VideoHistory = () => {
@@ -47,6 +46,7 @@ const VideoHistory = () => {
   const [endDate, setEndDate] = useState(null);
   const [sortCriteria, setSortCriteria] = useState('date');
   const [sortOrder, setSortOrder] = useState('desc');
+  const [firstFramesLoading, setFirstFramesLoading] = useState({});
 
   const filterAndSortVideos = useCallback(() => {
     if (!Array.isArray(videos) || videos.length === 0) {
@@ -82,13 +82,20 @@ const VideoHistory = () => {
     setFilteredVideos(result);
   }, [videos, searchTerm, startDate, endDate, sortCriteria, sortOrder]);
 
-  useEffect(() => {
+  const memoizedDispatchFirstFrames = useCallback(() => {
     videos.forEach(video => {
-      if (!firstFrames[video.video_id]) {
-        dispatch(fetchFirstVideoFrame(video.video_id));
+      if (!firstFrames[video.video_id] && !firstFramesLoading[video.video_id]) {
+        setFirstFramesLoading(prev => ({ ...prev, [video.video_id]: true }));
+        dispatch(fetchFirstVideoFrame(video.video_id)).then(() => {
+          setFirstFramesLoading(prev => ({ ...prev, [video.video_id]: false }));
+        });
       }
     });
-  }, [dispatch, videos, firstFrames]);
+  }, [dispatch, videos, firstFrames, firstFramesLoading]);
+
+  useEffect(() => {
+    memoizedDispatchFirstFrames();
+  }, [memoizedDispatchFirstFrames]);
 
   useEffect(() => {
     dispatch(fetchProcessedVideos());
@@ -310,7 +317,7 @@ const VideoHistory = () => {
                       }
                       setStartDate(newDate);
                     }}
-                    renderInput={(params) => <TextField {...params} fullWidth />}
+                    slotProps={{ textField: { fullWidth: true } }}
                   />
                 </Grid>
                 <Grid item xs={6}>
@@ -323,7 +330,7 @@ const VideoHistory = () => {
                       }
                       setEndDate(newDate);
                     }}
-                    renderInput={(params) => <TextField {...params} fullWidth />}
+                    slotProps={{ textField: { fullWidth: true } }}
                   />
                 </Grid>
               </Grid>

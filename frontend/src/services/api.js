@@ -1,7 +1,8 @@
 import axios from 'axios'
 import { handleApiError } from '../utils/errorHandling';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+const API_BASE_URL = 'http://127.0.0.1:8000';
+// const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
 
@@ -11,24 +12,61 @@ const isCacheValid = (timestamp) => {
 
 const api = {
   uploadVideo: async (file, onProgress) => {
-    const formData = new FormData();
-    formData.append('file', file);
+    const chunkSize = 5 * 1024 * 1024; // 5MB chunks
+    const totalChunks = Math.ceil(file.size / chunkSize);
+    let videoId = null;
+    let retries = 0;
+    const maxRetries = 3;
 
-    try {
-      const response = await axios.post(`${API_BASE_URL}/video/upload`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          onProgress(percentCompleted);
-        },
-      });
-      return response.data;
-    } catch (error) {
-      throw handleApiError(error);
+    for (let chunkNumber = 1; chunkNumber <= totalChunks; chunkNumber++) {
+        let shouldRetry;
+        do {
+            shouldRetry = false;
+            const start = (chunkNumber - 1) * chunkSize;
+            const end = Math.min(start + chunkSize, file.size);
+            const chunk = file.slice(start, end);
+            const formData = new FormData();
+            formData.append('file', chunk, file.name);
+            formData.append('chunk_number', chunkNumber);
+            formData.append('total_chunks', totalChunks);
+            if (videoId) formData.append('video_id', videoId);
+
+            try {
+                const response = await axios.post(`${API_BASE_URL}/video/upload`, formData, {
+                    headers: {
+                        'Content-Type': 'multipart/form-data',
+                    },
+                    onUploadProgress: (progressEvent) => {
+                        const percentCompleted = Math.round(
+                            ((chunkNumber - 1) / totalChunks + progressEvent.loaded / (chunkSize * totalChunks)) * 100
+                        );
+                        onProgress(percentCompleted);
+                    },
+                });
+
+                videoId = response.data.video_id;
+                if (response.data.status === 'processing') {
+                    return response.data;
+                }
+            } catch (error) {
+                if (error.response && error.response.status === 412) {
+                    // Precondition failed, likely due to an inconsistent state
+                    // Retry the current chunk
+                    shouldRetry = true;
+                    retries++;
+                    if (retries > maxRetries) {
+                        throw new Error('Max retries exceeded');
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retrying
+                } else {
+                    throw handleApiError(error);
+                }
+            }
+        } while (shouldRetry);
+        retries = 0; // Reset retries for the next chunk
     }
-  },
+    throw new Error('Upload failed to complete');
+},
 
   getProcessedVideos: async () => {
     const cacheKey = 'processedVideos';
