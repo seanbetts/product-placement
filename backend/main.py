@@ -13,7 +13,7 @@ import urllib3
 import io
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException
+from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException, Body
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from google.cloud import storage
@@ -250,13 +250,17 @@ async def get_processing_stats(video_id: str):
 ## UPDATE VIDEO NAME ENDPOINT (POST)
 ## Updates the name of a video
 @app.post("/{video_id}/video/update-name")
-async def update_video_name(video_id: str, name: str):
+async def update_video_name(video_id: str, name: str = Body(...)):
+    logger.info(f"Received request to update name for video {video_id} to '{name}'")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
     status_blob = bucket.blob(f'{video_id}/status.json')
     stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
     
     if not status_blob.exists() or not stats_blob.exists():
         raise HTTPException(status_code=404, detail="Video not found")
+
+    if not name or name.strip() == "":
+        raise HTTPException(status_code=422, detail="Name cannot be empty")
 
     # Update status.json
     status_data = json.loads(status_blob.download_as_string())

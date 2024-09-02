@@ -30,7 +30,10 @@ const transcriptSlice = createSlice({
       })
       .addCase(fetchTranscript.fulfilled, (state, action) => {
         state.status.loading = false;
-        state.data[action.meta.arg] = action.payload;
+        state.data[action.meta.arg] = {
+          data: action.payload,
+          lastFetched: Date.now()
+        };
       })
       .addCase(fetchTranscript.rejected, (state, action) => {
         state.status.loading = false;

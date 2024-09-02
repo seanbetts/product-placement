@@ -61,17 +61,6 @@ export const fetchVideoFrames = createAsyncThunk(
   }
 );
 
-export const fetchTranscript = createAsyncThunk(
-  'videos/fetchTranscript',
-  async (videoId, { rejectWithValue }) => {
-    try {
-      return await api.getTranscript(videoId);
-    } catch (error) {
-      return rejectWithValue(error.message);
-    }
-  }
-);
-
 export const updateVideoName = createAsyncThunk(
   'videos/updateVideoName',
   async ({ videoId, newName }, { rejectWithValue }) => {
@@ -101,7 +90,6 @@ const videoSlice = createSlice({
       list: [],
       details: {},
       frames: {},
-      transcript: {},
       firstFrames: {},
     },
     status: {
@@ -186,21 +174,6 @@ const videoSlice = createSlice({
       .addCase(fetchVideoFrames.rejected, (state, action) => {
         state.status.framesLoading = false;
         state.status.error = action.payload || 'Failed to fetch video frames';
-      })
-      .addCase(fetchTranscript.pending, (state, action) => {
-        state.status.loading = true;
-        state.status.error = null;
-      })
-      .addCase(fetchTranscript.fulfilled, (state, action) => {
-        state.status.loading = false;
-        state.data.transcript[action.meta.arg] = {
-          data: action.payload,
-          lastFetched: Date.now()
-        };
-      })
-      .addCase(fetchTranscript.rejected, (state, action) => {
-        state.status.loading = false;
-        state.status.error = action.payload;
       })
       .addCase(updateVideoName.fulfilled, (state, action) => {
         const { videoId, newName } = action.meta.arg;

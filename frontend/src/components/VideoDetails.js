@@ -29,7 +29,6 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import {
   fetchVideoDetails,
   fetchVideoFrames,
-  fetchTranscript,
   updateVideoName,
   downloadFile,
   setSearchTerm,
@@ -37,6 +36,7 @@ import {
   setEditingName,
   setSnackbar
 } from '../store/videoSlice';
+import { fetchTranscript } from '../store/transcriptSlice';
 import TextDetectionSection from './TextDetectionSection';
 
 const VideoDetails = () => {
@@ -45,15 +45,15 @@ const VideoDetails = () => {
   
   const video = useSelector(state => state.videos.data.details[videoId]);
   const frames = useSelector(state => state.videos.data.frames[videoId]?.data);
-  const transcript = useSelector(state => state.videos.data.transcript[videoId]?.data);
+  const transcript = useSelector(state => state.transcripts.data[videoId]?.data);
   const searchTerm = useSelector(state => state.videos.ui.searchTerm);
   const isEditingName = useSelector(state => state.videos.ui.isEditingName);
   const editingName = useSelector(state => state.videos.ui.editingName);
   const snackbar = useSelector(state => state.videos.ui.snackbar);
-  const loading = useSelector(state => state.videos.status.loading);
   const error = useSelector(state => state.videos.status.error);
   const framesLoading = useSelector(state => state.videos.status.framesLoading) || false;
 
+  const [initialLoading, setInitialLoading] = useState(true);
   const [processedTranscript, setProcessedTranscript] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [transcriptLoading, setTranscriptLoading] = useState(true);
@@ -62,14 +62,17 @@ const VideoDetails = () => {
     const fetchData = async () => {
       if (!videoId) {
         dispatch(setSnackbar({ open: true, message: 'Error: No video ID provided', severity: 'error' }));
+        setInitialLoading(false);
         return;
       }
       try {
         if (!video) {
           await dispatch(fetchVideoDetails(videoId)).unwrap();
         }
+        setInitialLoading(false);
+        
         if (!frames) {
-          await dispatch(fetchVideoFrames(videoId)).unwrap();
+          dispatch(fetchVideoFrames(videoId));
         }
         if (!transcript) {
           setTranscriptLoading(true);
@@ -79,6 +82,7 @@ const VideoDetails = () => {
       } catch (error) {
         console.error('Error fetching video data:', error);
         dispatch(setSnackbar({ open: true, message: 'Error fetching video data', severity: 'error' }));
+        setInitialLoading(false);
         setTranscriptLoading(false);
       }
     };
@@ -240,7 +244,7 @@ const VideoDetails = () => {
     );
   };
 
-  if (loading) {
+  if (initialLoading) {
     return (
       <Box display="flex" flexDirection="column" justifyContent="center" alignItems="center" minHeight="200px">
         <CircularProgress />
@@ -248,7 +252,7 @@ const VideoDetails = () => {
       </Box>
     );
   }
-
+  
   if (error) {
     return (
       <Typography color="error" align="center">
@@ -256,10 +260,10 @@ const VideoDetails = () => {
       </Typography>
     );
   }
-
+  
   if (!video) {
     return <Typography>No video details available</Typography>;
-  }
+  }  
 
   // Destructure video properties here
 const {
