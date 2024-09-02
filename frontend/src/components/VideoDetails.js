@@ -30,14 +30,26 @@ import {
   fetchVideoDetails,
   fetchVideoFrames,
   updateVideoName,
-  downloadFile,
+
   setSearchTerm,
   setIsEditingName,
   setEditingName,
   setSnackbar
 } from '../store/videoSlice';
+import api from '../services/api';
+import { saveAs } from 'file-saver';
 import { fetchTranscript } from '../store/transcriptSlice';
 import TextDetectionSection from './TextDetectionSection';
+import { keyframes } from '@mui/system';
+
+const shimmer = keyframes`
+  0% {
+    background-position: -468px 0;
+  }
+  100% {
+    background-position: 468px 0;
+  }
+`;
 
 const VideoDetails = () => {
   const { videoId } = useParams();
@@ -173,11 +185,14 @@ const VideoDetails = () => {
     setIsSubmitting(true);
     try {
       await dispatch(updateVideoName({ videoId, newName: editingName })).unwrap();
+      dispatch(setSnackbar({ open: true, message: 'Video name updated successfully', severity: 'success' }));
     } catch (error) {
       console.error('Error updating video name:', error);
-      dispatch(setSnackbar({ open: true, message: 'Error updating video name', severity: 'error' }));
+      dispatch(setSnackbar({ open: true, message: `Error updating video name: ${error.message || 'Unknown error'}`, severity: 'error' }));
+    } finally {
+      setIsSubmitting(false);
+      dispatch(setIsEditingName(false));
     }
-    setIsSubmitting(false);
   };
 
   const handleNameCancel = () => {
@@ -189,13 +204,29 @@ const VideoDetails = () => {
     dispatch(setSearchTerm(event.target.value));
   };
 
+  const getFileExtension = (fileType) => {
+    switch (fileType) {
+      case 'video':
+        return 'mp4';
+      case 'audio':
+        return 'mp3';
+      case 'transcript':
+        return 'txt';
+      case 'word-cloud':
+        return 'png';
+      default:
+        return 'txt';
+    }
+  };
+
   const handleDownload = async (fileType) => {
     try {
-      await dispatch(downloadFile({ videoId, fileType })).unwrap();
-      // Handle successful download (e.g., open the file in a new tab)
+      const blob = await api.downloadFile(videoId, fileType);
+      const fileName = `${videoName || videoId}_${fileType}.${getFileExtension(fileType)}`;
+      saveAs(blob, fileName);
     } catch (error) {
       console.error('Error downloading file:', error);
-      dispatch(setSnackbar({ open: true, message: 'Error downloading file', severity: 'error' }));
+      dispatch(setSnackbar({ open: true, message: 'Error downloading file: ' + error.message, severity: 'error' }));
     }
   };
 
@@ -373,11 +404,7 @@ return (
       <Divider sx={{ my: 4 }} />
 
       <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Video Frames</Typography>
-      <Box 
-        sx={{ 
-          mb: 4,
-        }}
-      >
+      <Box sx={{ mb: 4 }}>
         {framesLoading ? (
           <Box display="flex" flexDirection="column" justifyContent="center" alignItems="center" minHeight="200px">
             <CircularProgress />
@@ -418,7 +445,37 @@ return (
             </Box>
           </Box>
         ) : (
-          <Typography>No frames available</Typography>
+          <Box
+            sx={{
+              overflowX: 'auto',
+              overflowY: 'hidden',
+              whiteSpace: 'nowrap',
+              pb: 2,
+            }}
+          >
+            <Box
+              sx={{
+                display: 'inline-block',
+                minWidth: '100%',
+              }}
+            >
+              {[...Array(5)].map((_, index) => (
+                <Box 
+                  key={index} 
+                  sx={{ 
+                    display: 'inline-block', 
+                    mr: 2,
+                    width: '266px',
+                    height: '150px',
+                    backgroundColor: '#f0f0f0',
+                    backgroundImage: 'linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%)',
+                    backgroundSize: '200% 100%',
+                    animation: `${shimmer} 1.5s infinite`,
+                  }}
+                />
+              ))}
+            </Box>
+          </Box>
         )}
       </Box>
 

@@ -17,10 +17,12 @@ import {
   FormControl,
   InputLabel,
   IconButton,
-  Divider
+  Divider,
+  InputAdornment,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ClearIcon from '@mui/icons-material/Clear';
+import SearchIcon from '@mui/icons-material/Search';
 import { useNavigate } from 'react-router-dom';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -52,21 +54,24 @@ const VideoHistory = () => {
       return;
     }
 
-    let result = videos.filter(video => 
-      (video.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-       video.video_id.toLowerCase().includes(searchTerm.toLowerCase())) &&
-      (!startDate || new Date(video.total_processing_end_time) >= startDate) &&
-      (!endDate || new Date(video.total_processing_end_time) <= endDate)
-    );
+    let result = videos.filter(video => {
+      const videoDate = new Date(video.details.total_processing_end_time);
+      videoDate.setHours(0, 0, 0, 0); // Reset time to start of day
+
+      return (video.details.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        video.video_id.toLowerCase().includes(searchTerm.toLowerCase())) &&
+        (!startDate || videoDate >= startDate) &&
+        (!endDate || videoDate <= endDate);
+    });
 
     result.sort((a, b) => {
       let comparison = 0;
       switch (sortCriteria) {
         case 'date':
-          comparison = new Date(b.total_processing_end_time).getTime() - new Date(a.total_processing_end_time).getTime();
+          comparison = new Date(b.details.total_processing_end_time).getTime() - new Date(a.details.total_processing_end_time).getTime();
           break;
         case 'length':
-          comparison = parseFloat(b.video_length) - parseFloat(a.video_length);
+          comparison = parseFloat(b.details.video_length) - parseFloat(a.details.video_length);
           break;
         default:
           comparison = 0;
@@ -91,7 +96,7 @@ const VideoHistory = () => {
 
   useEffect(() => {
     filterAndSortVideos();
-  }, [filterAndSortVideos]);
+  }, [filterAndSortVideos, videos, searchTerm, startDate, endDate, sortCriteria, sortOrder]);
 
   useEffect(() => {
     if (Array.isArray(videos) && videos.length > 0) {
@@ -262,14 +267,14 @@ const VideoHistory = () => {
 
 
   return (
-    <Box sx={{ mt: 4 }}>
+    <Box sx={{ mt: 4, mb: 4 }}>
       <Typography variant="h5" gutterBottom component="div" sx={{ mb: 3 }}>
         Processed Videos History
       </Typography>
       
-      <Box sx={{ mb: 3 }}>
-        <Grid container spacing={2} alignItems="center">
-          <Grid item xs={12} sm={3}>
+      <Box sx={{ backgroundColor: 'background.paper', p: 3, borderRadius: 2, boxShadow: 1 }}>
+        <Grid container spacing={2} alignItems="flex-end">
+          <Grid item xs={12} md={4}>
             <TextField
               fullWidth
               label="Search by Name or Video ID"
@@ -277,76 +282,91 @@ const VideoHistory = () => {
               value={searchTerm}
               onChange={handleSearch}
               InputProps={{
-                endAdornment: (
-                  <IconButton onClick={() => setSearchTerm('')}>
-                    <ClearIcon />
-                  </IconButton>
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon />
+                  </InputAdornment>
+                ),
+                endAdornment: searchTerm && (
+                  <InputAdornment position="end">
+                    <IconButton onClick={() => setSearchTerm('')} edge="end">
+                      <ClearIcon />
+                    </IconButton>
+                  </InputAdornment>
                 ),
               }}
             />
           </Grid>
-          <Grid item xs={12} sm={3}>
-          <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={enGB}>
-            <DatePicker
-              label="Filter From Date"
-              value={startDate}
-              onChange={setStartDate}
-              slotProps={{ textField: { fullWidth: true } }}
-              format="dd/MM/yyyy"
-            />
-          </LocalizationProvider>
+          <Grid item xs={12} md={4}>
+            <LocalizationProvider dateAdapter={AdapterDateFns}>
+              <Grid container spacing={2}>
+                <Grid item xs={6}>
+                  <DatePicker
+                    label="From Date"
+                    value={startDate}
+                    onChange={(newDate) => {
+                      if (newDate) {
+                        newDate.setHours(0, 0, 0, 0);
+                      }
+                      setStartDate(newDate);
+                    }}
+                    renderInput={(params) => <TextField {...params} fullWidth />}
+                  />
+                </Grid>
+                <Grid item xs={6}>
+                  <DatePicker
+                    label="To Date"
+                    value={endDate}
+                    onChange={(newDate) => {
+                      if (newDate) {
+                        newDate.setHours(23, 59, 59, 999);
+                      }
+                      setEndDate(newDate);
+                    }}
+                    renderInput={(params) => <TextField {...params} fullWidth />}
+                  />
+                </Grid>
+              </Grid>
+            </LocalizationProvider>
           </Grid>
-          <Grid item xs={12} sm={3}>
-          <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={enGB}>
-            <DatePicker
-              label="Filter To Date"
-              value={endDate}
-              onChange={setEndDate}
-              slotProps={{ textField: { fullWidth: true } }}
-              format="dd/MM/yyyy"
-            />
-          </LocalizationProvider>
-          </Grid>
-          <Grid item xs={12} sm={3}>
-            <Button
-              variant="outlined"
-              color="secondary"
-              onClick={handleClearFilters}
-              startIcon={<ClearIcon />}
-              fullWidth
-            >
-              Clear Filters
-            </Button>
-          </Grid>
-        </Grid>
-      </Box>
-      
-      <Box sx={{ mb: 3 }}>
-        <Grid container spacing={2} alignItems="flex-end">
-          <Grid item xs={12} sm={4}>
-            <FormControl fullWidth>
-              <InputLabel id="sort-by-label">Sort By</InputLabel>
-              <Select
-                labelId="sort-by-label"
-                value={sortCriteria}
-                onChange={handleSortChange}
-                label="Sort By"
-              >
-                <MenuItem value="date">Processing Date</MenuItem>
-                <MenuItem value="length">Video Length</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} sm={4}>
-            <Button 
-              onClick={handleSortOrderChange}
-              variant="outlined"
-              fullWidth
-            >
-              {sortOrder === 'asc' ? 'Ascending' : 'Descending'}
-            </Button>
+          <Grid item xs={12} md={4}>
+            <Grid container spacing={2}>
+              <Grid item xs={6}>
+                <FormControl fullWidth>
+                  <InputLabel id="sort-by-label">Sort By</InputLabel>
+                  <Select
+                    labelId="sort-by-label"
+                    value={sortCriteria}
+                    onChange={handleSortChange}
+                    label="Sort By"
+                  >
+                    <MenuItem value="date">Processing Date</MenuItem>
+                    <MenuItem value="length">Video Length</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={6}>
+                <Button 
+                  onClick={handleSortOrderChange}
+                  variant="outlined"
+                  fullWidth
+                >
+                  {sortOrder === 'asc' ? 'Ascending' : 'Descending'}
+                </Button>
+              </Grid>
+            </Grid>
           </Grid>
         </Grid>
+        <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
+          <Button
+            variant="outlined"
+            color="secondary"
+            onClick={handleClearFilters}
+            startIcon={<ClearIcon />}
+          >
+            Clear Filters
+          </Button>
+        </Box>
       </Box>
 
       <Divider sx={{ my: 4 }} />
@@ -364,7 +384,7 @@ const VideoHistory = () => {
                   component="img"
                   height="140"
                   image={firstFrames[video.video_id]}
-                  alt={`First frame of ${video.name || video.video_id}`}
+                  alt={`First frame of ${video.details.name || video.video_id}`}
                   onClick={() => handleCardClick(video.video_id)}
                   onLoad={() => handleImageLoad(video.video_id)}
                   onError={(e) => {

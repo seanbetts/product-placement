@@ -72,17 +72,6 @@ export const updateVideoName = createAsyncThunk(
   }
 );
 
-export const downloadFile = createAsyncThunk(
-  'videos/downloadFile',
-  async ({ videoId, fileType }, { rejectWithValue }) => {
-    try {
-      return await api.downloadFile(videoId, fileType);
-    } catch (error) {
-      return rejectWithValue(error.message);
-    }
-  }
-);
-
 const videoSlice = createSlice({
   name: 'videos',
   initialState: {
@@ -176,14 +165,9 @@ const videoSlice = createSlice({
         state.status.error = action.payload || 'Failed to fetch video frames';
       })
       .addCase(updateVideoName.fulfilled, (state, action) => {
-        const { videoId, newName } = action.meta.arg;
-        if (state.data.details[videoId]) {
-          state.data.details[videoId].name = newName;
+        if (state.data.details[action.meta.arg.videoId]) {
+          state.data.details[action.meta.arg.videoId].name = action.meta.arg.newName;
         }
-        state.ui.isEditingName = false;
-      })
-      .addCase(downloadFile.rejected, (state, action) => {
-        state.ui.snackbar = { open: true, message: 'Failed to download file', severity: 'error' };
       });
   },
 });

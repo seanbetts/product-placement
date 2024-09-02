@@ -28,6 +28,7 @@ from io import BytesIO
 from typing import List, Dict, Any
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from pydantic import BaseModel
 from processing.ocr_processing import process_ocr, post_process_ocr
 
 # Load environment variables (this will work locally, but not affect GCP environment)
@@ -135,6 +136,9 @@ class StatusTracker:
         status_blob = bucket.blob(f'{self.video_id}/status.json')
         current_status = self.get_status()
         status_blob.upload_from_string(json.dumps(current_status), content_type='application/json')
+
+class NameUpdate(BaseModel):
+    name: str
 
 ########################################################
 ## FAST API ENDPOINTS                                 ##
@@ -250,8 +254,8 @@ async def get_processing_stats(video_id: str):
 ## UPDATE VIDEO NAME ENDPOINT (POST)
 ## Updates the name of a video
 @app.post("/{video_id}/video/update-name")
-async def update_video_name(video_id: str, name: str = Body(...)):
-    logger.info(f"Received request to update name for video {video_id} to '{name}'")
+async def update_video_name(video_id: str, name_update: NameUpdate):
+    logger.info(f"Received request to update name for video {video_id} to '{name_update.name}'")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
     status_blob = bucket.blob(f'{video_id}/status.json')
     stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
@@ -259,20 +263,20 @@ async def update_video_name(video_id: str, name: str = Body(...)):
     if not status_blob.exists() or not stats_blob.exists():
         raise HTTPException(status_code=404, detail="Video not found")
 
-    if not name or name.strip() == "":
+    if not name_update.name or name_update.name.strip() == "":
         raise HTTPException(status_code=422, detail="Name cannot be empty")
 
     # Update status.json
     status_data = json.loads(status_blob.download_as_string())
-    status_data['name'] = name
+    status_data['name'] = name_update.name
     status_blob.upload_from_string(json.dumps(status_data), content_type='application/json')
 
     # Update processing_stats.json
     stats_data = json.loads(stats_blob.download_as_string())
-    stats_data['name'] = name
+    stats_data['name'] = name_update.name
     stats_blob.upload_from_string(json.dumps(stats_data), content_type='application/json')
 
-    return {"message": "Video name updated successfully"}
+    return {f"message": "Video name updated successfully to {name_update.name}"}
 ########################################################
 
 ## VIDEO FRAME ENDPOINT (GET)   
