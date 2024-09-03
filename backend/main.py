@@ -145,6 +145,9 @@ class NameUpdate(BaseModel):
 def resumable_upload_with_retry(resumable_upload, session, stream):
     return resumable_upload.transmit_next_chunk(session, stream)
 
+# Dictionary to keep track of active uploads
+active_uploads: Dict[str, bool] = {}
+
 ########################################################
 ## FAST API ENDPOINTS                                 ##
 ########################################################
@@ -179,6 +182,9 @@ async def upload_video(
     }
     logger.info("Received upload request", extra=log_context)
 
+    # Mark this upload as active
+    active_uploads[video_id] = True
+
     bucket = storage_client.bucket(PROCESSING_BUCKET)
     blob = bucket.blob(f'{video_id}/original.mp4')
 
@@ -197,6 +203,10 @@ async def upload_video(
             with open(temp_filename, 'ab') as f:
                 f.write(chunk)
             
+            # Check if upload has been cancelled
+            if not active_uploads.get(video_id, False):
+                raise Exception("Upload cancelled")
+
             # Upload the combined content back to GCS
             blob.upload_from_filename(temp_filename)
         
@@ -207,6 +217,7 @@ async def upload_video(
         
         if chunk_number == total_chunks:
             logger.info("File upload completed successfully", extra=log_context)
+            del active_uploads[video_id]  # Remove from active uploads
             background_tasks.add_task(run_video_processing, video_id)
             return {"video_id": video_id, "status": "processing"}
         else:
@@ -218,7 +229,28 @@ async def upload_video(
 
     except Exception as e:
         logger.error("Error during chunk upload", exc_info=True, extra={**log_context, "error": str(e)})
+        # Clean up if there was an error
+        if video_id in active_uploads:
+            del active_uploads[video_id]
+        if blob.exists():
+            blob.delete()
         return JSONResponse(status_code=500, content={"error": "Upload failed", "video_id": video_id, "chunk": chunk_number, "details": str(e)})
+########################################################
+
+## CANCEL UPLOAD ENDPOINT (POST)
+## Cancels an upload for a given video ID
+@app.post("/video/cancel-upload/{video_id}")
+async def cancel_upload(video_id: str):
+    if video_id in active_uploads:
+        active_uploads[video_id] = False
+        bucket = storage_client.bucket(PROCESSING_BUCKET)
+        blob = bucket.blob(f'{video_id}/original.mp4')
+        if blob.exists():
+            blob.delete()
+        logger.info(f"Upload cancelled for video_id: {video_id}")
+        return {"status": "cancelled", "video_id": video_id}
+    else:
+        return JSONResponse(status_code=404, content={"error": "Upload not found", "video_id": video_id})
 ########################################################
 
 ## PROCESSED VIDEOS ENDPOINT (GET)

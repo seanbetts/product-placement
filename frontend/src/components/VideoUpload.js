@@ -86,65 +86,74 @@ const VideoUpload = () => {
 
   const handleUpload = async () => {
     if (!file) return;
-  
     setUploading(true);
     setUploadProgress(0);
     setError(null);
     setCancelUpload(false);
     cancelUploadRef.current = false;
-  
-    try {
-      const response = await api.uploadVideo(file, (progress) => {
-        setUploadProgress(progress);
-        if (cancelUpload) {
-          throw new Error('Upload cancelled');
-        }
-      });
-  
-      setUploadedVideoId(response.video_id);
-      setProcessingStatus({
-        status: 'processing',
-        progress: 0,
-      });
-      pollProcessingStatus(response.video_id);
-    } catch (error) {
-      console.error('Error uploading video:', error);
-      if (error.message === 'Upload cancelled') {
-        setError('Upload cancelled');
-      } else {
-        setError(error.response?.data?.detail || error.message || 'Failed to upload video. Please try again.');
-      }
-    } finally {
-      setUploading(false);
-      setCancelUpload(false);
-      cancelUploadRef.current = false;
-    }
-  };
 
-  const handleCancel = () => {
-    if (uploading) {
-      setCancelUpload(true);
-      cancelUploadRef.current = true;
-    } else {
-      setFile(null);
-      setPreview(null);
-      setUploadProgress(0);
-      setUploading(false);
-      setUploadedVideoId(null);
-      setProcessingStatus(null);
-      setProcessingStats(null);
-      setProcessingProgress({
-        total: { status: 'pending', progress: 0 },
-        video: { status: 'pending', progress: 0 },
-        audio: { status: 'pending', progress: 0 },
-        transcription: { status: 'pending', progress: 0 },
-        ocr: { status: 'pending', progress: 0 }
-      });
-      setVideoDimensions(null);
-      // Reset the cancelUpload state when not uploading
-      setCancelUpload(false);
+    const cancelSignal = { isCancelled: false };
+
+    try {
+        const response = await api.uploadVideo(file, (progress) => {
+            setUploadProgress(progress);
+            if (cancelUploadRef.current) {
+                cancelSignal.isCancelled = true;
+            }
+        }, cancelSignal);
+
+        setUploadedVideoId(response.video_id);
+        setProcessingStatus({
+            status: 'processing',
+            progress: 0,
+        });
+        pollProcessingStatus(response.video_id);
+    } catch (error) {
+        console.error('Error uploading video:', error);
+        if (error.message === 'Upload cancelled') {
+            setError('Upload cancelled');
+        } else {
+            setError(error.response?.data?.detail || error.message || 'Failed to upload video. Please try again.');
+        }
+    } finally {
+        setUploading(false);
+        setCancelUpload(false);
+        cancelUploadRef.current = false;
+        setUploadedVideoId(null);
     }
-  };
+};
+
+const handleCancel = async () => {
+    if (uploading) {
+        setCancelUpload(true);
+        cancelUploadRef.current = true;
+        if (uploadedVideoId) {
+            try {
+                await api.cancelUpload(uploadedVideoId);
+            } catch (error) {
+                console.error('Error cancelling upload:', error);
+            }
+        }
+    } else {
+        // Reset all states
+        setFile(null);
+        setPreview(null);
+        setUploadProgress(0);
+        setUploading(false);
+        setUploadedVideoId(null);
+        setProcessingStatus(null);
+        setProcessingStats(null);
+        setProcessingProgress({
+            total: { status: 'pending', progress: 0 },
+            video: { status: 'pending', progress: 0 },
+            audio: { status: 'pending', progress: 0 },
+            transcription: { status: 'pending', progress: 0 },
+            ocr: { status: 'pending', progress: 0 }
+        });
+        setVideoDimensions(null);
+        setCancelUpload(false);
+    }
+};
 
   const pollProcessingStatus = async (videoId) => {
     try {
