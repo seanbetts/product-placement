@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useNavigate } from 'react-router-dom';
 import { Button, Typography, CircularProgress, Box, Paper, Alert, Snackbar, Grid, LinearProgress, Stack, Divider } from '@mui/material';
+import { red } from '@mui/material/colors';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import CancelIcon from '@mui/icons-material/Cancel';
 import PublishIcon from '@mui/icons-material/Publish';
@@ -12,10 +13,13 @@ import api from '../services/api';
 const VideoUpload = () => {
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [displayedUploadProgress, setDisplayedUploadProgress] = useState(0);
   const [preview, setPreview] = useState(null);
   const [error, setError] = useState(null);
   const [uploadedVideoId, setUploadedVideoId] = useState(null);
+  // eslint-disable-next-line no-unused-vars
   const [cancelUpload, setCancelUpload] = useState(false);
   const cancelUploadRef = useRef(false);
   const [processingStatus, setProcessingStatus] = useState(null);
@@ -29,6 +33,8 @@ const VideoUpload = () => {
   });
   const [videoDimensions, setVideoDimensions] = useState(null);
   const navigate = useNavigate();
+  const [cancelSuccess, setCancelSuccess] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   const onDrop = useCallback(async (acceptedFiles) => {
     const videoFile = acceptedFiles[0];
@@ -88,6 +94,7 @@ const VideoUpload = () => {
     if (!file) return;
     setUploading(true);
     setUploadProgress(0);
+    setDisplayedUploadProgress(0);
     setError(null);
     setCancelUpload(false);
     cancelUploadRef.current = false;
@@ -97,6 +104,9 @@ const VideoUpload = () => {
     try {
         const response = await api.uploadVideo(file, (progress) => {
             setUploadProgress(progress);
+            if (!cancelUploadRef.current) {
+                setDisplayedUploadProgress(progress);
+            }
             if (cancelUploadRef.current) {
                 cancelSignal.isCancelled = true;
             }
@@ -120,38 +130,53 @@ const VideoUpload = () => {
         setCancelUpload(false);
         cancelUploadRef.current = false;
         setUploadedVideoId(null);
+        setDisplayedUploadProgress(0);
+        setUploadProgress(0);
     }
 };
 
 const handleCancel = async () => {
     if (uploading) {
-        setCancelUpload(true);
-        cancelUploadRef.current = true;
-        if (uploadedVideoId) {
-            try {
-                await api.cancelUpload(uploadedVideoId);
-            } catch (error) {
-                console.error('Error cancelling upload:', error);
-            }
+      setIsCancelling(true);
+      setCancelUpload(true);
+      cancelUploadRef.current = true;
+      setDisplayedUploadProgress(0);  // Immediately reset displayed progress
+
+      if (uploadedVideoId) {
+        try {
+          await api.cancelUpload(uploadedVideoId);
+          setCancelSuccess(true);
+        } catch (error) {
+          console.error('Error cancelling upload:', error);
+          setError('Failed to cancel upload. Please try again.');
         }
+      } else {
+        // Short delay to simulate cancellation process
+        await new Promise(resolve => setTimeout(resolve, 500));
+        setCancelSuccess(true);
+      }
+      
+      setIsCancelling(false);
+      setUploading(false);
     } else {
-        // Reset all states
-        setFile(null);
-        setPreview(null);
-        setUploadProgress(0);
-        setUploading(false);
-        setUploadedVideoId(null);
-        setProcessingStatus(null);
-        setProcessingStats(null);
-        setProcessingProgress({
-            total: { status: 'pending', progress: 0 },
-            video: { status: 'pending', progress: 0 },
-            audio: { status: 'pending', progress: 0 },
-            transcription: { status: 'pending', progress: 0 },
-            ocr: { status: 'pending', progress: 0 }
-        });
-        setVideoDimensions(null);
-        setCancelUpload(false);
+      // Reset all states
+      setFile(null);
+      setPreview(null);
+      setUploadProgress(0);
+      setDisplayedUploadProgress(0);
+      setUploading(false);
+      setUploadedVideoId(null);
+      setProcessingStatus(null);
+      setProcessingStats(null);
+      setProcessingProgress({
+        total: { status: 'pending', progress: 0 },
+        video: { status: 'pending', progress: 0 },
+        audio: { status: 'pending', progress: 0 },
+        transcription: { status: 'pending', progress: 0 },
+        ocr: { status: 'pending', progress: 0 }
+      });
+      setVideoDimensions(null);
+      setCancelUpload(false);
     }
 };
 
@@ -272,7 +297,7 @@ const handleCancel = async () => {
           </Typography>
         </Grid>
         <Grid item xs={12} md={6}>
-        {!uploading && !uploadedVideoId && (
+        {!uploading && !uploadedVideoId && !isCancelling && (
           <Stack spacing={2} alignItems="center" sx={{ height: '100%', justifyContent: 'center' }}>
             <Button 
               variant="contained" 
@@ -295,21 +320,29 @@ const handleCancel = async () => {
             </Button>
           </Stack>
         )}
-        {uploading && (
+        {(uploading || isCancelling) && (
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'center' }}>
-            <CircularProgress size={60} thickness={5} />
+            <CircularProgress 
+              size={60} 
+              thickness={5} 
+              sx={{ 
+                color: isCancelling ? red[500] : 'primary.main'
+              }}
+            />
             <Typography variant="h6" sx={{ mt: 2 }}>
-              Uploading... {Math.round(uploadProgress)}%
+              {isCancelling ? "Cancelling upload..." : `Uploading... ${Math.round(displayedUploadProgress)}%`}
             </Typography>
-            <Button
-              variant="outlined"
-              color="secondary"
-              startIcon={<CancelIcon />}
-              onClick={handleCancel}
-              sx={{ mt: 2 }}
-            >
-              Cancel Upload
-            </Button>
+            {!isCancelling && (
+              <Button
+                variant="outlined"
+                color="secondary"
+                startIcon={<CancelIcon />}
+                onClick={handleCancel}
+                sx={{ mt: 2 }}
+              >
+                Cancel Upload
+              </Button>
+            )}
           </Box>
         )}
         {uploadedVideoId && renderProcessingStatus()}
@@ -408,6 +441,20 @@ const handleCancel = async () => {
           sx={{ width: '100%' }}
         >
           {error}
+        </Alert>
+      </Snackbar>
+
+      <Snackbar
+        open={cancelSuccess}
+        autoHideDuration={6000}
+        onClose={() => setCancelSuccess(false)}
+      >
+        <Alert
+          onClose={() => setCancelSuccess(false)}
+          severity="success"
+          sx={{ width: '100%' }}
+        >
+          Upload cancelled successfully.
         </Alert>
       </Snackbar>
     </Box>

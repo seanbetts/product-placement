@@ -1,13 +1,19 @@
 import axios from 'axios'
 import { handleApiError } from '../utils/errorHandling';
 
-// const API_BASE_URL = 'http://127.0.0.1:8000';
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
 
 const isCacheValid = (timestamp) => {
   return timestamp && Date.now() - timestamp < CACHE_DURATION;
+};
+
+const invalidateCache = (keys) => {
+  keys.forEach(key => {
+    localStorage.removeItem(key);
+    localStorage.removeItem(`${key}_timestamp`);
+  });
 };
 
 const api = {
@@ -46,6 +52,7 @@ const api = {
 
             videoId = response.data.video_id;
             if (response.data.status === 'processing') {
+                invalidateCache(['processedVideos']);
                 return response.data;
             }
         } catch (error) {
@@ -56,11 +63,12 @@ const api = {
         }
     }
     throw new Error('Upload failed to complete');
-},
+  },
 
-cancelUpload: async (videoId) => {
-  await axios.post(`${API_BASE_URL}/video/cancel-upload/${videoId}`);
-},
+  cancelUpload: async (videoId) => {
+    await axios.post(`${API_BASE_URL}/video/cancel-upload/${videoId}`);
+    invalidateCache(['processedVideos']);
+  },
 
   getProcessedVideos: async () => {
     const cacheKey = 'processedVideos';
@@ -85,6 +93,7 @@ cancelUpload: async (videoId) => {
   getVideoStatus: async (videoId) => {
     try {
       const response = await axios.get(`${API_BASE_URL}/${videoId}/video/status`);
+      invalidateCache([`processingStats_${videoId}`, `videoDetails_${videoId}`]);
       return response.data;
     } catch (error) {
       throw handleApiError(error);
@@ -113,11 +122,11 @@ cancelUpload: async (videoId) => {
   updateVideoName: async (videoId, newName) => {
     try {
       const response = await axios.post(`${API_BASE_URL}/${videoId}/video/update-name`, { name: newName });
-      // Invalidate relevant caches
-      localStorage.removeItem(`videoDetails_${videoId}`);
-      localStorage.removeItem(`videoDetails_${videoId}_timestamp`);
-      localStorage.removeItem(`processedVideos`);
-      localStorage.removeItem(`processedVideos_timestamp`);
+      invalidateCache([
+        `videoDetails_${videoId}`,
+        'processedVideos',
+        `processingStats_${videoId}`
+      ]);
       return response.data;
     } catch (error) {
       throw handleApiError(error);
@@ -130,12 +139,12 @@ cancelUpload: async (videoId) => {
     const cachedTimestamp = localStorage.getItem(`${cacheKey}_timestamp`);
   
     if (cachedData && isCacheValid(parseInt(cachedTimestamp))) {
-      return JSON.parse(cachedData); // Return the cached base64 data
+      return JSON.parse(cachedData);
     }
   
     try {
       const response = await axios.get(`${API_BASE_URL}/${videoId}/images/first-frame`, {
-        responseType: 'arraybuffer' // Get the raw binary data
+        responseType: 'arraybuffer'
       });
       const base64 = btoa(
         new Uint8Array(response.data).reduce(
@@ -250,6 +259,25 @@ cancelUpload: async (videoId) => {
       throw handleApiError(error);
     }
   },
+
+  // New function to invalidate all caches for a specific video
+  invalidateVideoCache: (videoId) => {
+    invalidateCache([
+      `videoDetails_${videoId}`,
+      `processingStats_${videoId}`,
+      `firstVideoFrame_${videoId}`,
+      `videoFrames_${videoId}`,
+      `transcript_${videoId}`,
+      `ocrWordCloud_${videoId}`,
+      `brandsOcrTable_${videoId}`,
+      'processedVideos' // This affects the list of all videos
+    ]);
+  },
+
+  // New function to invalidate all caches
+  invalidateAllCaches: () => {
+    localStorage.clear();
+  }
 };
 
 export default api;
