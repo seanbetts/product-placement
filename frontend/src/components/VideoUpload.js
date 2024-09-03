@@ -27,6 +27,7 @@ const VideoUpload = () => {
     transcription: { status: 'pending', progress: 0 },
     ocr: { status: 'pending', progress: 0 }
   });
+  const [videoDimensions, setVideoDimensions] = useState(null);
   const navigate = useNavigate();
 
   const onDrop = useCallback(async (acceptedFiles) => {
@@ -34,12 +35,14 @@ const VideoUpload = () => {
     setFile(videoFile);
     setError(null);
     try {
-      const frameUrl = await extractFirstFrame(videoFile);
+      const { frameUrl, width, height } = await extractFirstFrame(videoFile);
       setPreview(frameUrl);
+      setVideoDimensions({ width, height });
     } catch (error) {
       console.error("Error extracting frame:", error);
       setError("Failed to generate video preview. The file might be corrupted or in an unsupported format.");
       setPreview(null);
+      setVideoDimensions(null);
     }
   }, []);
 
@@ -67,7 +70,11 @@ const VideoUpload = () => {
         canvas.height = video.videoHeight;
         canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
         canvas.toBlob((blob) => {
-          resolve(URL.createObjectURL(blob));
+          resolve({
+            frameUrl: URL.createObjectURL(blob),
+            width: video.videoWidth,
+            height: video.videoHeight
+          });
         }, 'image/jpeg', 0.75);
       };
       video.onerror = () => {
@@ -133,6 +140,7 @@ const VideoUpload = () => {
         transcription: { status: 'pending', progress: 0 },
         ocr: { status: 'pending', progress: 0 }
       });
+      setVideoDimensions(null);
       // Reset the cancelUpload state when not uploading
       setCancelUpload(false);
     }
@@ -245,6 +253,11 @@ const VideoUpload = () => {
           <Typography variant="subtitle1" sx={{ mt: 2, fontWeight: 'bold' }}>
             {file.name}
           </Typography>
+          {videoDimensions && (
+            <Typography variant="body2" color="text.secondary">
+              Resolution: {videoDimensions.width}x{videoDimensions.height}
+            </Typography>
+          )}
           <Typography variant="body2" color="text.secondary">
             {(file.size / (1024 * 1024)).toFixed(2)} MB
           </Typography>

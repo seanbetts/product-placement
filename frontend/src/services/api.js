@@ -1,8 +1,8 @@
 import axios from 'axios'
 import { handleApiError } from '../utils/errorHandling';
 
-const API_BASE_URL = 'http://127.0.0.1:8000';
-// const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+// const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
 

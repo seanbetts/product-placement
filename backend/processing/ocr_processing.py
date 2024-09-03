@@ -43,8 +43,11 @@ BRAND_DATABASE = {
     "pizza hut": {"variations": ["pizzahut"], "category": "food"},
     "doritos": {"variations": ["dorito"], "category": "food"},
     "reebok": {"variations": ["rebok"], "category": "apparel"},
+    "adidas": {"variations": ["addidas", "adiddas", "addiddas"], "category": "apparel"},
+    "betano": {"variations": ["betano"], "category": "gaming"},
+    "₿c.game": {"variations": ["bc.game","₿c game", "bc game", "₿c-game", "bc-game", "₿cgame", "bcgame"], "category": "gaming"},
+    "chang": {"variations": ["chang"], "category": "beverages"},
 }
-
 d = enchant.Dict("en_US")
 
 def load_ocr_results(bucket: storage.Bucket, video_id: str) -> List[Dict]:
