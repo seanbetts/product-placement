@@ -1,11 +1,11 @@
 import React from 'react';
 import { BrowserRouter as Router, Route, Routes, Link } from 'react-router-dom';
 import { AppBar, Toolbar, Typography, Container, Button, Box, Grid, Paper, Divider } from '@mui/material';
-import VideoUploadPage from './components/VideoUploadPage';
-import VideoHistory from './components/VideoHistory';
-import VideoDetails from './components/VideoDetails';
-import FAQ from './components/FAQ';
-import Footer from './components/Footer';
+import VideoUploadPage from './components/VideoUpload/VideoUploadPage';
+import VideoHistory from './components/VideoHistory/VideoHistory';
+import VideoDetails from './components/VideoDetails/VideoDetails';
+import FAQ from './components/main/FAQ';
+import Footer from './components/main/Footer';
 
 function App() {
   return (

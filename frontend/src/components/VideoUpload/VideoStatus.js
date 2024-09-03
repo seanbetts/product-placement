@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Typography, CircularProgress, Box, Paper, Button, Divider } from '@mui/material';
-import api from '../services/api';
+import api from '../../services/api';
 
 const VideoStatus = ({ videoId }) => {
   const [status, setStatus] = useState(null);

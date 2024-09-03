@@ -8,7 +8,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import PublishIcon from '@mui/icons-material/Publish';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
-import api from '../services/api';
+import api from '../../services/api';
 
 const VideoUpload = () => {
   const [file, setFile] = useState(null);
@@ -117,6 +117,7 @@ const VideoUpload = () => {
             status: 'processing',
             progress: 0,
         });
+        // Start polling immediately after successful upload
         pollProcessingStatus(response.video_id);
     } catch (error) {
         console.error('Error uploading video:', error);
@@ -129,9 +130,6 @@ const VideoUpload = () => {
         setUploading(false);
         setCancelUpload(false);
         cancelUploadRef.current = false;
-        setUploadedVideoId(null);
-        setDisplayedUploadProgress(0);
-        setUploadProgress(0);
     }
 };
 
@@ -184,6 +182,8 @@ const handleCancel = async () => {
     try {
       const response = await api.getVideoStatus(videoId);
       
+      console.log('Polling response:', response); // Add this line for debugging
+
       setProcessingProgress(prevProgress => ({
         ...prevProgress,
         total: { status: response.status, progress: response.progress || 0 },
@@ -201,12 +201,12 @@ const handleCancel = async () => {
       if (response.status === 'complete') {
         fetchProcessingStats(videoId);
       } else {
-        // Increase polling frequency to 1 second (1000 milliseconds)
+        // Continue polling
         setTimeout(() => pollProcessingStatus(videoId), 1000);
       }
     } catch (error) {
       console.error('Error polling video status:', error);
-      // Even if there's an error, continue polling after a short delay
+      // Continue polling even if there's an error
       setTimeout(() => pollProcessingStatus(videoId), 2000);
     }
   };

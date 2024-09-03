@@ -10,6 +10,7 @@ import asyncio
 import subprocess
 import urllib3
 import concurrent.futures
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException, Form
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
@@ -361,15 +362,24 @@ async def update_video_name(video_id: str, name_update: NameUpdate):
 ## Returns the first frame of the video as a JPEG image
 @app.get("/{video_id}/images/first-frame")
 async def get_video_frame(video_id: str):
-    logger.info(f"Received request for first frame of video: {video_id}")
+    logger.info(f"Received request for first non-black frame of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
     
-    first_frame_blob = bucket.blob(f'{video_id}/frames/000000.jpg')
-    if first_frame_blob.exists():
-        frame_data = first_frame_blob.download_as_bytes()
-        return StreamingResponse(BytesIO(frame_data), media_type="image/jpeg")
-    else:
-        raise HTTPException(status_code=404, detail="First frame not found")
+    frames_prefix = f'{video_id}/frames/'
+    blobs = bucket.list_blobs(prefix=frames_prefix)
+    
+    for blob in blobs:
+        frame_data = blob.download_as_bytes()
+        nparr = np.frombuffer(frame_data, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
+        
+        # Check if the frame is not completely black
+        if np.mean(img) > 20:  # You can adjust this threshold as needed
+            logger.info(f"Found non-black frame: {blob.name}")
+            return StreamingResponse(BytesIO(frame_data), media_type="image/jpeg")
+    
+    logger.warning(f"No non-black frame found for video: {video_id}")
+    raise HTTPException(status_code=404, detail="No non-black frame found")
 ########################################################
 
 ## VIDEO FRAMES ENDPOINT (GET)

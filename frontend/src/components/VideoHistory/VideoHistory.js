@@ -28,7 +28,7 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { format } from 'date-fns';
-import { fetchProcessedVideos, fetchFirstVideoFrame } from '../store/videoSlice';
+import { fetchProcessedVideos, fetchFirstVideoFrame } from '../../store/videoSlice';
 
 const VideoHistory = () => {
   const dispatch = useDispatch();
