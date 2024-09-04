@@ -360,23 +360,33 @@ async def update_video_name(video_id: str, name_update: NameUpdate):
 
 ## VIDEO FRAME ENDPOINT (GET)   
 ## Returns the first frame of the video as a JPEG image
+import cv2
+import numpy as np
+import re
+
 @app.get("/{video_id}/images/first-frame")
 async def get_video_frame(video_id: str):
     logger.info(f"Received request for first non-black frame of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
     
     frames_prefix = f'{video_id}/frames/'
-    blobs = bucket.list_blobs(prefix=frames_prefix)
+    blobs = list(bucket.list_blobs(prefix=frames_prefix))
+    blobs.sort(key=lambda x: int(re.findall(r'\d+', x.name)[-1]))
     
-    for blob in blobs:
+    frame_index = 0
+    while frame_index < len(blobs):
+        blob = blobs[frame_index]
         frame_data = blob.download_as_bytes()
         nparr = np.frombuffer(frame_data, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
         
         # Check if the frame is not completely black
-        if np.mean(img) > 20:  # You can adjust this threshold as needed
+        if np.mean(img) > 120:  # You can adjust this threshold as needed
             logger.info(f"Found non-black frame: {blob.name}")
             return StreamingResponse(BytesIO(frame_data), media_type="image/jpeg")
+        
+        # If black, jump forward 30 frames or to the end
+        frame_index += min(30, len(blobs) - frame_index - 1)
     
     logger.warning(f"No non-black frame found for video: {video_id}")
     raise HTTPException(status_code=404, detail="No non-black frame found")
