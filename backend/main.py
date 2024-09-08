@@ -10,6 +10,7 @@ import asyncio
 import subprocess
 import urllib3
 import concurrent.futures
+import io
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException, Form
@@ -26,8 +27,9 @@ from google.auth import default
 from google.cloud.speech_v2 import SpeechClient
 from google.cloud.speech_v2.types import cloud_speech
 from dotenv import load_dotenv
+from PIL import Image
 from io import BytesIO
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from pydantic import BaseModel
@@ -497,11 +499,12 @@ async def reprocess_ocr(video_id: str):
 
     if stats_blob.exists():
         stats = json.loads(stats_blob.download_as_string())
-        fps = float(stats['video']['video_processing_fps'])
+        fps = float(stats['video']['video_fps'])
+        video_resolution = await get_video_resolution(bucket, video_id)
     else:
         raise HTTPException(status_code=404, detail="Processing stats not found")
     
-    processed_results = await post_process_ocr(video_id, fps, bucket)
+    processed_results = await post_process_ocr(video_id, fps, video_resolution, bucket)
     if processed_results:
         return {"status": "success", "message": "OCR results reprocessed and saved"}
     else:
@@ -954,6 +957,40 @@ def process_batch(batch, video_id, bucket):
         
     except Exception as e:
         logger.error(f"Error processing batch for video {video_id}: {str(e)}")
+
+async def get_video_resolution(bucket: storage.Bucket, video_id: str) -> Tuple[int, int]:
+    """
+    Retrieve the video resolution by analyzing the first frame (000000.jpg) in the frames folder.
+    """
+    try:
+        # Construct the path to the first frame
+        first_frame_path = f'{video_id}/frames/000000.jpg'
+        
+        # Get the blob for the first frame
+        frame_blob = bucket.blob(first_frame_path)
+        
+        # Check if the blob exists
+        if not frame_blob.exists():
+            raise FileNotFoundError(f"First frame not found for video {video_id}")
+        
+        # Download the frame data
+        frame_data = frame_blob.download_as_bytes()
+        
+        # Open the image using PIL
+        with Image.open(io.BytesIO(frame_data)) as img:
+            width, height = img.size
+        
+        logger.info(f"Detected resolution for video {video_id}: {width}x{height}")
+        return (width, height)
+    
+    except FileNotFoundError as e:
+        logger.error(f"Error retrieving video resolution for {video_id}: {str(e)}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving video resolution for {video_id}: {str(e)}")
+        # Return a default resolution if unable to retrieve
+        logger.warning(f"Using default resolution (1920x1080) for video {video_id}")
+        return (1920, 1080)  # Default to 1080p
 
 if __name__ == "__main__":
     import uvicorn
