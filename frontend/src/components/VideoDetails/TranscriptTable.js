@@ -15,18 +15,26 @@ import {
   Paper
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
-import { fetchTranscript, selectTranscript, selectTranscriptStatus } from '../../store/transcriptSlice';
+import { 
+  fetchTranscript, 
+  selectTranscript, 
+  selectTranscriptLoadingState,
+  selectTranscriptError,
+  selectTranscriptErrorType
+} from '../../store/transcriptSlice';
 
 const TranscriptTable = React.memo(({ videoId, searchTerm, onSearchChange }) => {
   const dispatch = useDispatch();
   const transcript = useSelector(state => selectTranscript(state, videoId));
-  const { loading, error, errorType } = useSelector(selectTranscriptStatus);
+  const loading = useSelector(state => selectTranscriptLoadingState(state, videoId));
+  const error = useSelector(state => selectTranscriptError(state, videoId));
+  const errorType = useSelector(state => selectTranscriptErrorType(state, videoId));
 
   useEffect(() => {
-    if (!transcript) {
+    if (!transcript && !loading) {
       dispatch(fetchTranscript(videoId));
     }
-  }, [dispatch, videoId, transcript]);
+  }, [dispatch, videoId, transcript, loading]);
 
   const formatTime = useCallback((seconds) => {
     const minutes = Math.floor(seconds / 60);
@@ -152,7 +160,7 @@ const TranscriptTable = React.memo(({ videoId, searchTerm, onSearchChange }) => 
                 <TableCell>{formatTime(parseFloat(sentence.start_time))}</TableCell>
                 <TableCell>{formatTime(parseFloat(sentence.end_time))}</TableCell>
                 <TableCell>{highlightText(sentence.text, searchTerm)}</TableCell>
-                <TableCell>{(sentence.confidence * 100).toFixed(2)}%</TableCell>
+                <TableCell>{(sentence.confidence * 100).toFixed(1)}%</TableCell>
               </TableRow>
             ))}
           </TableBody>

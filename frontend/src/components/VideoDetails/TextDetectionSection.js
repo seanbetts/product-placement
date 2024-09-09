@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import {
   Typography,
@@ -14,8 +14,7 @@ import {
   CircularProgress
 } from '@mui/material';
 import { 
-  fetchOcrWordCloud, 
-  fetchBrandsOcrTable, 
+  fetchOcrData, 
   selectOcrWordCloud,
   selectBrandsOcrTable,
   selectOcrStatus
@@ -94,20 +93,13 @@ const TextDetectionSection = ({ videoId }) => {
   const dispatch = useDispatch();
   const wordCloud = useSelector(state => selectOcrWordCloud(state, videoId));
   const brandTable = useSelector(state => selectBrandsOcrTable(state, videoId));
-  const { loading, error, errorType } = useSelector(selectOcrStatus);
-
-  const fetchData = useCallback(async () => {
-    if (!wordCloud) {
-      await dispatch(fetchOcrWordCloud(videoId));
-    }
-    if (!brandTable) {
-      await dispatch(fetchBrandsOcrTable(videoId));
-    }
-  }, [dispatch, videoId, wordCloud, brandTable]);
+  const { loading, error, fetched } = useSelector(state => selectOcrStatus(state, videoId));
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (!fetched && !loading && !error) {
+      dispatch(fetchOcrData(videoId));
+    }
+  }, [dispatch, videoId, fetched, loading, error]);
 
   const content = useMemo(() => {
     if (loading) {
@@ -120,18 +112,7 @@ const TextDetectionSection = ({ videoId }) => {
     }
 
     if (error) {
-      let errorMessage;
-      switch (errorType) {
-        case 'NETWORK_ERROR':
-          errorMessage = "Network error. Please check your connection.";
-          break;
-        case 'API_ERROR':
-          errorMessage = "Server error. Please try again later.";
-          break;
-        default:
-          errorMessage = `An unknown error occurred: ${error}`;
-      }
-      return <Typography color="error">{errorMessage}</Typography>;
+      return <Typography color="error">{error}</Typography>;
     }
 
     return (
@@ -144,7 +125,7 @@ const TextDetectionSection = ({ videoId }) => {
         </Grid>
       </Grid>
     );
-  }, [loading, error, errorType, wordCloud, brandTable]);
+  }, [loading, error, wordCloud, brandTable]);
 
   return (
     <Box sx={{ mt: 4 }}>

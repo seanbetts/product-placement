@@ -3,9 +3,15 @@ import api from '../services/api';
 
 export const fetchProcessedVideos = createAsyncThunk(
   'videos/fetchProcessedVideos',
-  async (_, { rejectWithValue }) => {
+  async (_, { getState, rejectWithValue }) => {
+    const state = getState().videos;
+    const now = Date.now();
+    if (state.status.lastFetched && now - state.status.lastFetched < 60000) { // 1 minute cache
+      return { videos: state.data.list, lastFetched: state.status.lastFetched };
+    }
     try {
-      return await api.getProcessedVideos();
+      const videos = await api.getProcessedVideos();
+      return { videos, lastFetched: now };
     } catch (error) {
       return rejectWithValue(error.message);
     }
@@ -84,6 +90,8 @@ const videoSlice = createSlice({
     },
     status: {
       loading: false,
+      loadingDetails: {},
+      loadingFrames: {},
       error: null,
       lastFetched: null,
       framesLoading: false,
@@ -129,7 +137,8 @@ const videoSlice = createSlice({
       })
       .addCase(fetchProcessedVideos.fulfilled, (state, action) => {
         state.status.loading = false;
-        state.data.list = action.payload;
+        state.data.list = action.payload.videos;
+        state.status.lastFetched = action.payload.lastFetched;
       })
       .addCase(fetchProcessedVideos.rejected, (state, action) => {
         state.status.loading = false;
@@ -141,31 +150,31 @@ const videoSlice = createSlice({
       .addCase(fetchFirstVideoFrame.rejected, (state, action) => {
         state.data.firstFrames[action.payload.videoId] = null;
       })
-      .addCase(fetchVideoDetails.pending, (state) => {
-        state.status.loading = true;
+      .addCase(fetchVideoDetails.pending, (state, action) => {
+        state.status.loadingDetails[action.meta.arg] = true;
         state.status.error = null;
       })
       .addCase(fetchVideoDetails.fulfilled, (state, action) => {
-        state.status.loading = false;
+        state.status.loadingDetails[action.meta.arg] = false;
         state.status.error = null;
         state.data.details[action.payload.video_id] = action.payload;
       })
       .addCase(fetchVideoDetails.rejected, (state, action) => {
-        state.status.loading = false;
+        state.status.loadingDetails[action.meta.arg] = false;
         state.status.error = action.payload;
       })
-      .addCase(fetchVideoFrames.pending, (state) => {
-        state.status.framesLoading = true;
+      .addCase(fetchVideoFrames.pending, (state, action) => {
+        state.status.loadingFrames[action.meta.arg] = true;
       })
       .addCase(fetchVideoFrames.fulfilled, (state, action) => {
-        state.status.framesLoading = false;
+        state.status.loadingFrames[action.meta.arg] = false;
         state.data.frames[action.meta.arg] = {
           data: action.payload,
           lastFetched: Date.now()
         };
       })
       .addCase(fetchVideoFrames.rejected, (state, action) => {
-        state.status.framesLoading = false;
+        state.status.loadingFrames[action.meta.arg] = false;
         state.status.error = action.payload || 'Failed to fetch video frames';
       })
       .addCase(updateVideoName.fulfilled, (state, action) => {
@@ -186,5 +195,12 @@ export const {
   setEditingName, 
   setSnackbar 
 } = videoSlice.actions;
+
+export const selectVideoDetails = (state, videoId) => state.videos.data.details[videoId];
+export const selectVideoFrames = (state, videoId) => state.videos.data.frames[videoId]?.data;
+export const selectVideoLoadingStates = (state, videoId) => ({
+  loadingDetails: state.videos.status.loadingDetails[videoId],
+  loadingFrames: state.videos.status.loadingFrames[videoId],
+});
 
 export default videoSlice.reducer;

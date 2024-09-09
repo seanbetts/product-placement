@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import {
   Typography,
@@ -38,7 +38,6 @@ const VideoHistory = () => {
   const loading = useSelector(state => state.videos.status.loading);
   const error = useSelector(state => state.videos.status.error);
   
-  const [filteredVideos, setFilteredVideos] = useState([]);
   const [expanded, setExpanded] = useState({});
   const [imagesLoaded, setImagesLoaded] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
@@ -47,11 +46,11 @@ const VideoHistory = () => {
   const [sortCriteria, setSortCriteria] = useState('date');
   const [sortOrder, setSortOrder] = useState('desc');
   const [firstFramesLoading, setFirstFramesLoading] = useState({});
+  const hasCheckedVideos = useRef(false);
 
-  const filterAndSortVideos = useCallback(() => {
+  const filterAndSortVideos = useCallback((videos, searchTerm, startDate, endDate, sortCriteria, sortOrder) => {
     if (!Array.isArray(videos) || videos.length === 0) {
-      setFilteredVideos([]);
-      return;
+      return [];
     }
 
     let result = videos.filter(video => {
@@ -79,8 +78,13 @@ const VideoHistory = () => {
       return sortOrder === 'asc' ? comparison : -comparison;
     });
 
-    setFilteredVideos(result);
-  }, [videos, searchTerm, startDate, endDate, sortCriteria, sortOrder]);
+    return result;
+  }, []);
+
+  const filteredVideos = useMemo(() => 
+    filterAndSortVideos(videos, searchTerm, startDate, endDate, sortCriteria, sortOrder),
+    [videos, searchTerm, startDate, endDate, sortCriteria, sortOrder, filterAndSortVideos]
+  );
 
   const memoizedDispatchFirstFrames = useCallback(() => {
     videos.forEach(video => {
@@ -99,18 +103,15 @@ const VideoHistory = () => {
   }, [dispatch, videos, firstFrames, firstFramesLoading]);
 
   useEffect(() => {
-    if (videos.length === 0) {
+    if (!hasCheckedVideos.current) {
       dispatch(fetchProcessedVideos());
+      hasCheckedVideos.current = true;
     }
-  }, [dispatch, videos]);
+  }, [dispatch]);
 
   useEffect(() => {
     memoizedDispatchFirstFrames();
   }, [memoizedDispatchFirstFrames]);
-
-  useEffect(() => {
-    filterAndSortVideos();
-  }, [filterAndSortVideos]);
 
   useEffect(() => {
     if (Array.isArray(videos) && videos.length > 0) {

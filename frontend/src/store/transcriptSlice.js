@@ -46,34 +46,37 @@ const transcriptSlice = createSlice({
   initialState: {
     data: {},
     status: {
-      loading: false,
-      error: null,
-      errorType: null,
+      loading: {},
+      error: {},
+      errorType: {},
     },
   },
   reducers: {
     clearTranscript: (state, action) => {
       delete state.data[action.payload];
+      delete state.status.loading[action.payload];
+      delete state.status.error[action.payload];
+      delete state.status.errorType[action.payload];
     },
   },
   extraReducers: (builder) => {
     builder
-      .addCase(fetchTranscript.pending, (state) => {
-        state.status.loading = true;
-        state.status.error = null;
-        state.status.errorType = null;
+      .addCase(fetchTranscript.pending, (state, action) => {
+        state.status.loading[action.meta.arg] = true;
+        state.status.error[action.meta.arg] = null;
+        state.status.errorType[action.meta.arg] = null;
       })
       .addCase(fetchTranscript.fulfilled, (state, action) => {
-        state.status.loading = false;
+        state.status.loading[action.payload.videoId] = false;
         state.data[action.payload.videoId] = {
           data: action.payload.transcript,
           lastFetched: Date.now()
         };
       })
       .addCase(fetchTranscript.rejected, (state, action) => {
-        state.status.loading = false;
-        state.status.error = action.payload.error;
-        state.status.errorType = action.payload.errorType;
+        state.status.loading[action.meta.arg] = false;
+        state.status.error[action.meta.arg] = action.payload.error;
+        state.status.errorType[action.meta.arg] = action.payload.errorType;
       });
   },
 });
@@ -86,9 +89,19 @@ export const selectTranscript = createSelector(
   (data, videoId) => data[videoId]?.data
 );
 
-export const selectTranscriptStatus = createSelector(
-  [(state) => state.transcripts.status],
-  (status) => status
+export const selectTranscriptLoadingState = createSelector(
+  [(state) => state.transcripts.status.loading, (_, videoId) => videoId],
+  (loading, videoId) => loading[videoId] || false
+);
+
+export const selectTranscriptError = createSelector(
+  [(state) => state.transcripts.status.error, (_, videoId) => videoId],
+  (error, videoId) => error[videoId] || null
+);
+
+export const selectTranscriptErrorType = createSelector(
+  [(state) => state.transcripts.status.errorType, (_, videoId) => videoId],
+  (errorType, videoId) => errorType[videoId] || null
 );
 
 export default transcriptSlice.reducer;

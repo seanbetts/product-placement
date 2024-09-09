@@ -25,11 +25,18 @@ import {
   setSearchTerm,
   setIsEditingName,
   setEditingName,
-  setSnackbar
+  setSnackbar,
+  selectVideoDetails,
+  selectVideoFrames,
+  selectVideoLoadingStates
 } from '../../store/videoSlice';
 import api from '../../services/api';
 import { saveAs } from 'file-saver';
-import { fetchTranscript } from '../../store/transcriptSlice';
+import { 
+  fetchTranscript, 
+  selectTranscript, 
+  selectTranscriptLoadingState
+} from '../../store/transcriptSlice';
 import { keyframes } from '@mui/system';
 
 const TextDetectionSection = React.lazy(() => import('./TextDetectionSection'));
@@ -45,20 +52,19 @@ const VideoDetails = () => {
   const { videoId } = useParams();
   const dispatch = useDispatch();
   
-  const video = useSelector(state => state.videos.data.details[videoId]);
-  const frames = useSelector(state => state.videos.data.frames[videoId]?.data);
-  const transcript = useSelector(state => state.transcripts.data[videoId]?.data);
+  const video = useSelector(state => selectVideoDetails(state, videoId));
+  const frames = useSelector(state => selectVideoFrames(state, videoId));
+  const { loadingDetails, loadingFrames } = useSelector(state => selectVideoLoadingStates(state, videoId));
+  const transcript = useSelector(state => selectTranscript(state, videoId));
+  const loadingTranscript = useSelector(state => selectTranscriptLoadingState(state, videoId));
   const searchTerm = useSelector(state => state.videos.ui.searchTerm);
   const isEditingName = useSelector(state => state.videos.ui.isEditingName);
   const editingName = useSelector(state => state.videos.ui.editingName);
   const snackbar = useSelector(state => state.videos.ui.snackbar);
   const error = useSelector(state => state.videos.status.error);
-  const framesLoading = useSelector(state => state.videos.status.framesLoading) || false;
 
   const [initialLoading, setInitialLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  // eslint-disable-next-line no-unused-vars
-  const [transcriptLoading, setTranscriptLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
     if (!videoId) {
@@ -67,26 +73,20 @@ const VideoDetails = () => {
       return;
     }
     try {
-      if (!video) {
-        await dispatch(fetchVideoDetails(videoId)).unwrap();
+      if (!video && !loadingDetails && !frames && !loadingFrames && !transcript && !loadingTranscript) {
+        await Promise.all([
+          dispatch(fetchVideoDetails(videoId)),
+          dispatch(fetchVideoFrames(videoId)),
+          dispatch(fetchTranscript(videoId))
+        ]);
       }
       setInitialLoading(false);
-      
-      if (!frames) {
-        dispatch(fetchVideoFrames(videoId));
-      }
-      if (!transcript) {
-        setTranscriptLoading(true);
-        await dispatch(fetchTranscript(videoId)).unwrap();
-        setTranscriptLoading(false);
-      }
     } catch (error) {
       console.error('Error fetching video data:', error);
       dispatch(setSnackbar({ open: true, message: 'Error fetching video data', severity: 'error' }));
       setInitialLoading(false);
-      setTranscriptLoading(false);
     }
-  }, [dispatch, videoId, video, frames, transcript]);
+  }, [dispatch, videoId, video, frames, transcript, loadingDetails, loadingFrames, loadingTranscript]);
 
   useEffect(() => {
     fetchData();
@@ -298,7 +298,7 @@ const VideoDetails = () => {
     );
   }, [video, formatDate, handleDownload]);
 
-  if (initialLoading) {
+  if (initialLoading || loadingDetails) {
     return (
       <Box display="flex" flexDirection="column" justifyContent="center" alignItems="center" minHeight="200px">
         <CircularProgress />
@@ -408,7 +408,7 @@ const VideoDetails = () => {
       }>
         <VideoFrames 
           frames={frames} 
-          framesLoading={framesLoading} 
+          framesLoading={loadingFrames} 
           videoId={videoId} 
           shimmer={shimmer}
         />
@@ -441,7 +441,7 @@ const VideoDetails = () => {
         </Box>
       }>
         {video && video.ocr ? (
-          <TextDetectionSection videoId={videoId} />
+          <TextDetectionSection videoId={videoId} ocrData={video.ocr} />
         ) : (
           <Typography>Text detection data not available</Typography>
         )}

@@ -16,68 +16,53 @@ const ErrorTypes = {
   UNKNOWN_ERROR: 'UNKNOWN_ERROR',
 };
 
-// Async thunks
-export const fetchOcrWordCloud = createAsyncThunk(
-  'ocr/fetchWordCloud',
-  async (videoId, { getState, rejectWithValue }) => {
-    const state = getState().ocr;
-    const cachedData = state.data.wordCloud[videoId];
-
-    if (cachedData && isCacheValid(cachedData.lastFetched)) {
-      return { videoId, wordCloudData: cachedData.data };
-    }
-
-    try {
-      const wordCloudData = await api.getOcrWordCloud(videoId);
-      return { videoId, wordCloudData };
-    } catch (error) {
-      let errorType = ErrorTypes.UNKNOWN_ERROR;
-      if (error.isAxiosError && !error.response) {
-        errorType = ErrorTypes.NETWORK_ERROR;
-      } else if (error.response) {
-        errorType = ErrorTypes.API_ERROR;
-      }
-      return rejectWithValue({ videoId, error: error.message, errorType });
-    }
-  }
-);
-
-export const fetchBrandsOcrTable = createAsyncThunk(
-  'ocr/fetchBrandsTable',
-  async (videoId, { getState, rejectWithValue }) => {
-    const state = getState().ocr;
-    const cachedData = state.data.brandTable[videoId];
-
-    if (cachedData && isCacheValid(cachedData.lastFetched)) {
-      return { videoId, brandTableData: cachedData.data };
-    }
-
-    try {
-      const brandTableData = await api.getBrandsOcrTable(videoId);
-      return { videoId, brandTableData };
-    } catch (error) {
-      let errorType = ErrorTypes.UNKNOWN_ERROR;
-      if (error.isAxiosError && !error.response) {
-        errorType = ErrorTypes.NETWORK_ERROR;
-      } else if (error.response) {
-        errorType = ErrorTypes.API_ERROR;
-      }
-      return rejectWithValue({ videoId, error: error.message, errorType });
-    }
-  }
-);
-
 const initialState = {
   data: {
     wordCloud: {},
     brandTable: {},
   },
   status: {
-    loading: false,
-    error: null,
-    errorType: null,
+    loading: {},
+    error: {},
+    errorType: {},
+    fetched: {},
   },
 };
+
+export const fetchOcrData = createAsyncThunk(
+  'ocr/fetchData',
+  async (videoId, { getState, rejectWithValue }) => {
+    const state = getState().ocr;
+    const cachedWordCloud = state.data.wordCloud[videoId];
+    const cachedBrandTable = state.data.brandTable[videoId];
+
+    if (cachedWordCloud && cachedBrandTable && 
+        isCacheValid(cachedWordCloud.lastFetched) && 
+        isCacheValid(cachedBrandTable.lastFetched)) {
+      return { 
+        videoId, 
+        wordCloudData: cachedWordCloud.data, 
+        brandTableData: cachedBrandTable.data 
+      };
+    }
+
+    try {
+      const [wordCloudData, brandTableData] = await Promise.all([
+        api.getOcrWordCloud(videoId),
+        api.getBrandsOcrTable(videoId)
+      ]);
+      return { videoId, wordCloudData, brandTableData };
+    } catch (error) {
+      let errorType = ErrorTypes.UNKNOWN_ERROR;
+      if (error.isAxiosError && !error.response) {
+        errorType = ErrorTypes.NETWORK_ERROR;
+      } else if (error.response) {
+        errorType = ErrorTypes.API_ERROR;
+      }
+      return rejectWithValue({ videoId, error: error.message, errorType });
+    }
+  }
+);
 
 const ocrSlice = createSlice({
   name: 'ocr',
@@ -87,50 +72,44 @@ const ocrSlice = createSlice({
       const videoId = action.payload;
       delete state.data.wordCloud[videoId];
       delete state.data.brandTable[videoId];
+      delete state.status.loading[videoId];
+      delete state.status.error[videoId];
+      delete state.status.errorType[videoId];
+      delete state.status.fetched[videoId];
     },
   },
   extraReducers: (builder) => {
     builder
-      .addCase(fetchOcrWordCloud.pending, (state) => {
-        state.status.loading = true;
-        state.status.error = null;
-        state.status.errorType = null;
+      .addCase(fetchOcrData.pending, (state, action) => {
+        state.status.loading[action.meta.arg] = true;
+        state.status.error[action.meta.arg] = null;
+        state.status.errorType[action.meta.arg] = null;
+        state.status.fetched[action.meta.arg] = false;
       })
-      .addCase(fetchOcrWordCloud.fulfilled, (state, action) => {
-        state.status.loading = false;
-        state.data.wordCloud[action.payload.videoId] = {
-          data: action.payload.wordCloudData,
+      .addCase(fetchOcrData.fulfilled, (state, action) => {
+        const { videoId, wordCloudData, brandTableData } = action.payload;
+        state.status.loading[videoId] = false;
+        state.status.fetched[videoId] = true;
+        state.data.wordCloud[videoId] = {
+          data: wordCloudData,
+          lastFetched: Date.now(),
+        };
+        state.data.brandTable[videoId] = {
+          data: brandTableData,
           lastFetched: Date.now(),
         };
       })
-      .addCase(fetchOcrWordCloud.rejected, (state, action) => {
-        state.status.loading = false;
-        state.status.error = action.payload.error;
-        state.status.errorType = action.payload.errorType;
-      })
-      .addCase(fetchBrandsOcrTable.pending, (state) => {
-        state.status.loading = true;
-        state.status.error = null;
-        state.status.errorType = null;
-      })
-      .addCase(fetchBrandsOcrTable.fulfilled, (state, action) => {
-        state.status.loading = false;
-        state.data.brandTable[action.payload.videoId] = {
-          data: action.payload.brandTableData,
-          lastFetched: Date.now(),
-        };
-      })
-      .addCase(fetchBrandsOcrTable.rejected, (state, action) => {
-        state.status.loading = false;
-        state.status.error = action.payload.error;
-        state.status.errorType = action.payload.errorType;
+      .addCase(fetchOcrData.rejected, (state, action) => {
+        state.status.loading[action.meta.arg] = false;
+        state.status.error[action.meta.arg] = action.payload.error;
+        state.status.errorType[action.meta.arg] = action.payload.errorType;
+        state.status.fetched[action.meta.arg] = true;
       });
   },
 });
 
 export const { clearOcrData } = ocrSlice.actions;
 
-// Memoized selectors
 export const selectOcrWordCloud = createSelector(
   [(state) => state.ocr.data.wordCloud, (_, videoId) => videoId],
   (wordCloud, videoId) => wordCloud[videoId]?.data
@@ -142,8 +121,13 @@ export const selectBrandsOcrTable = createSelector(
 );
 
 export const selectOcrStatus = createSelector(
-  [(state) => state.ocr.status],
-  (status) => status
+  [(state) => state.ocr.status, (_, videoId) => videoId],
+  (status, videoId) => ({
+    loading: status.loading[videoId] || false,
+    error: status.error[videoId] || null,
+    errorType: status.errorType[videoId] || null,
+    fetched: status.fetched[videoId] || false,
+  })
 );
 
 export default ocrSlice.reducer;
