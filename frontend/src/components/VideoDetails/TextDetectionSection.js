@@ -52,36 +52,43 @@ const WordCloudDisplay = React.memo(({ wordCloud }) => (
   </Box>
 ));
 
-const BrandTable = React.memo(({ brandTable }) => (
-  <TableContainer component={Paper} sx={{ maxHeight: 400, overflow: 'auto' }}>
-    <Table stickyHeader aria-label="brand frequency table">
-      <TableHead>
-        <TableRow>
-          <TableCell>
-            <Typography fontWeight="bold">Brand</Typography>
-          </TableCell>
-          <TableCell align="right">
-            <Typography fontWeight="bold"># Frames</Typography>
-          </TableCell>
-          <TableCell align="right">
-            <Typography fontWeight="bold">Time on Screen (s)</Typography>
-          </TableCell>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {brandTable && Object.entries(brandTable).map(([brand, data]) => (
-          <TableRow key={brand}>
-            <TableCell component="th" scope="row">
-              {capitalizeWords(brand)}
+const BrandTable = React.memo(({ brandTable }) => {
+  const sortedBrands = useMemo(() => {
+    return Object.entries(brandTable || {})
+      .sort((a, b) => b[1].time_on_screen - a[1].time_on_screen);
+  }, [brandTable]);
+
+  return (
+    <TableContainer component={Paper} sx={{ maxHeight: 400, overflow: 'auto' }}>
+      <Table stickyHeader aria-label="brand frequency table">
+        <TableHead>
+          <TableRow>
+            <TableCell>
+              <Typography fontWeight="bold">Brand</Typography>
             </TableCell>
-            <TableCell align="right">{data.frame_count}</TableCell>
-            <TableCell align="right">{data.time_on_screen.toFixed(1)}</TableCell>
+            <TableCell align="right">
+              <Typography fontWeight="bold"># Frames</Typography>
+            </TableCell>
+            <TableCell align="right">
+              <Typography fontWeight="bold">Time on Screen (s)</Typography>
+            </TableCell>
           </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-  </TableContainer>
-));
+        </TableHead>
+        <TableBody>
+          {sortedBrands.map(([brand, data]) => (
+            <TableRow key={brand}>
+              <TableCell component="th" scope="row">
+                {capitalizeWords(brand)}
+              </TableCell>
+              <TableCell align="right">{data.frame_count}</TableCell>
+              <TableCell align="right">{data.time_on_screen.toFixed(1)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+});
 
 const TextDetectionSection = ({ videoId }) => {
   const dispatch = useDispatch();

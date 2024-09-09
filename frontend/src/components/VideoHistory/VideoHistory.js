@@ -56,7 +56,7 @@ const VideoHistory = () => {
 
     let result = videos.filter(video => {
       const videoDate = new Date(video.details.total_processing_end_time);
-      videoDate.setHours(0, 0, 0, 0); // Reset time to start of day
+      videoDate.setHours(0, 0, 0, 0);
 
       return (video.details.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         video.video_id.toLowerCase().includes(searchTerm.toLowerCase())) &&
@@ -99,16 +99,18 @@ const VideoHistory = () => {
   }, [dispatch, videos, firstFrames, firstFramesLoading]);
 
   useEffect(() => {
+    if (videos.length === 0) {
+      dispatch(fetchProcessedVideos());
+    }
+  }, [dispatch, videos]);
+
+  useEffect(() => {
     memoizedDispatchFirstFrames();
   }, [memoizedDispatchFirstFrames]);
 
   useEffect(() => {
-    dispatch(fetchProcessedVideos());
-  }, [dispatch]);
-
-  useEffect(() => {
     filterAndSortVideos();
-  }, [filterAndSortVideos, videos, searchTerm, startDate, endDate, sortCriteria, sortOrder]);
+  }, [filterAndSortVideos]);
 
   useEffect(() => {
     if (Array.isArray(videos) && videos.length > 0) {
@@ -276,7 +278,6 @@ const VideoHistory = () => {
       </CardContent>
     );
   };
-
 
   return (
     <Box sx={{ mt: 4, mb: 4 }}>
