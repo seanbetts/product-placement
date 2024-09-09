@@ -1,0 +1,82 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.mypy_cache
+.pytest_cache
+.hypothesis
+
+# Virtual environment
+venv
+*.venv
+env/
+venv/
+ENV/
+
+# VS Code
+.vscode
+
+# PyCharm
+.idea
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Application specific
+*.mp4
+*.avi
+*.mov
+*.flv
+*.wmv
+data/
+logs/
+*.sqlite
+
+# Temporary files
+tmp/
+temp/
+
+# Sensitive information
+*.pem
+*.key
+*.env
+
+# Build files
+*.egg-info/
+dist/
+build/
+
+# Large binary files
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Node modules (if you have any frontend code)
+node_modules/

@@ -1,9 +1,9 @@
 import cv2
+import re
 import os
 import json
 import tempfile
 import uuid
-import logging
 import datetime
 import time
 import asyncio
@@ -11,6 +11,8 @@ import subprocess
 import urllib3
 import concurrent.futures
 import io
+import sys
+import logging
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException, Form
@@ -35,12 +37,17 @@ from urllib3.util.retry import Retry
 from pydantic import BaseModel
 from processing.ocr_processing import process_ocr, post_process_ocr
 
+print("Starting application...")
+sys.stdout.flush()
+
 # Load environment variables (this will work locally, but not affect GCP environment)
 load_dotenv()
 
-# Set up logging
+#Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+logger.info("Starting FastAPI server...")
 
 # Set up FastAPI
 app = FastAPI()
@@ -84,9 +91,16 @@ try:
     else:
         # Use default credentials (this will work in GCP)
         credentials, _ = default()
-    
+
+    # Create the custom transport with the credentials
     custom_transport = CustomTransport(credentials)
-    storage_client = storage.Client(credentials=credentials, _http=custom_transport)
+
+    # Create the storage client with the custom transport
+    storage_client = storage.Client(
+        credentials=credentials,
+        _http=custom_transport
+    )
+
 except Exception as e:
     logger.error(f"Error setting up Google Cloud Storage client: {str(e)}")
     raise
@@ -159,7 +173,7 @@ active_uploads: Dict[str, bool] = {}
 ## Returns a 200 status if the server is healthy
 @app.get("/health")
 async def health_check():
-    logger.info("Health check called")
+    logger.debug("Health check called")
     return {"status": "ok"}
 ########################################################
 
@@ -283,7 +297,7 @@ async def get_processed_videos():
                     stats_data = json.loads(stats_blob.download_as_string())
                     
                     if status_data.get('status') == 'complete':
-                        logger.info(f"Video {video_id} is complete, adding to processed videos")
+                        logger.info(f"Video {video_id} is complete, adding to list of processed videos")
                         video_data = {
                             'video_id': video_id,
                             'details': stats_data
@@ -360,59 +374,103 @@ async def update_video_name(video_id: str, name_update: NameUpdate):
     return {f"message": "Video name updated successfully to {name_update.name}"}
 ########################################################
 
-## VIDEO FRAME ENDPOINT (GET)   
+## FIRST VIDEO FRAME ENDPOINT (GET)   
 ## Returns the first frame of the video as a JPEG image
-import cv2
-import numpy as np
-import re
+########################################################
+from fastapi import HTTPException
+from fastapi.responses import StreamingResponse
+from io import BytesIO
 
 @app.get("/{video_id}/images/first-frame")
 async def get_video_frame(video_id: str):
-    logger.info(f"Received request for first non-black frame of video: {video_id}")
+    logger.info(f"Received request for first frame of video: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
     
-    frames_prefix = f'{video_id}/frames/'
-    blobs = list(bucket.list_blobs(prefix=frames_prefix))
-    blobs.sort(key=lambda x: int(re.findall(r'\d+', x.name)[-1]))
+    # Construct the path to the first frame
+    first_frame_path = f'{video_id}/frames/000000.jpg'
     
-    frame_index = 0
-    while frame_index < len(blobs):
-        blob = blobs[frame_index]
-        frame_data = blob.download_as_bytes()
-        nparr = np.frombuffer(frame_data, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
-        
-        # Check if the frame is not completely black
-        if np.mean(img) > 120:  # You can adjust this threshold as needed
-            logger.info(f"Found non-black frame: {blob.name}")
-            return StreamingResponse(BytesIO(frame_data), media_type="image/jpeg")
-        
-        # If black, jump forward 30 frames or to the end
-        frame_index += min(30, len(blobs) - frame_index - 1)
+    # Get the blob for the first frame
+    frame_blob = bucket.blob(first_frame_path)
     
-    logger.warning(f"No non-black frame found for video: {video_id}")
-    raise HTTPException(status_code=404, detail="No non-black frame found")
+    # Check if the blob exists
+    if not frame_blob.exists():
+        logger.warning(f"First frame not found for video: {video_id}")
+        raise HTTPException(status_code=404, detail="First frame not found")
+    
+    try:
+        # Download the frame data
+        frame_data = frame_blob.download_as_bytes()
+        
+        logger.info(f"Successfully retrieved first frame for video: {video_id}")
+        return StreamingResponse(BytesIO(frame_data), media_type="image/jpeg")
+    
+    except Exception as e:
+        logger.error(f"Error retrieving first frame for video {video_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error retrieving first frame")
+
+# @app.get("/{video_id}/images/first-frame")
+# async def get_video_frame(video_id: str):
+#     logger.info(f"Received request for first non-black frame of video: {video_id}")
+#     bucket = storage_client.bucket(PROCESSING_BUCKET)
+    
+#     frames_prefix = f'{video_id}/frames/'
+#     blobs = list(bucket.list_blobs(prefix=frames_prefix))
+#     blobs.sort(key=lambda x: int(re.findall(r'\d+', x.name)[-1]))
+    
+#     frame_index = 0
+#     while frame_index < len(blobs):
+#         blob = blobs[frame_index]
+#         frame_data = blob.download_as_bytes()
+#         nparr = np.frombuffer(frame_data, np.uint8)
+#         img = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
+        
+#         # Check if the frame is not completely black
+#         if np.mean(img) > 120:  # You can adjust this threshold as needed
+#             logger.info(f"Found non-black frame: {blob.name}")
+#             return StreamingResponse(BytesIO(frame_data), media_type="image/jpeg")
+        
+#         # If black, jump forward 30 frames or to the end
+#         frame_index += min(30, len(blobs) - frame_index - 1)
+    
+#     logger.warning(f"No non-black frame found for video: {video_id}")
+#     raise HTTPException(status_code=404, detail="No non-black frame found")
 ########################################################
 
-## VIDEO FRAMES ENDPOINT (GET)
+## ALL VIDEO FRAMES ENDPOINT (GET)
 ## Returns a list of all video frames
 @app.get("/{video_id}/images/all-frames")
 async def get_video_frames(video_id: str) -> List[dict]:
     logger.info(f"Received request for video frames: {video_id}")
     bucket = storage_client.bucket(PROCESSING_BUCKET)
     frames_prefix = f'{video_id}/frames/'
-    blobs = bucket.list_blobs(prefix=frames_prefix)
     
-    frames = []
-    for blob in blobs:
-        frame_number = int(blob.name.split('/')[-1].split('.')[0])
-        if frame_number % 50 == 0:
-            frames.append({
-                "number": frame_number,
-                "url": blob.generate_signed_url(version="v4", expiration=3600, method="GET")
-            })
-    
-    return sorted(frames, key=lambda x: x["number"])
+    try:
+        blobs = list(bucket.list_blobs(prefix=frames_prefix))
+        logger.info(f"Found {len(blobs)} blobs for video {video_id}")
+        
+        frames = []
+        for blob in blobs:
+            try:
+                frame_number = int(blob.name.split('/')[-1].split('.')[0])
+                if frame_number % 50 == 0:
+                    signed_url = blob.generate_signed_url(
+                        version="v4",
+                        expiration=3600,
+                        method="GET",
+                        credentials=credentials  # Use the global credentials object
+                    )
+                    frames.append({
+                        "number": frame_number,
+                        "url": signed_url
+                    })
+            except Exception as e:
+                logger.error(f"Error generating signed URL for blob {blob.name}: {str(e)}", exc_info=True)
+        
+        logger.info(f"Returning {len(frames)} frames for video {video_id}")
+        return sorted(frames, key=lambda x: x["number"])
+    except Exception as e:
+        logger.error(f"Error processing frames for video {video_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error processing frames: {str(e)}")
 ########################################################
 
 ## TRANSCRIPT ENDPOINT (GET)
@@ -996,4 +1054,5 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8080))
     logger.info(f"Starting server on port {port}")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    logger.info(f"Environment variables: {os.environ}")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="debug")

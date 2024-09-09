@@ -32,7 +32,7 @@ Thumbs.db
 .env.production.local
 
 # Creds
-creds.json
+keyfile.json
 
 # Node
 frontend/node_modules/

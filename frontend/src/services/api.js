@@ -144,7 +144,8 @@ const api = {
   
     try {
       const response = await axios.get(`${API_BASE_URL}/${videoId}/images/first-frame`, {
-        responseType: 'arraybuffer'
+        responseType: 'arraybuffer',
+        timeout: 10000 // 10 seconds timeout
       });
       const base64 = btoa(
         new Uint8Array(response.data).reduce(
@@ -157,6 +158,7 @@ const api = {
       localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
       return imageData;
     } catch (error) {
+      console.error(`Error fetching first frame for video ${videoId}:`, error);
       throw handleApiError(error);
     }
   },

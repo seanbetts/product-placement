@@ -41,7 +41,8 @@ export const fetchFirstVideoFrame = createAsyncThunk(
       const imageData = await api.getFirstVideoFrame(videoId);
       return { videoId, imageData };
     } catch (error) {
-      return rejectWithValue(error.message);
+      console.error(`Error fetching first frame for video ${videoId}:`, error);
+      return rejectWithValue({ videoId, error: error.message });
     }
   }
 );
@@ -136,6 +137,9 @@ const videoSlice = createSlice({
       })
       .addCase(fetchFirstVideoFrame.fulfilled, (state, action) => {
         state.data.firstFrames[action.payload.videoId] = action.payload.imageData;
+      })
+      .addCase(fetchFirstVideoFrame.rejected, (state, action) => {
+        state.data.firstFrames[action.payload.videoId] = null;
       })
       .addCase(fetchVideoDetails.pending, (state) => {
         state.status.loading = true;

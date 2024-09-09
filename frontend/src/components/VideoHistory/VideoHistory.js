@@ -86,9 +86,14 @@ const VideoHistory = () => {
     videos.forEach(video => {
       if (!firstFrames[video.video_id] && !firstFramesLoading[video.video_id]) {
         setFirstFramesLoading(prev => ({ ...prev, [video.video_id]: true }));
-        dispatch(fetchFirstVideoFrame(video.video_id)).then(() => {
-          setFirstFramesLoading(prev => ({ ...prev, [video.video_id]: false }));
-        });
+        dispatch(fetchFirstVideoFrame(video.video_id))
+          .then(() => {
+            setFirstFramesLoading(prev => ({ ...prev, [video.video_id]: false }));
+          })
+          .catch(error => {
+            console.error(`Error fetching first frame for video ${video.video_id}:`, error);
+            setFirstFramesLoading(prev => ({ ...prev, [video.video_id]: false }));
+          });
       }
     });
   }, [dispatch, videos, firstFrames, firstFramesLoading]);
