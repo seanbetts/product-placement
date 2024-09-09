@@ -7,50 +7,67 @@ import { InView } from 'react-intersection-observer';
 const imageCache = new Map();
 
 const Frame = React.memo(({ data, index, style }) => {
-  const [loaded, setLoaded] = useState(imageCache.has(data[index].url));
+  const [imageState, setImageState] = useState(imageCache.has(data[index].url) ? 'loaded' : 'loading');
   const frame = data[index];
   const imgRef = useRef(null);
 
   useEffect(() => {
     if (imageCache.has(frame.url)) {
-      setLoaded(true);
+      setImageState('loaded');
       if (imgRef.current) {
         imgRef.current.src = imageCache.get(frame.url);
       }
+    } else {
+      setImageState('loading');
+      const img = new Image();
+      img.src = frame.url;
+      img.onload = () => {
+        imageCache.set(frame.url, frame.url);
+        setImageState('loaded');
+        if (imgRef.current) {
+          imgRef.current.src = frame.url;
+        }
+      };
+      img.onerror = () => {
+        setImageState('error');
+      };
     }
-  }, [frame.url]);
-
-  const handleLoad = useCallback(() => {
-    setLoaded(true);
-    imageCache.set(frame.url, frame.url);
   }, [frame.url]);
 
   return (
     <Box style={style}>
       <InView triggerOnce>
         {({ inView, ref }) => (
-          <Box ref={ref} sx={{ display: 'inline-block', mr: 2 }}>
+          <Box ref={ref} sx={{ display: 'inline-block', mr: 2, position: 'relative' }}>
             {inView && (
               <>
                 <img
                   ref={imgRef}
-                  src={frame.url}
+                  src={imageState === 'loaded' ? frame.url : ''}
                   alt={`Frame ${frame.number}`}
                   style={{
                     height: '150px',
-                    display: loaded ? 'inline' : 'none',
+                    width: '266px',
+                    display: imageState === 'loaded' ? 'inline' : 'none',
                   }}
-                  onLoad={handleLoad}
                 />
-                {!loaded && (
+                {imageState !== 'loaded' && (
                   <Box
                     sx={{
                       width: '266px',
                       height: '150px',
                       backgroundColor: '#f0f0f0',
-                      display: 'inline-block',
+                      display: 'flex',
+                      justifyContent: 'center',
+                      alignItems: 'center',
                     }}
-                  />
+                  >
+                    {imageState === 'loading' ? (
+                      <CircularProgress size={40} />
+                    ) : (
+                      <Typography color="error">Error loading image</Typography>
+                    )}
+                  </Box>
                 )}
               </>
             )}
@@ -63,6 +80,7 @@ const Frame = React.memo(({ data, index, style }) => {
 
 const VideoFrames = React.memo(({ frames, framesLoading, videoId }) => {
   const [containerWidth, setContainerWidth] = useState(0);
+  const listRef = useRef(null);
 
   useEffect(() => {
     const updateWidth = () => {
@@ -76,6 +94,12 @@ const VideoFrames = React.memo(({ frames, framesLoading, videoId }) => {
     window.addEventListener('resize', updateWidth);
     return () => window.removeEventListener('resize', updateWidth);
   }, []);
+
+  useEffect(() => {
+    if (listRef.current) {
+      listRef.current.resetAfterIndex(0);
+    }
+  }, [frames]);
 
   const getItemSize = useCallback(() => 266 + 16, []); // 266px width + 16px margin
 
@@ -126,6 +150,7 @@ const VideoFrames = React.memo(({ frames, framesLoading, videoId }) => {
       }}
     >
       <List
+        ref={listRef}
         height={166} // 150px height + 16px padding
         itemCount={frames.length}
         itemSize={getItemSize}

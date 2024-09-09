@@ -37,16 +37,10 @@ import {
   selectTranscript, 
   selectTranscriptLoadingState
 } from '../../store/transcriptSlice';
-import { keyframes } from '@mui/system';
 
 const TextDetectionSection = React.lazy(() => import('./TextDetectionSection'));
 const TranscriptTable = React.lazy(() => import('./TranscriptTable'));
 const VideoFrames = React.lazy(() => import('./VideoFrames'));
-
-const shimmer = keyframes`
-  0% { background-position: -468px 0; }
-  100% { background-position: 468px 0; }
-`;
 
 const VideoDetails = () => {
   const { videoId } = useParams();
@@ -400,19 +394,19 @@ const VideoDetails = () => {
       <Divider sx={{ my: 4 }} />
 
       <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Video Frames</Typography>
-      <React.Suspense fallback={
+      {loadingFrames ? (
         <Box display="flex" flexDirection="column" justifyContent="center" alignItems="center" minHeight="200px">
           <CircularProgress />
-          <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>Loading Frames...</Typography>
+          <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>
+            Loading...
+          </Typography>
         </Box>
-      }>
-        <VideoFrames 
-          frames={frames} 
-          framesLoading={loadingFrames} 
-          videoId={videoId} 
-          shimmer={shimmer}
+      ) : (
+        <VideoFrames
+          frames={frames}
+          videoId={videoId}
         />
-      </React.Suspense>
+      )}
 
       <Divider sx={{ my: 4 }} />
 
