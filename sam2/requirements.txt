@@ -1,0 +1,5 @@
+fastapi
+Pillow
+protobuf
+torch
+uvicorn
