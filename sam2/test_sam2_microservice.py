@@ -1,81 +1,89 @@
-import requests
 import os
 import json
+import time
+import requests
 from google.cloud import storage
 from google.oauth2 import service_account
+from dotenv import load_dotenv
 
-# SAM 2 microservice URL
-SAM2_URL = "https://sam2-583054821893.europe-west2.run.app"
+# Get the directory of the current script
+script_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Google Cloud Storage settings
-PROJECT_ID = "product-placement-analytics"
-BUCKET_NAME = "your-test-bucket-name"
-GCS_VIDEO_PATH = "path/to/your/test/video.mp4"
+# Load .env file
+load_dotenv(os.path.join(script_dir, '.env'))
 
-# Path to your service account key file
-SERVICE_ACCOUNT_FILE = "path/to/your/service-account-key.json"
+SAM2_URL = os.getenv("SAM2_URL")
+PROJECT_ID = os.getenv("PROJECT_ID")
+BUCKET_NAME = os.getenv("BUCKET_NAME")
+SERVICE_ACCOUNT_FILE = os.getenv("SERVICE_ACCOUNT_FILE")
 
-def test_segment_video():
-    """Test the /segment_video endpoint with a local video file."""
-    url = f"{SAM2_URL}/segment_video"
-    video_path = "path/to/your/local/test/video.mp4"
-    
-    with open(video_path, "rb") as video_file:
-        files = {"file": ("test_video.mp4", video_file, "video/mp4")}
-        response = requests.post(url, files=files)
-    
-    print("Segment Video Response:")
-    print(response.json())
-    
-    # You may want to add a loop here to periodically check for the results
-    # as the processing happens asynchronously
+# Check if all required environment variables are set
+required_vars = ["SAM2_URL", "PROJECT_ID", "BUCKET_NAME", "SERVICE_ACCOUNT_FILE"]
+missing_vars = [var for var in required_vars if not os.getenv(var)]
 
-def test_segment_video_gcs():
-    """Test the /segment_video_gcs endpoint with a video in Google Cloud Storage."""
-    url = f"{SAM2_URL}/segment_video_gcs"
-    
-    params = {
-        "bucket_name": BUCKET_NAME,
-        "blob_name": GCS_VIDEO_PATH
-    }
-    
-    response = requests.post(url, params=params)
-    
-    print("Segment Video GCS Response:")
-    print(response.json())
-    
-    # You may want to add a loop here to periodically check for the results
-    # as the processing happens asynchronously
+if missing_vars:
+    print("Error: The following required environment variables are not set:")
+    for var in missing_vars:
+        print(f"- {var}")
+    print("Please set these variables in your .env file or environment.")
+    exit(1)
 
-def check_gcs_results():
-    """Check Google Cloud Storage for the results of video processing."""
-    # Authenticate with Google Cloud
-    credentials = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=["https://www.googleapis.com/auth/cloud-platform"]
-    )
+# If SERVICE_ACCOUNT_FILE is a relative path, make it absolute
+if not os.path.isabs(SERVICE_ACCOUNT_FILE):
+    SERVICE_ACCOUNT_FILE = os.path.join(script_dir, SERVICE_ACCOUNT_FILE)
+
+if not os.path.exists(SERVICE_ACCOUNT_FILE):
+    print(f"Error: Service account key file not found at {SERVICE_ACCOUNT_FILE}")
+    print("Please ensure the path in GOOGLE_APPLICATION_CREDENTIALS is correct.")
+    exit(1)
+
+def test_segment_video_gcs(video_id):
+    url = f"{SAM2_URL}/segment_video_gcs/{video_id}"
     
-    # Create a Google Cloud Storage client
-    client = storage.Client(credentials=credentials, project=PROJECT_ID)
-    bucket = client.bucket(BUCKET_NAME)
+    response = requests.post(url)
     
-    # Construct the expected result blob name
-    result_blob_name = f"{os.path.splitext(GCS_VIDEO_PATH)[0]}_sam2_result.json"
-    blob = bucket.blob(result_blob_name)
-    
-    if blob.exists():
-        print("Results found in GCS:")
-        results = json.loads(blob.download_as_string())
-        print(json.dumps(results, indent=2))
+    if response.status_code == 200:
+        print("Segment Video GCS Response:")
+        print(response.json())
     else:
-        print("Results not found in GCS. Processing may still be ongoing.")
+        print(f"Error: {response.status_code}")
+        print(response.text)
+
+def wait_for_results(video_id, max_attempts=10, delay=30):
+    for attempt in range(max_attempts):
+        print(f"Checking for results (attempt {attempt + 1}/{max_attempts})...")
+        if check_gcs_results(video_id):
+            return True
+        time.sleep(delay)
+    print("Max attempts reached. Results not found.")
+    return False
+
+def check_gcs_results(video_id):
+    try:
+        credentials = service_account.Credentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        
+        client = storage.Client(credentials=credentials, project=PROJECT_ID)
+        bucket = client.bucket(BUCKET_NAME)
+        
+        result_blob_name = f"{video_id}/sam2_result.json"
+        blob = bucket.blob(result_blob_name)
+        
+        if blob.exists():
+            print("Results found in GCS:")
+            results = json.loads(blob.download_as_string())
+            print(json.dumps(results[:5], indent=2))  # Print first 5 results
+            return True
+        else:
+            print("Results not found in GCS. Processing may still be ongoing.")
+            return False
+    except Exception as e:
+        print(f"Error checking GCS results: {str(e)}")
+        return False
 
 if __name__ == "__main__":
-    test_segment_video()
-    test_segment_video_gcs()
+    video_id = input("Enter the video ID to process: ")
+    test_segment_video_gcs(video_id)
     
-    # Wait for a bit before checking results (adjust as needed)
-    import time
-    print("Waiting for 60 seconds before checking results...")
-    time.sleep(60)
-    
-    check_gcs_results()
+    wait_for_results(video_id)

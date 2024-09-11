@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useTransition } from 'react';
 import { useParams } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { 
@@ -43,6 +43,8 @@ const TranscriptTable = React.lazy(() => import('./TranscriptTable'));
 const VideoFrames = React.lazy(() => import('./VideoFrames'));
 
 const VideoDetails = () => {
+  // eslint-disable-next-line
+  const [isPending, startTransition] = useTransition();
   const { videoId } = useParams();
   const dispatch = useDispatch();
   
@@ -68,11 +70,13 @@ const VideoDetails = () => {
     }
     try {
       if (!video && !loadingDetails && !frames && !loadingFrames && !transcript && !loadingTranscript) {
-        await Promise.all([
-          dispatch(fetchVideoDetails(videoId)),
-          dispatch(fetchVideoFrames(videoId)),
-          dispatch(fetchTranscript(videoId))
-        ]);
+        startTransition(() => {
+          Promise.all([
+            dispatch(fetchVideoDetails(videoId)),
+            dispatch(fetchVideoFrames(videoId)),
+            dispatch(fetchTranscript(videoId))
+          ]);
+        });
       }
       setInitialLoading(false);
     } catch (error) {
@@ -80,7 +84,7 @@ const VideoDetails = () => {
       dispatch(setSnackbar({ open: true, message: 'Error fetching video data', severity: 'error' }));
       setInitialLoading(false);
     }
-  }, [dispatch, videoId, video, frames, transcript, loadingDetails, loadingFrames, loadingTranscript]);
+  }, [dispatch, videoId, video, frames, transcript, loadingDetails, loadingFrames, loadingTranscript, startTransition]);
 
   useEffect(() => {
     fetchData();
@@ -102,7 +106,9 @@ const VideoDetails = () => {
     }
     setIsSubmitting(true);
     try {
-      await dispatch(updateVideoName({ videoId, newName: editingName })).unwrap();
+      startTransition(() => {
+        dispatch(updateVideoName({ videoId, newName: editingName })).unwrap();
+      });
       dispatch(setSnackbar({ open: true, message: 'Video name updated successfully', severity: 'success' }));
     } catch (error) {
       console.error('Error updating video name:', error);
@@ -111,7 +117,7 @@ const VideoDetails = () => {
       setIsSubmitting(false);
       dispatch(setIsEditingName(false));
     }
-  }, [dispatch, editingName, video?.name, videoId]);
+  }, [dispatch, editingName, video?.name, videoId, startTransition]);
 
   const handleNameCancel = useCallback(() => {
     dispatch(setIsEditingName(false));
@@ -435,7 +441,9 @@ const VideoDetails = () => {
         </Box>
       }>
         {video && video.ocr ? (
-          <TextDetectionSection videoId={videoId} ocrData={video.ocr} />
+          <React.Suspense fallback={<CircularProgress />}>
+            <TextDetectionSection videoId={videoId} ocrData={video.ocr} />
+          </React.Suspense>
         ) : (
           <Typography>Text detection data not available</Typography>
         )}

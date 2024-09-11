@@ -128,20 +128,27 @@ async def segment_image(file: UploadFile = File(...)):
 ## FAST API VIDEO ENDPOINTS                           ##
 ########################################################
 
-## SEGMENT VIDEO ENDPOINT (POST)
-## Segments a video and returns the masks
-@app.post("/segment_video")
-async def segment_video(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+## SEGMENT VIDEO GCS ENDPOINT (POST)
+## Segments a video from GCS and returns the masks
+@app.post("/segment_video_gcs/{video_id}")
+async def segment_video_gcs(background_tasks: BackgroundTasks, video_id: str):
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
-            temp_video.write(await file.read())
-            temp_video_path = temp_video.name
+        bucket_name = os.getenv('PROCESSING_BUCKET')
+        frames_prefix = f"{video_id}/frames/"
+        
+        # Check if frames exist
+        bucket = storage_client.bucket(bucket_name)
+        blobs = list(bucket.list_blobs(prefix=frames_prefix))
+        
+        if not blobs:
+            return JSONResponse(status_code=404, content={"error": f"Frames for video with id {video_id} not found"})
 
-        background_tasks.add_task(process_video, temp_video_path)
+        # Process the frames
+        background_tasks.add_task(process_video_frames, bucket_name, video_id)
 
-        return JSONResponse(content={"message": "Video processing started"})
+        return JSONResponse(content={"message": f"Video processing started for video_id: {video_id}"})
     except Exception as e:
-        logger.error(f"Error in segment_video: {str(e)}")
+        logger.error(f"Error in segment_video_gcs: {str(e)}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 ########################################################
 
@@ -151,10 +158,12 @@ async def segment_video(background_tasks: BackgroundTasks, file: UploadFile = Fi
 
 ## PROCESS VIDEO FUNCTION
 ## Processes a video and returns the masks
-async def process_video(video_path: str):
+async def process_video_frames(bucket_name: str, video_id: str):
     try:
+        frames_path = f"gs://{bucket_name}/{video_id}/frames/"
+        
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-            state = video_predictor.init_state(video_path)
+            state = video_predictor.init_state(frames_path)
             
             results = []
             for frame_idx, object_ids, mask_logits in video_predictor.propagate_in_video(state):
@@ -164,13 +173,18 @@ async def process_video(video_path: str):
                     "masks": mask_logits.cpu().numpy().tolist()
                 })
 
-        with open(f"{os.path.splitext(video_path)[0]}_sam2_result.json", "w") as f:
-            json.dump(results, f)
+        result_json = json.dumps(results)
+
+        # Upload to GCS
+        bucket = storage_client.bucket(bucket_name)
+        result_blob_name = f"{video_id}/sam2_result.json"
+        blob = bucket.blob(result_blob_name)
+        blob.upload_from_string(result_json, content_type='application/json')
+
+        logger.info(f"Completed processing for video {video_id}")
 
     except Exception as e:
-        logger.error(f"Error processing video: {str(e)}")
-    finally:
-        os.unlink(video_path)
+        logger.error(f"Error processing video {video_id}: {str(e)}")
 ########################################################
 
 if __name__ == "__main__":
