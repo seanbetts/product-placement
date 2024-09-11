@@ -174,7 +174,7 @@ active_uploads: Dict[str, bool] = {}
 @app.get("/health")
 async def health_check():
     logger.debug("Health check called")
-    return {"status": "ok"}
+    return {"status": "product placement backend ok"}
 ########################################################
 
 ## UPLOAD ENDPOINT (POST)
