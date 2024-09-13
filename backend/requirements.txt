@@ -1,7 +1,6 @@
 fastapi
 uvicorn
 gunicorn
-google-cloud-storage
 google-cloud-speech
 google-cloud-vision
 torch
@@ -16,3 +15,4 @@ thefuzz
 pyenchant
 wordcloud
 pydantic
+boto3

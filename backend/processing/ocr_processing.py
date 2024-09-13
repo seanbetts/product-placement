@@ -7,17 +7,15 @@ import re
 import numpy as np
 import enchant
 import matplotlib.pyplot as plt
-import multiprocessing
-import concurrent
 import asyncio
 import matplotlib
+import boto3
+from botocore.exceptions import ClientError
 from matplotlib import font_manager
 from dotenv import load_dotenv
 from thefuzz import fuzz, process
 from typing import List, Dict, Tuple, Optional, Set, Callable, TYPE_CHECKING
 from google.cloud import vision
-from google.cloud import storage
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from wordcloud import WordCloud
 from collections import defaultdict, Counter
 
@@ -35,6 +33,10 @@ logger = logging.getLogger(__name__)
 matplotlib.use('Agg')
 
 MAX_WORKERS = int(os.getenv('MAX_WORKERS', '10'))
+PROCESSING_BUCKET = os.getenv('PROCESSING_BUCKET')
+
+# Initialize S3 client
+s3_client = boto3.client('s3')
 
 # Simple in-memory brand database
 BRAND_DATABASE = {
@@ -55,37 +57,45 @@ BRAND_DATABASE = {
 
 d = enchant.Dict("en_US")
 
-def load_ocr_results(bucket: storage.Bucket, video_id: str) -> List[Dict]:
-    ocr_blob = bucket.blob(f'{video_id}/ocr/ocr_results.json')
-    if ocr_blob.exists():
-        return json.loads(ocr_blob.download_as_string())
-    else:
-        raise FileNotFoundError(f"OCR results not found for video: {video_id}")
+def load_ocr_results(s3_client, video_id: str) -> List[Dict]:
+    try:
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=f'{video_id}/ocr/ocr_results.json')
+        return json.loads(response['Body'].read().decode('utf-8'))
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            raise FileNotFoundError(f"OCR results not found for video: {video_id}")
+        else:
+            raise
 
-async def save_processed_ocr_results(bucket: storage.Bucket, video_id: str, cleaned_results: List[Dict]):
-    processed_ocr_blob = bucket.blob(f'{video_id}/ocr/processed_ocr.json')
-    
-    # Use asyncio.to_thread to run the synchronous upload in a separate thread
-    await asyncio.to_thread(
-        processed_ocr_blob.upload_from_string,
-        json.dumps(cleaned_results, indent=2),
-        content_type='application/json'
-    )
-    
-    logger.info(f"Saved processed OCR results for video: {video_id}")
+async def save_processed_ocr_results(s3_client, video_id: str, cleaned_results: List[Dict]):
+    try:
+        await asyncio.to_thread(
+            s3_client.put_object,
+            Bucket=PROCESSING_BUCKET,
+            Key=f'{video_id}/ocr/processed_ocr.json',
+            Body=json.dumps(cleaned_results, indent=2),
+            ContentType='application/json'
+        )
+        logger.info(f"Saved processed OCR results for video: {video_id}")
+    except ClientError as e:
+        logger.error(f"Error saving processed OCR results for video {video_id}: {str(e)}")
+        raise
 
-async def save_brands_ocr_results(bucket: storage.Bucket, video_id: str, brand_results: List[Dict]):
-    brands_ocr_blob = bucket.blob(f'{video_id}/ocr/brands_ocr.json')
-    
-    await asyncio.to_thread(
-        brands_ocr_blob.upload_from_string,
-        json.dumps(brand_results, indent=2),
-        content_type='application/json'
-    )
-    
-    logger.info(f"Saved brands OCR results for video: {video_id}")
+async def save_brands_ocr_results(s3_client, video_id: str, brand_results: List[Dict]):
+    try:
+        await asyncio.to_thread(
+            s3_client.put_object,
+            Bucket=PROCESSING_BUCKET,
+            Key=f'{video_id}/ocr/brands_ocr.json',
+            Body=json.dumps(brand_results, indent=2),
+            ContentType='application/json'
+        )
+        logger.info(f"Saved brands OCR results for video: {video_id}")
+    except ClientError as e:
+        logger.error(f"Error saving brands OCR results for video {video_id}: {str(e)}")
+        raise
 
-def create_and_save_brand_table(bucket: storage.Bucket, video_id: str, brand_appearances: Dict[str, Set[int]], fps: float):
+def create_and_save_brand_table(s3_client, video_id: str, brand_appearances: Dict[str, Set[int]], fps: float):
     brand_stats = {}
     min_frames = int(fps)  # Minimum number of frames (1 second)
 
@@ -101,14 +111,18 @@ def create_and_save_brand_table(bucket: storage.Bucket, video_id: str, brand_app
         else:
             logger.info(f"Discarded brand '{brand}' as it appeared for less than 1 second ({len(frame_list)} frames)")
 
-    brand_table_blob = bucket.blob(f'{video_id}/ocr/brands_table.json')
-    brand_table_blob.upload_from_string(
-        json.dumps(brand_stats, indent=2),
-        content_type='application/json'
-    )
-
-    logger.info(f"Brand table created and saved for video: {video_id}")
-    return brand_stats
+    try:
+        s3_client.put_object(
+            Bucket=PROCESSING_BUCKET,
+            Key=f'{video_id}/ocr/brands_table.json',
+            Body=json.dumps(brand_stats, indent=2),
+            ContentType='application/json'
+        )
+        logger.info(f"Brand table created and saved for video: {video_id}")
+        return brand_stats
+    except ClientError as e:
+        logger.error(f"Error saving brand table for video {video_id}: {str(e)}")
+        raise
 
 def clean_ocr_data(frame: Dict, preprocess_func: Callable[[str], str]) -> Dict:
     """
@@ -528,7 +542,7 @@ def find_font(font_names):
             continue
     return None
 
-def create_word_cloud(bucket: storage.Bucket, video_id: str, cleaned_results: List[Dict]):
+def create_word_cloud(s3_client, video_id: str, cleaned_results: List[Dict]):
     """
     Create a styled word cloud from the processed OCR results, using individual text annotations
     and a default system font.
@@ -582,20 +596,29 @@ def create_word_cloud(bucket: storage.Bucket, video_id: str, cleaned_results: Li
     plt.savefig(img_buffer, format='jpg', dpi=300, bbox_inches='tight', pad_inches=0)
     img_buffer.seek(0)
 
-    # Upload to bucket
-    wordcloud_blob = bucket.blob(f'{video_id}/ocr/wordcloud.jpg')
-    wordcloud_blob.upload_from_file(img_buffer, content_type='image/jpg')
-    logger.info(f"Word cloud created and saved for video: {video_id}")
+    # Upload to S3
+    try:
+        s3_client.put_object(
+            Bucket=PROCESSING_BUCKET,
+            Key=f'{video_id}/ocr/wordcloud.jpg',
+            Body=img_buffer.getvalue(),
+            ContentType='image/jpeg'
+        )
+        logger.info(f"Word cloud created and saved for video: {video_id}")
+    except ClientError as e:
+        logger.error(f"Error saving word cloud for video {video_id}: {str(e)}")
+        raise
 
     plt.close()
 
-async def process_single_frame_ocr(frame_blob, video_id, frame_number):
+async def process_single_frame_ocr(s3_client, video_id, frame_number):
     try:
-        # Create a client
-        client = vision.ImageAnnotatorClient()
+        # Get the frame from S3
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=f'{video_id}/frames/{frame_number:06d}.jpg')
+        image_content = response['Body'].read()
 
-        # Read the image file
-        image_content = frame_blob.download_as_bytes()
+        # Create a client (assuming you're still using Google Vision API for OCR)
+        client = vision.ImageAnnotatorClient()
 
         # Create an Image object
         image = vision.Image(content=image_content)
@@ -655,21 +678,21 @@ def filter_brand_results(brand_results: List[Dict], brand_appearances: Dict[str,
     
     return filtered_results
 
-async def post_process_ocr(video_id: str, fps: float, video_resolution: Tuple[int, int], bucket: storage.Bucket):
+async def post_process_ocr(video_id: str, fps: float, video_resolution: Tuple[int, int], s3_client):
     try:
         # Load OCR results
-        ocr_results = load_ocr_results(bucket, video_id)
+        ocr_results = load_ocr_results(s3_client, video_id)
         logger.info(f"Loaded {len(ocr_results)} OCR results for video: {video_id}")
 
         # Step 1: Clean and consolidate OCR data
         logger.info(f"Cleaning and consolidating OCR data for video: {video_id}")
         cleaned_results = clean_and_consolidate_ocr_data(ocr_results)
         logger.info(f"Cleaned and consolidated {len(cleaned_results)} frames for video: {video_id}")
-        await save_processed_ocr_results(bucket, video_id, cleaned_results)
+        await save_processed_ocr_results(s3_client, video_id, cleaned_results)
 
         # Step 2: Create word cloud
         logger.info(f"Creating word cloud for video: {video_id}")
-        create_word_cloud(bucket, video_id, cleaned_results)
+        create_word_cloud(s3_client, video_id, cleaned_results)
 
         # Step 3: Detect brands and interpolate
         logger.info(f"Detecting brands and interpolating for video: {video_id}")
@@ -687,10 +710,10 @@ async def post_process_ocr(video_id: str, fps: float, video_resolution: Tuple[in
         logger.info(f"Filtered to {len(unique_brands)} unique brands for video: {video_id}")
 
         # Step 5: Save filtered brands OCR results
-        await save_brands_ocr_results(bucket, video_id, filtered_brand_results)
+        await save_brands_ocr_results(s3_client, video_id, filtered_brand_results)
 
         # Step 6: Create and save brand table
-        brand_stats = create_and_save_brand_table(bucket, video_id, brand_appearances, fps)
+        brand_stats = create_and_save_brand_table(s3_client, video_id, brand_appearances, fps)
         logger.info(f"Created brand table with {len(brand_stats)} entries for video: {video_id}")
 
         logger.info(f"Completed post-processing OCR for video: {video_id}")
@@ -700,13 +723,19 @@ async def post_process_ocr(video_id: str, fps: float, video_resolution: Tuple[in
         logger.error(traceback.format_exc())
         raise
 
-async def process_ocr(video_id: str, bucket: storage.Bucket, status_tracker: 'StatusTracker'):
+async def process_ocr(video_id: str, s3_client, status_tracker: 'StatusTracker'):
     logger.info(f"Starting OCR processing for video: {video_id}")
     status_tracker.update_process_status("ocr", "in_progress", 0)
 
     ocr_start_time = time.time()
-    frame_blobs = list(bucket.list_blobs(prefix=f'{video_id}/frames/'))
-    total_frames = len(frame_blobs)
+    
+    # List frames in S3
+    frame_objects = []
+    paginator = s3_client.get_paginator('list_objects_v2')
+    for page in paginator.paginate(Bucket=PROCESSING_BUCKET, Prefix=f'{video_id}/frames/'):
+        frame_objects.extend(page.get('Contents', []))
+    
+    total_frames = len(frame_objects)
 
     ocr_results = []
     processed_frames = 0
@@ -714,9 +743,9 @@ async def process_ocr(video_id: str, bucket: storage.Bucket, status_tracker: 'St
 
     # Process frames in batches to limit concurrency
     batch_size = 10
-    for i in range(0, len(frame_blobs), batch_size):
-        batch = frame_blobs[i:i+batch_size]
-        tasks = [process_single_frame_ocr(frame_blob, video_id, int(frame_blob.name.split('/')[-1].split('.')[0])) for frame_blob in batch]
+    for i in range(0, len(frame_objects), batch_size):
+        batch = frame_objects[i:i+batch_size]
+        tasks = [process_single_frame_ocr(s3_client, video_id, int(frame['Key'].split('/')[-1].split('.')[0])) for frame in batch]
         batch_results = await asyncio.gather(*tasks)
 
         for result in batch_results:
@@ -736,8 +765,16 @@ async def process_ocr(video_id: str, bucket: storage.Bucket, status_tracker: 'St
     ocr_results.sort(key=lambda x: x['frame_number'])
 
     # Store OCR results
-    ocr_blob = bucket.blob(f'{video_id}/ocr/ocr_results.json')
-    await asyncio.to_thread(ocr_blob.upload_from_string, json.dumps(ocr_results, indent=2), content_type='application/json')
+    try:
+        s3_client.put_object(
+            Bucket=PROCESSING_BUCKET,
+            Key=f'{video_id}/ocr/ocr_results.json',
+            Body=json.dumps(ocr_results, indent=2),
+            ContentType='application/json'
+        )
+    except ClientError as e:
+        logger.error(f"Error saving OCR results for video {video_id}: {str(e)}")
+        raise
 
     ocr_processing_time = time.time() - ocr_start_time
     frames_with_text = len([frame for frame in ocr_results if frame['text_annotations']])

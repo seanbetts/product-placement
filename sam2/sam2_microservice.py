@@ -9,6 +9,7 @@ from google.cloud import storage
 from google.oauth2 import service_account
 from PIL import Image
 import torch
+import shutil
 import tempfile
 import numpy as np
 import cv2
@@ -53,14 +54,6 @@ video_predictor = None
 async def startup_event():
     global sam2_model, image_predictor, mask_generator, video_predictor
     try:
-        config_dir = "sam2_configs"
-        config_name = "sam2_hiera_l.yaml"
-        
-        logger.info(f"Current working directory: {os.getcwd()}")
-        logger.info(f"Config directory: {config_dir}")
-        logger.info(f"Config name: {config_name}")
-        logger.info(f"Config file exists: {os.path.exists(os.path.join(config_dir, config_name))}")
-        logger.info(f"Contents of {config_dir}: {os.listdir(config_dir)}")
         logger.info(f"Device: {device}")
         logger.info(f"Python version: {sys.version}")
         logger.info(f"PyTorch version: {torch.__version__}")
@@ -159,11 +152,24 @@ async def segment_video_gcs(background_tasks: BackgroundTasks, video_id: str):
 ## PROCESS VIDEO FUNCTION
 ## Processes a video and returns the masks
 async def process_video_frames(bucket_name: str, video_id: str):
+    temp_dir = None
     try:
-        frames_path = f"gs://{bucket_name}/{video_id}/frames/"
+        # Create a temporary directory to store frames
+        temp_dir = tempfile.mkdtemp()
+        frames_prefix = f"{video_id}/frames/"
+        
+        # Download frames from GCS
+        bucket = storage_client.bucket(bucket_name)
+        blobs = bucket.list_blobs(prefix=frames_prefix)
+        for blob in blobs:
+            if blob.name.lower().endswith('.jpg'):
+                local_path = os.path.join(temp_dir, os.path.basename(blob.name))
+                blob.download_to_filename(local_path)
+        
+        logger.info(f"Downloaded frames for video {video_id} to {temp_dir}")
         
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-            state = video_predictor.init_state(frames_path)
+            state = video_predictor.init_state(temp_dir)
             
             results = []
             for frame_idx, object_ids, mask_logits in video_predictor.propagate_in_video(state):
@@ -176,7 +182,6 @@ async def process_video_frames(bucket_name: str, video_id: str):
         result_json = json.dumps(results)
 
         # Upload to GCS
-        bucket = storage_client.bucket(bucket_name)
         result_blob_name = f"{video_id}/sam2_result.json"
         blob = bucket.blob(result_blob_name)
         blob.upload_from_string(result_json, content_type='application/json')
@@ -185,6 +190,10 @@ async def process_video_frames(bucket_name: str, video_id: str):
 
     except Exception as e:
         logger.error(f"Error processing video {video_id}: {str(e)}")
+    finally:
+        # Clean up the temporary directory
+        if temp_dir and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
 ########################################################
 
 if __name__ == "__main__":

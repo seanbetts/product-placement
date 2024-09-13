@@ -408,10 +408,12 @@ const VideoDetails = () => {
           </Typography>
         </Box>
       ) : (
-        <VideoFrames
-          frames={frames}
-          videoId={videoId}
-        />
+        <React.Suspense fallback={<CircularProgress />}>
+          <VideoFrames
+            frames={frames}
+            videoId={videoId}
+          />
+        </React.Suspense>
       )}
 
       <Divider sx={{ my: 4 }} />

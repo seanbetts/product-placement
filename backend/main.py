@@ -1,5 +1,5 @@
 import cv2
-import re
+import csv
 import os
 import json
 import tempfile
@@ -8,21 +8,17 @@ import datetime
 import time
 import asyncio
 import subprocess
-import urllib3
 import concurrent.futures
 import io
-import sys
 import logging
 import numpy as np
+import boto3
+from botocore.config import Config
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException, Form
-from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from google.cloud import storage
-from google.cloud.exceptions import GoogleCloudError
-from google.resumable_media import DataCorruption
-from google.auth.transport.requests import AuthorizedSession
-from google.api_core import retry
+from botocore.exceptions import ClientError
 from google.cloud import vision
 from google.oauth2 import service_account
 from google.auth import default
@@ -32,13 +28,8 @@ from dotenv import load_dotenv
 from PIL import Image
 from io import BytesIO
 from typing import List, Dict, Any, Optional, Tuple
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 from pydantic import BaseModel
 from processing.ocr_processing import process_ocr, post_process_ocr
-
-print("Starting application...")
-sys.stdout.flush()
 
 # Load environment variables (this will work locally, but not affect GCP environment)
 load_dotenv()
@@ -62,54 +53,36 @@ app.add_middleware(
 )
 
 GCP_PROJECT_ID = os.getenv('GCP_PROJECT_ID')
-PROCESSING_BUCKET = os.getenv('PROCESSING_BUCKET')
 GOOGLE_APPLICATION_CREDENTIALS = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '20'))
 FRAME_INTERVAL = int(os.getenv('FRAME_INTERVAL', '1'))
 STATUS_UPDATE_INTERVAL = int(os.getenv('STATUS_UPDATE_INTERVAL', '3'))
 MAX_WORKERS = int(os.getenv('MAX_WORKERS', '10'))
 
-# Custom transport with larger connection pool
-class CustomTransport(AuthorizedSession):
-    def __init__(self, credentials):
-        super().__init__(credentials)
-        retry_strategy = Retry(
-            total=3,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["HEAD", "GET", "OPTIONS", "POST", "PUT"]
-        )
-        adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100, max_retries=retry_strategy)
-        self.mount("https://", adapter)
+AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+AWS_DEFAULT_REGION = os.getenv('AWS_DEFAULT_REGION')
+PROCESSING_BUCKET = os.getenv('PROCESSING_BUCKET')
 
-# Set up Google Cloud Storage client with proper authentication and custom transport
-try:
-    if GOOGLE_APPLICATION_CREDENTIALS:
-        credentials = service_account.Credentials.from_service_account_file(
-            GOOGLE_APPLICATION_CREDENTIALS,
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-    else:
-        # Use default credentials (this will work in GCP)
-        credentials, _ = default()
+# Configure retry strategy
+retry_config = Config(
+    retries={
+        'max_attempts': 10,
+        'mode': 'adaptive'
+    }
+)
 
-    # Create the custom transport with the credentials
-    custom_transport = CustomTransport(credentials)
-
-    # Create the storage client with the custom transport
-    storage_client = storage.Client(
-        credentials=credentials,
-        _http=custom_transport
-    )
-
-except Exception as e:
-    logger.error(f"Error setting up Google Cloud Storage client: {str(e)}")
-    raise
+# Initialize S3 client
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    region_name=AWS_DEFAULT_REGION,
+    config=retry_config
+)
 
 # Set up Google Cloud Vision client
 vision_client = vision.ImageAnnotatorClient()
-
-# Increase the connection pool size
-urllib3.PoolManager(num_pools=50, maxsize=50)
 
 class StatusTracker:
     def __init__(self, video_id: str):
@@ -150,17 +123,18 @@ class StatusTracker:
         self.status["elapsed_time"] = f"{elapsed_time:.2f} seconds"
         return self.status
 
-    def update_gcs_status(self, bucket: storage.Bucket):
-        status_blob = bucket.blob(f'{self.video_id}/status.json')
+    def update_s3_status(self, s3_client):
         current_status = self.get_status()
-        status_blob.upload_from_string(json.dumps(current_status), content_type='application/json')
+        status_key = f'{self.video_id}/status.json'
+        s3_client.put_object(
+            Bucket=PROCESSING_BUCKET,
+            Key=status_key,
+            Body=json.dumps(current_status),
+            ContentType='application/json'
+        )
 
 class NameUpdate(BaseModel):
     name: str
-
-@retry.Retry(predicate=retry.if_exception_type(DataCorruption))
-def resumable_upload_with_retry(resumable_upload, session, stream):
-    return resumable_upload.transmit_next_chunk(session, stream)
 
 # Dictionary to keep track of active uploads
 active_uploads: Dict[str, bool] = {}
@@ -202,8 +176,7 @@ async def upload_video(
     # Mark this upload as active
     active_uploads[video_id] = True
 
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    blob = bucket.blob(f'{video_id}/original.mp4')
+    s3_key = f'{video_id}/original.mp4'
 
     try:
         chunk = await file.read()
@@ -214,7 +187,7 @@ async def upload_video(
             
             if chunk_number > 1:
                 # If not the first chunk, download existing content
-                blob.download_to_filename(temp_filename)
+                s3_client.download_file(PROCESSING_BUCKET, s3_key, temp_filename)
             
             # Append the new chunk
             with open(temp_filename, 'ab') as f:
@@ -224,8 +197,8 @@ async def upload_video(
             if not active_uploads.get(video_id, False):
                 raise Exception("Upload cancelled")
 
-            # Upload the combined content back to GCS
-            blob.upload_from_filename(temp_filename)
+            # Upload the combined content back to S3
+            s3_client.upload_file(temp_filename, PROCESSING_BUCKET, s3_key)
         
         # Clean up the temporary file
         os.unlink(temp_filename)
@@ -249,8 +222,10 @@ async def upload_video(
         # Clean up if there was an error
         if video_id in active_uploads:
             del active_uploads[video_id]
-        if blob.exists():
-            blob.delete()
+        try:
+            s3_client.delete_object(Bucket=PROCESSING_BUCKET, Key=s3_key)
+        except:
+            pass
         return JSONResponse(status_code=500, content={"error": "Upload failed", "video_id": video_id, "chunk": chunk_number, "details": str(e)})
 ########################################################
 
@@ -260,11 +235,20 @@ async def upload_video(
 async def cancel_upload(video_id: str):
     if video_id in active_uploads:
         active_uploads[video_id] = False
-        bucket = storage_client.bucket(PROCESSING_BUCKET)
-        blob = bucket.blob(f'{video_id}/original.mp4')
-        if blob.exists():
-            blob.delete()
-        logger.info(f"Upload cancelled for video_id: {video_id}")
+        s3_key = f'{video_id}/original.mp4'
+        try:
+            # Check if the object exists
+            s3_client.head_object(Bucket=PROCESSING_BUCKET, Key=s3_key)
+            # If it exists, delete it
+            s3_client.delete_object(Bucket=PROCESSING_BUCKET, Key=s3_key)
+            logger.info(f"Upload cancelled for video_id: {video_id}")
+            return {"status": "cancelled", "video_id": video_id}
+        except s3_client.exceptions.ClientError as e:
+            # If the object was not found, it's okay, just log it
+            if e.response['Error']['Code'] == '404':
+                logger.info(f"No file found to delete for cancelled upload: {video_id}")
+            else:
+                logger.error(f"Error deleting file for cancelled upload: {video_id}", exc_info=True)
         return {"status": "cancelled", "video_id": video_id}
     else:
         return JSONResponse(status_code=404, content={"error": "Upload not found", "video_id": video_id})
@@ -275,43 +259,38 @@ async def cancel_upload(video_id: str):
 @app.get("/video/processed-videos")
 async def get_processed_videos():
     logger.info("Received request for processed videos")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    processed_videos = []
+    completed_videos_key = 'completed_videos.json'
     
-    # List all blobs in the bucket without a delimiter
-    blobs = list(bucket.list_blobs())
-    logger.info(f"Found {len(blobs)} blobs in the bucket")
+    try:
+        # Get the list of completed video IDs
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=completed_videos_key)
+        completed_video_ids = json.loads(response['Body'].read().decode('utf-8'))
+        
+        processed_videos = []
+        for video_id in completed_video_ids:
+            try:
+                # Get the processing_stats.json for this video
+                stats_key = f'{video_id}/processing_stats.json'
+                stats_response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=stats_key)
+                stats_data = json.loads(stats_response['Body'].read().decode('utf-8'))
+                
+                processed_videos.append({
+                    'video_id': video_id,
+                    'details': stats_data
+                })
+            except Exception as e:
+                logger.error(f"Error retrieving details for video {video_id}: {str(e)}")
+        
+        logger.info(f"Returning {len(processed_videos)} processed videos")
+        return processed_videos
     
-    for blob in blobs:
-        # Identify potential video folders by the presence of a status.json file
-        if blob.name.endswith('status.json'):
-            video_id = blob.name.rsplit('/', 2)[-2]
-            logger.info(f"Found status.json for video: {video_id}")
-            
-            status_blob = bucket.blob(blob.name)
-            stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
-            
-            if status_blob.exists() and stats_blob.exists():
-                try:
-                    status_data = json.loads(status_blob.download_as_string())
-                    stats_data = json.loads(stats_blob.download_as_string())
-                    
-                    if status_data.get('status') == 'complete':
-                        logger.info(f"Video {video_id} is complete, adding to list of processed videos")
-                        video_data = {
-                            'video_id': video_id,
-                            'details': stats_data
-                        }
-                        processed_videos.append(video_data)
-                    else:
-                        logger.info(f"Video {video_id} is not complete, status: {status_data.get('status')}")
-                except json.JSONDecodeError:
-                    logger.error(f"Failed to parse JSON for video {video_id}")
-            else:
-                logger.info(f"Missing status or stats file for video: {video_id}")
-    
-    logger.info(f"Returning {len(processed_videos)} processed videos")
-    return processed_videos
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            logger.info("No completed videos found")
+            return []
+        else:
+            logger.error(f"Error retrieving completed videos list: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error retrieving completed videos")
 ########################################################  
 
 ## STATUS ENDPOINT (GET)
@@ -319,16 +298,23 @@ async def get_processed_videos():
 @app.get("/{video_id}/video/status")
 async def get_status(video_id: str):
     logger.info(f"Received status request for video ID: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    status_blob = bucket.blob(f'{video_id}/status.json')
     
-    if status_blob.exists():
-        status_data = json.loads(status_blob.download_as_string())
+    status_key = f'{video_id}/status.json'
+    
+    try:
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=status_key)
+        status_data = json.loads(response['Body'].read().decode('utf-8'))
+        
         logger.info(f"Status for video ID {video_id}: {status_data}")
         return status_data
-    else:
-        logger.warning(f"Status not found for video ID: {video_id}")
-        raise HTTPException(status_code=404, detail="Video status not found")
+    
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            logger.warning(f"Status not found for video ID: {video_id}")
+            raise HTTPException(status_code=404, detail="Video status not found")
+        else:
+            logger.error(f"Error retrieving status for video ID {video_id}: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error retrieving video status")
 ########################################################  
 
 ## PROCESSING STATS ENDPOINT (GET)
@@ -336,14 +322,19 @@ async def get_status(video_id: str):
 @app.get("/{video_id}/video/processing-stats")
 async def get_processing_stats(video_id: str):
     logger.info(f"Received request for processing stats of video: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
-
-    if stats_blob.exists():
-        stats = json.loads(stats_blob.download_as_string())
+    
+    stats_key = f'{video_id}/processing_stats.json'
+    
+    try:
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=stats_key)
+        stats = json.loads(response['Body'].read().decode('utf-8'))
         return stats
-    else:
+    except s3_client.exceptions.NoSuchKey:
+        logger.warning(f"Processing stats not found for video ID: {video_id}")
         raise HTTPException(status_code=404, detail="Processing stats not found")
+    except Exception as e:
+        logger.error(f"Error retrieving processing stats for video ID {video_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error retrieving processing stats")
 ########################################################
 
 ## UPDATE VIDEO NAME ENDPOINT (POST)
@@ -351,55 +342,70 @@ async def get_processing_stats(video_id: str):
 @app.post("/{video_id}/video/update-name")
 async def update_video_name(video_id: str, name_update: NameUpdate):
     logger.info(f"Received request to update name for video {video_id} to '{name_update.name}'")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    status_blob = bucket.blob(f'{video_id}/status.json')
-    stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
     
-    if not status_blob.exists() or not stats_blob.exists():
-        raise HTTPException(status_code=404, detail="Video not found")
+    status_key = f'{video_id}/status.json'
+    stats_key = f'{video_id}/processing_stats.json'
+
+    try:
+        # Check if both files exist
+        s3_client.head_object(Bucket=PROCESSING_BUCKET, Key=status_key)
+        s3_client.head_object(Bucket=PROCESSING_BUCKET, Key=stats_key)
+    except s3_client.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == '404':
+            raise HTTPException(status_code=404, detail="Video not found")
+        else:
+            raise HTTPException(status_code=500, detail="Error checking video files")
 
     if not name_update.name or name_update.name.strip() == "":
         raise HTTPException(status_code=422, detail="Name cannot be empty")
 
-    # Update status.json
-    status_data = json.loads(status_blob.download_as_string())
-    status_data['name'] = name_update.name
-    status_blob.upload_from_string(json.dumps(status_data), content_type='application/json')
+    try:
+        # Update status.json
+        status_response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=status_key)
+        status_data = json.loads(status_response['Body'].read().decode('utf-8'))
+        status_data['name'] = name_update.name
+        s3_client.put_object(Bucket=PROCESSING_BUCKET, Key=status_key, 
+                             Body=json.dumps(status_data), ContentType='application/json')
 
-    # Update processing_stats.json
-    stats_data = json.loads(stats_blob.download_as_string())
-    stats_data['name'] = name_update.name
-    stats_blob.upload_from_string(json.dumps(stats_data), content_type='application/json')
+        # Update processing_stats.json
+        stats_response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=stats_key)
+        stats_data = json.loads(stats_response['Body'].read().decode('utf-8'))
+        stats_data['name'] = name_update.name
+        s3_client.put_object(Bucket=PROCESSING_BUCKET, Key=stats_key, 
+                             Body=json.dumps(stats_data), ContentType='application/json')
 
-    return {f"message": "Video name updated successfully to {name_update.name}"}
+        return {"message": f"Video name updated successfully to {name_update.name}"}
+
+    except Exception as e:
+        logger.error(f"Error updating name for video {video_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error updating video name")
 ########################################################
 
 ## FIRST VIDEO FRAME ENDPOINT (GET)   
 ## Returns the first frame of the video as a JPEG image
 ########################################################
-from fastapi import HTTPException
-from fastapi.responses import StreamingResponse
-from io import BytesIO
-
 @app.get("/{video_id}/images/first-frame")
 async def get_video_frame(video_id: str):
     logger.info(f"Received request for first frame of video: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
     
     # Construct the path to the first frame
     first_frame_path = f'{video_id}/frames/000000.jpg'
     
-    # Get the blob for the first frame
-    frame_blob = bucket.blob(first_frame_path)
-    
-    # Check if the blob exists
-    if not frame_blob.exists():
-        logger.warning(f"First frame not found for video: {video_id}")
-        raise HTTPException(status_code=404, detail="First frame not found")
-    
+    try:
+        # Check if the object exists
+        s3_client.head_object(Bucket=PROCESSING_BUCKET, Key=first_frame_path)
+    except s3_client.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == '404':
+            logger.warning(f"First frame not found for video: {video_id}")
+            raise HTTPException(status_code=404, detail="First frame not found")
+        else:
+            logger.error(f"Error checking first frame for video {video_id}: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error checking first frame")
+
     try:
         # Download the frame data
-        frame_data = frame_blob.download_as_bytes()
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=first_frame_path)
+        frame_data = response['Body'].read()
         
         logger.info(f"Successfully retrieved first frame for video: {video_id}")
         return StreamingResponse(BytesIO(frame_data), media_type="image/jpeg")
@@ -441,33 +447,34 @@ async def get_video_frame(video_id: str):
 @app.get("/{video_id}/images/all-frames")
 async def get_video_frames(video_id: str) -> List[dict]:
     logger.info(f"Received request for video frames: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
     frames_prefix = f'{video_id}/frames/'
     
     try:
-        blobs = list(bucket.list_blobs(prefix=frames_prefix))
-        logger.info(f"Found {len(blobs)} blobs for video {video_id}")
+        # List objects with the frames prefix
+        paginator = s3_client.get_paginator('list_objects_v2')
+        pages = paginator.paginate(Bucket=PROCESSING_BUCKET, Prefix=frames_prefix)
         
         frames = []
-        for blob in blobs:
-            try:
-                frame_number = int(blob.name.split('/')[-1].split('.')[0])
-                if frame_number % 50 == 0:
-                    signed_url = blob.generate_signed_url(
-                        version="v4",
-                        expiration=3600,
-                        method="GET",
-                        credentials=credentials  # Use the global credentials object
-                    )
-                    frames.append({
-                        "number": frame_number,
-                        "url": signed_url
-                    })
-            except Exception as e:
-                logger.error(f"Error generating signed URL for blob {blob.name}: {str(e)}", exc_info=True)
+        for page in pages:
+            for obj in page.get('Contents', []):
+                try:
+                    frame_number = int(obj['Key'].split('/')[-1].split('.')[0])
+                    if frame_number % 50 == 0:
+                        # Generate a pre-signed URL for the frame
+                        signed_url = s3_client.generate_presigned_url('get_object',
+                                                                      Params={'Bucket': PROCESSING_BUCKET,
+                                                                              'Key': obj['Key']},
+                                                                      ExpiresIn=3600)
+                        frames.append({
+                            "number": frame_number,
+                            "url": signed_url
+                        })
+                except Exception as e:
+                    logger.error(f"Error generating signed URL for object {obj['Key']}: {str(e)}", exc_info=True)
         
         logger.info(f"Returning {len(frames)} frames for video {video_id}")
         return sorted(frames, key=lambda x: x["number"])
+    
     except Exception as e:
         logger.error(f"Error processing frames for video {video_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing frames: {str(e)}")
@@ -477,14 +484,17 @@ async def get_video_frames(video_id: str) -> List[dict]:
 ## Returns the transcript.json for a given video ID
 @app.get("/{video_id}/transcript")
 async def get_transcript(video_id: str):
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    transcript_blob = bucket.blob(f'{video_id}/transcripts/transcript.json')
+    transcript_key = f'{video_id}/transcripts/transcript.json'
     
-    if transcript_blob.exists():
-        transcript = json.loads(transcript_blob.download_as_string())
+    try:
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=transcript_key)
+        transcript = json.loads(response['Body'].read().decode('utf-8'))
         return transcript
-    else:
+    except s3_client.exceptions.NoSuchKey:
         raise HTTPException(status_code=404, detail="Transcript not found")
+    except Exception as e:
+        logger.error(f"Error retrieving transcript for video {video_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error retrieving transcript")
 ########################################################
 
 ## DOWNLOAD ENDPOINT (GET)
@@ -492,29 +502,41 @@ async def get_transcript(video_id: str):
 @app.get("/{video_id}/files/download/{file_type}")
 async def download_file(video_id: str, file_type: str):
     logger.info(f"Received download request for {file_type} of video: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
     
     if file_type == "video":
-        blob = bucket.blob(f'{video_id}/original.mp4')
+        key = f'{video_id}/original.mp4'
         filename = f"{video_id}_video.mp4"
     elif file_type == "audio":
-        blob = bucket.blob(f'{video_id}/audio.mp3')
+        key = f'{video_id}/audio.mp3'
         filename = f"{video_id}_audio.mp3"
     elif file_type == "transcript":
-        blob = bucket.blob(f'{video_id}/transcripts/transcript.txt')
+        key = f'{video_id}/transcripts/transcript.txt'
         filename = f"{video_id}_transcript.txt"
     elif file_type == "word-cloud":
-        blob = bucket.blob(f'{video_id}/ocr/wordcloud.jpg')
+        key = f'{video_id}/ocr/wordcloud.jpg'
         filename = f"{video_id}_wordcloud.jpg"
     else:
         raise HTTPException(status_code=400, detail="Invalid file type")
 
-    if blob.exists():
-        temp_file = tempfile.NamedTemporaryFile(delete=False)
-        blob.download_to_filename(temp_file.name)
-        return FileResponse(temp_file.name, media_type='application/octet-stream', filename=filename)
-    else:
-        raise HTTPException(status_code=404, detail=f"{file_type.capitalize()} not found")
+    try:
+        # Check if the object exists
+        s3_client.head_object(Bucket=PROCESSING_BUCKET, Key=key)
+        
+        # Create a pre-signed URL for the object
+        url = s3_client.generate_presigned_url('get_object',
+                                               Params={'Bucket': PROCESSING_BUCKET, 'Key': key},
+                                               ExpiresIn=3600,
+                                               HttpMethod='GET')
+        
+        # Redirect to the pre-signed URL
+        return RedirectResponse(url=url)
+    
+    except s3_client.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == '404':
+            raise HTTPException(status_code=404, detail=f"{file_type.capitalize()} not found")
+        else:
+            logger.error(f"Error downloading {file_type} for video {video_id}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error downloading {file_type}")
 ########################################################
 
 ## WORD CLOUD ENDPOINT (GET)
@@ -522,14 +544,17 @@ async def download_file(video_id: str, file_type: str):
 @app.get("/{video_id}/ocr/wordcloud")
 async def get_word_cloud(video_id: str):
     logger.info(f"Received request for word cloud of video: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    wordcloud_blob = bucket.blob(f'{video_id}/ocr/wordcloud.jpg')
-
-    if wordcloud_blob.exists():
-        image_data = wordcloud_blob.download_as_bytes()
+    wordcloud_key = f'{video_id}/ocr/wordcloud.jpg'
+    
+    try:
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=wordcloud_key)
+        image_data = response['Body'].read()
         return StreamingResponse(BytesIO(image_data), media_type="image/jpeg")
-    else:
-            raise HTTPException(status_code=404, detail="Text Detection word cloud not found")
+    except s3_client.exceptions.NoSuchKey:
+        raise HTTPException(status_code=404, detail="Text Detection word cloud not found")
+    except Exception as e:
+        logger.error(f"Error retrieving word cloud for video {video_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error retrieving word cloud")
 ########################################################
 
 ## BRANDS OCR TABLE ENDPOINT (GET)
@@ -537,14 +562,17 @@ async def get_word_cloud(video_id: str):
 @app.get("/{video_id}/ocr/brands-ocr-table")
 async def get_processed_ocr_results(video_id: str):
     logger.info(f"Received request for brand OCR results of video: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    ocr_blob = bucket.blob(f'{video_id}/ocr/brands_table.json')
-
-    if ocr_blob.exists():
-        ocr_results = json.loads(ocr_blob.download_as_string())
+    ocr_key = f'{video_id}/ocr/brands_table.json'
+    
+    try:
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=ocr_key)
+        ocr_results = json.loads(response['Body'].read().decode('utf-8'))
         return ocr_results
-    else:
+    except s3_client.exceptions.NoSuchKey:
         raise HTTPException(status_code=404, detail="Brands OCR results not found")
+    except Exception as e:
+        logger.error(f"Error retrieving brand OCR results for video {video_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error retrieving brand OCR results")
 ########################################################
 
 ## REPROCESS OCR ENDPOINT (POST)
@@ -552,21 +580,28 @@ async def get_processed_ocr_results(video_id: str):
 @app.post("/{video_id}/ocr/reprocess-ocr")
 async def reprocess_ocr(video_id: str):
     logger.info(f"Received request to reprocess OCR for video: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
-
-    if stats_blob.exists():
-        stats = json.loads(stats_blob.download_as_string())
-        fps = float(stats['video']['video_fps'])
-        video_resolution = await get_video_resolution(bucket, video_id)
-    else:
-        raise HTTPException(status_code=404, detail="Processing stats not found")
+    stats_key = f'{video_id}/processing_stats.json'
     
-    processed_results = await post_process_ocr(video_id, fps, video_resolution, bucket)
-    if processed_results:
-        return {"status": "success", "message": "OCR results reprocessed and saved"}
-    else:
-        raise HTTPException(status_code=404, detail="OCR results not found for reprocessing")
+    try:
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=stats_key)
+        stats = json.loads(response['Body'].read().decode('utf-8'))
+        fps = float(stats['video']['video_fps'])
+        video_resolution = await get_video_resolution(video_id)
+    except s3_client.exceptions.NoSuchKey:
+        raise HTTPException(status_code=404, detail="Processing stats not found")
+    except Exception as e:
+        logger.error(f"Error retrieving processing stats for video {video_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error retrieving processing stats")
+
+    try:
+        processed_results = await post_process_ocr(video_id, fps, video_resolution)
+        if processed_results:
+            return {"status": "success", "message": "OCR results reprocessed and saved"}
+        else:
+            raise HTTPException(status_code=404, detail="OCR results not found for reprocessing")
+    except Exception as e:
+        logger.error(f"Error reprocessing OCR for video {video_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error reprocessing OCR")
 ########################################################
 
 ## OCR RESULTS ENDPOINT (GET)
@@ -574,14 +609,17 @@ async def reprocess_ocr(video_id: str):
 @app.get("/{video_id}/ocr/results")
 async def get_ocr_results(video_id: str):
     logger.info(f"Received request for OCR results of video: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    ocr_blob = bucket.blob(f'{video_id}/ocr/ocr_results.json')
-
-    if ocr_blob.exists():
-        ocr_results = json.loads(ocr_blob.download_as_string())
+    ocr_key = f'{video_id}/ocr/ocr_results.json'
+    
+    try:
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=ocr_key)
+        ocr_results = json.loads(response['Body'].read().decode('utf-8'))
         return ocr_results
-    else:
+    except s3_client.exceptions.NoSuchKey:
         raise HTTPException(status_code=404, detail="OCR results not found")
+    except Exception as e:
+        logger.error(f"Error retrieving OCR results for video {video_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error retrieving OCR results")
 ########################################################
 
 ## PROCESSED OCR RESULTS ENDPOINT (GET)
@@ -589,34 +627,90 @@ async def get_ocr_results(video_id: str):
 @app.get("/{video_id}/ocr/processed-ocr")
 async def get_processed_ocr_results(video_id: str):
     logger.info(f"Received request for processed OCR results of video: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    ocr_blob = bucket.blob(f'{video_id}/ocr/processed_ocr.json')
-
-    if ocr_blob.exists():
-        ocr_results = json.loads(ocr_blob.download_as_string())
+    ocr_key = f'{video_id}/ocr/processed_ocr.json'
+    
+    try:
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=ocr_key)
+        ocr_results = json.loads(response['Body'].read().decode('utf-8'))
         return ocr_results
-    else:
+    except s3_client.exceptions.NoSuchKey:
         raise HTTPException(status_code=404, detail="Processed OCR results not found")
+    except Exception as e:
+        logger.error(f"Error retrieving processed OCR results for video {video_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error retrieving processed OCR results")
 ########################################################
 
 ## BRANDS OCR ENDPOINT (GET)
 ## Returns the brands_ocr.json for a given video ID
 @app.get("/{video_id}/ocr/brands-ocr")
-async def get_processed_ocr_results(video_id: str):
+async def get_brands_ocr_results(video_id: str):
     logger.info(f"Received request for brand OCR results of video: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    ocr_blob = bucket.blob(f'{video_id}/ocr/brands_ocr.json')
-
-    if ocr_blob.exists():
-        ocr_results = json.loads(ocr_blob.download_as_string())
+    ocr_key = f'{video_id}/ocr/brands_ocr.json'
+    
+    try:
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=ocr_key)
+        ocr_results = json.loads(response['Body'].read().decode('utf-8'))
         return ocr_results
-    else:
+    except s3_client.exceptions.NoSuchKey:
         raise HTTPException(status_code=404, detail="Brands OCR results not found")
+    except Exception as e:
+        logger.error(f"Error retrieving brand OCR results for video {video_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error retrieving brand OCR results")
 ########################################################
     
 ########################################################
 ## FUNCTIONS                                          ##
 ########################################################
+def update_completed_videos_list(video_id: str):
+    completed_videos_key = 'completed_videos.json'
+    
+    try:
+        # Try to get the existing list
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=completed_videos_key)
+        completed_videos = json.loads(response['Body'].read().decode('utf-8'))
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            # If the file doesn't exist, start with an empty list
+            completed_videos = []
+        else:
+            raise
+
+    # Add the new video ID if it's not already in the list
+    if video_id not in completed_videos:
+        completed_videos.append(video_id)
+
+    # Upload the updated list back to S3
+    s3_client.put_object(
+        Bucket=PROCESSING_BUCKET,
+        Key=completed_videos_key,
+        Body=json.dumps(completed_videos),
+        ContentType='application/json'
+    )
+
+    logger.info(f"Added video {video_id} to completed videos list")
+
+def mark_video_as_completed(video_id: str):
+    # Update the processing_stats.json to mark it as completed
+    stats_key = f'{video_id}/processing_stats.json'
+    try:
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=stats_key)
+        stats_data = json.loads(response['Body'].read().decode('utf-8'))
+        stats_data['status'] = 'completed'
+        stats_data['completion_time'] = datetime.utcnow().isoformat()
+        
+        s3_client.put_object(
+            Bucket=PROCESSING_BUCKET,
+            Key=stats_key,
+            Body=json.dumps(stats_data),
+            ContentType='application/json'
+        )
+        
+        # Update the completed videos list
+        update_completed_videos_list(video_id)
+        
+        logger.info(f"Marked video {video_id} as completed")
+    except Exception as e:
+        logger.error(f"Error marking video {video_id} as completed: {str(e)}")
 
 async def run_video_processing(video_id: str):
     try:
@@ -626,40 +720,39 @@ async def run_video_processing(video_id: str):
 
 async def process_video(video_id: str):
     logger.info(f"Starting to process video: {video_id}")
-    bucket = storage_client.bucket(PROCESSING_BUCKET)
-    video_blob = bucket.blob(f'{video_id}/original.mp4')
+    video_key = f'{video_id}/original.mp4'
 
     status_tracker = StatusTracker(video_id)
-    status_tracker.update_gcs_status(bucket)
+    status_tracker.update_s3_status(s3_client)
 
     with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_video:
-        video_blob.download_to_filename(temp_video.name)
+        s3_client.download_file(PROCESSING_BUCKET, video_key, temp_video.name)
         temp_video_path = temp_video.name
 
     try:
         total_start_time = time.time()
         
         # Start status update task
-        status_update_task = asyncio.create_task(periodic_status_update(video_id, status_tracker, bucket))
+        status_update_task = asyncio.create_task(periodic_status_update(video_id, status_tracker, s3_client))
 
         # Run video frame processing and audio extraction in parallel
-        video_task = asyncio.create_task(process_video_frames(temp_video_path, video_id, bucket, status_tracker))
-        audio_task = asyncio.create_task(extract_audio(temp_video_path, video_id, bucket, status_tracker))
+        video_task = asyncio.create_task(process_video_frames(temp_video_path, video_id, s3_client, status_tracker))
+        audio_task = asyncio.create_task(extract_audio(temp_video_path, video_id, s3_client, status_tracker))
 
         # Wait for both tasks to complete
         video_stats, audio_stats = await asyncio.gather(video_task, audio_task)
 
         # Start transcription only after audio extraction is complete
         transcription_start_time = time.time()
-        transcription_stats = await transcribe_audio(video_id, bucket, float(video_stats['video_length'].split()[0]), status_tracker)
+        transcription_stats = await transcribe_audio(video_id, float(video_stats['video_length'].split()[0]), status_tracker)
         transcription_processing_time = time.time() - transcription_start_time
 
         # Start OCR processing
         ocr_start_time = time.time()
-        ocr_stats = await process_ocr(video_id, bucket, status_tracker)
+        ocr_stats = await process_ocr(video_id, status_tracker)
 
         # Post-process OCR results
-        brand_results = await post_process_ocr(video_id, video_stats['video_fps'], bucket)
+        brand_results = await post_process_ocr(video_id, video_stats['video_fps'])
 
         ocr_processing_time = time.time() - ocr_start_time
 
@@ -707,12 +800,17 @@ async def process_video(video_id: str):
         }
 
         # Save processing stats to a new file
-        stats_blob = bucket.blob(f'{video_id}/processing_stats.json')
-        stats_blob.upload_from_string(json.dumps(processing_stats, indent=2), content_type='application/json')
+        stats_key = f'{video_id}/processing_stats.json'
+        s3_client.put_object(Bucket=PROCESSING_BUCKET, Key=stats_key, 
+                             Body=json.dumps(processing_stats, indent=2), 
+                             ContentType='application/json')
 
         # Update final status
         status_tracker.status["status"] = "complete"
-        status_tracker.update_gcs_status(bucket)
+        status_tracker.update_s3_status(s3_client)
+
+        # Mark video as completed
+        mark_video_as_completed(video_id)
 
         logger.info(f"Completed processing video: {video_id}")
         logger.info(f"Total processing time: {total_processing_time:.2f} seconds")
@@ -721,17 +819,17 @@ async def process_video(video_id: str):
         logger.error(f"Error processing video {video_id}: {str(e)}", exc_info=True)
         status_tracker.status["status"] = "error"
         status_tracker.status["error"] = str(e)
-        status_tracker.update_gcs_status(bucket)
+        status_tracker.update_s3_status(s3_client)
     finally:
         os.unlink(temp_video_path)
 
-async def periodic_status_update(video_id: str, status_tracker: StatusTracker, bucket: storage.Bucket):
+async def periodic_status_update(video_id: str, status_tracker: StatusTracker, s3_client):
     while True:
         status_tracker.calculate_overall_progress()
-        status_tracker.update_gcs_status(bucket)
+        status_tracker.update_s3_status(s3_client)
         await asyncio.sleep(STATUS_UPDATE_INTERVAL)
 
-async def process_video_frames(video_path: str, video_id: str, bucket: storage.Bucket, status_tracker: StatusTracker):
+async def process_video_frames(video_path: str, video_id: str, s3_client, status_tracker: StatusTracker):
     start_time = time.time()
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -767,7 +865,7 @@ async def process_video_frames(video_path: str, video_id: str, bucket: storage.B
 
     # Process batches in parallel
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        frame_futures = [executor.submit(process_batch, batch, video_id, bucket) for batch in batches]
+        frame_futures = [executor.submit(process_batch, batch, video_id, s3_client) for batch in batches]
         await asyncio.get_event_loop().run_in_executor(None, concurrent.futures.wait, frame_futures)
 
     processing_time = time.time() - start_time
@@ -787,7 +885,7 @@ async def process_video_frames(video_path: str, video_id: str, bucket: storage.B
         "video_processing_speed": processing_speed
     }
 
-async def extract_audio(video_path: str, video_id: str, bucket: storage.Bucket, status_tracker: StatusTracker):
+async def extract_audio(video_path: str, video_id: str, s3_client, status_tracker: StatusTracker):
     logger.info(f"Extracting audio for video: {video_id}")
     audio_path = f"/tmp/{video_id}_audio.mp3"
     start_time = time.time()
@@ -811,8 +909,14 @@ async def extract_audio(video_path: str, video_id: str, bucket: storage.Bucket, 
         if process.returncode != 0:
             raise subprocess.CalledProcessError(process.returncode, command, stderr.decode())
 
-        audio_blob = bucket.blob(f'{video_id}/audio.mp3')
-        audio_blob.upload_from_filename(audio_path)
+        # Upload audio file to S3
+        with open(audio_path, 'rb') as audio_file:
+            s3_client.put_object(
+                Bucket=PROCESSING_BUCKET,
+                Key=f'{video_id}/audio.mp3',
+                Body=audio_file,
+                ContentType='audio/mpeg'
+            )
         logger.info(f"Audio extracted and uploaded for video: {video_id}")
 
         # Extract audio duration using ffprobe
@@ -858,102 +962,113 @@ async def extract_audio(video_path: str, video_id: str, bucket: storage.Bucket, 
         "audio_processing_speed": 0
     }
 
-async def transcribe_audio(video_id: str, bucket: storage.Bucket, video_length: float, status_tracker: StatusTracker):
+async def transcribe_audio(video_id: str, s3_client, video_length: float, status_tracker: StatusTracker):
     logger.info(f"Transcribing audio for video: {video_id}")
-    audio_blob = bucket.blob(f'{video_id}/audio.mp3')
+    audio_key = f'{video_id}/audio.mp3'
 
     status_tracker.update_process_status("transcription", "in_progress", 0)
 
-    if not audio_blob.exists():
-        logger.warning(f"Audio file not found for video: {video_id}")
-        status_tracker.update_process_status("transcription", "error", 0)
-        return None
+    try:
+        # Check if the audio file exists
+        s3_client.head_object(Bucket=PROCESSING_BUCKET, Key=audio_key)
+    except s3_client.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == '404':
+            logger.warning(f"Audio file not found for video: {video_id}")
+            status_tracker.update_process_status("transcription", "error", 0)
+            return None
+        else:
+            raise
 
     try:
-        # Instantiate the Speech client
-        speech_client = SpeechClient()
+        # Instantiate the Transcribe client
+        transcribe_client = boto3.client('transcribe')
 
-        # Set up the recognition config
-        config = cloud_speech.RecognitionConfig(
-            auto_decoding_config={},
-            features=cloud_speech.RecognitionFeatures(
-                enable_word_confidence=True,
-                enable_word_time_offsets=True,
-                enable_automatic_punctuation=True,
-            ),
-            model="long",
-            language_codes=["en-US"],
-        )
-
-        # Set up the audio file metadata
-        audio_gcs_uri = f"gs://{PROCESSING_BUCKET}/{video_id}/audio.mp3"
-        files = [cloud_speech.BatchRecognizeFileMetadata(uri=audio_gcs_uri)]
-
-        # Set up the output config
-        output_config = cloud_speech.RecognitionOutputConfig(
-            gcs_output_config=cloud_speech.GcsOutputConfig(
-                uri=f"gs://{PROCESSING_BUCKET}/{video_id}/transcripts/"
-            ),
-        )
-
-        # Create the batch recognition request
-        request = cloud_speech.BatchRecognizeRequest(
-            recognizer=f"projects/{GCP_PROJECT_ID}/locations/global/recognizers/_",
-            config=config,
-            files=files,
-            recognition_output_config=output_config,
-        )
-
-        # Start the batch recognition operation
+        # Set up the transcription job
+        job_name = f"transcribe-{video_id}-{int(time.time())}"
+        job_uri = f"s3://{PROCESSING_BUCKET}/{audio_key}"
+        
         transcription_start_time = time.time()
-        operation = speech_client.batch_recognize(request=request)
-        logger.info(f"Started batch recognition for video {video_id}")
+        transcribe_client.start_transcription_job(
+            TranscriptionJobName=job_name,
+            Media={'MediaFileUri': job_uri},
+            MediaFormat='mp3',
+            LanguageCode='en-US',
+            OutputBucketName=PROCESSING_BUCKET,
+            OutputKey=f"{video_id}/transcripts/",
+            Settings={
+                'ShowSpeakerLabels': True,
+                'MaxSpeakerLabels': 10,
+                'ShowAlternatives': False,
+                'EnableAutomaticPunctuation': True
+            }
+        )
+        
+        logger.info(f"Started transcription job for video {video_id}")
 
-        # Wait for the operation to complete with a timeout of 2x video length
+        # Wait for the job to complete with a timeout of 2x video length
         timeout = video_length * 2
-        while not operation.done():
+        while True:
+            status = transcribe_client.get_transcription_job(TranscriptionJobName=job_name)
+            job_status = status['TranscriptionJob']['TranscriptionJobStatus']
+            
+            if job_status in ['COMPLETED', 'FAILED']:
+                break
+            
             await asyncio.sleep(5)
             elapsed_time = time.time() - transcription_start_time
             progress = min(100, (elapsed_time / timeout) * 100)
             status_tracker.update_process_status("transcription", "in_progress", progress)
 
-        response = operation.result()
         transcription_end_time = time.time()
-        logger.info(f"Batch recognition completed for video {video_id}")
+        
+        if job_status == 'COMPLETED':
+            logger.info(f"Transcription completed for video {video_id}")
+            
+            # Process the response and create transcripts
+            plain_transcript, json_transcript, word_count, overall_confidence = await process_transcription_response(s3_client, video_id)
 
-        # Process the response and create transcripts
-        plain_transcript, json_transcript, word_count, overall_confidence = await process_transcription_response(bucket, video_id)
+            # Upload plain transcript
+            s3_client.put_object(
+                Bucket=PROCESSING_BUCKET,
+                Key=f'{video_id}/transcripts/transcript.txt',
+                Body=plain_transcript,
+                ContentType='text/plain'
+            )
 
-        # Upload plain transcript
-        plain_transcript_blob = bucket.blob(f'{video_id}/transcripts/transcript.txt')
-        plain_transcript_blob.upload_from_string(plain_transcript)
+            # Upload JSON transcript
+            s3_client.put_object(
+                Bucket=PROCESSING_BUCKET,
+                Key=f'{video_id}/transcripts/transcript.json',
+                Body=json.dumps(json_transcript, indent=2),
+                ContentType='application/json'
+            )
 
-        # Upload JSON transcript
-        json_transcript_blob = bucket.blob(f'{video_id}/transcripts/transcript.json')
-        json_transcript_blob.upload_from_string(json.dumps(json_transcript, indent=2))
+            logger.info(f"Transcripts uploaded for video: {video_id}")
 
-        logger.info(f"Transcripts uploaded for video: {video_id}")
+            # Calculate transcription stats
+            transcription_time = transcription_end_time - transcription_start_time
+            transcription_speed = (video_length / transcription_time) * 100 if transcription_time > 0 else 0
+            overall_confidence = overall_confidence * 100
 
-        # Calculate transcription stats
-        transcription_time = transcription_end_time - transcription_start_time
-        transcription_speed = (video_length / transcription_time) * 100 if transcription_time > 0 else 0
-        overall_confidence = overall_confidence * 100
+            status_tracker.update_process_status("transcription", "complete", 100)
 
-        status_tracker.update_process_status("transcription", "complete", 100)
-
-        return {
-            "word_count": word_count,
-            "transcription_time": transcription_time,
-            "transcription_speed": transcription_speed,
-            "overall_confidence": overall_confidence
-        }
+            return {
+                "word_count": word_count,
+                "transcription_time": transcription_time,
+                "transcription_speed": transcription_speed,
+                "overall_confidence": overall_confidence
+            }
+        else:
+            logger.error(f"Transcription job failed for video {video_id}")
+            status_tracker.update_process_status("transcription", "error", 0)
+            return None
 
     except Exception as e:
         logger.error(f"Error transcribing audio for video {video_id}: {str(e)}", exc_info=True)
         status_tracker.update_process_status("transcription", "error", 0)
         return None
 
-async def process_transcription_response(bucket: storage.Bucket, video_id: str):
+async def process_transcription_response(s3_client, video_id: str):
     plain_transcript = ""
     json_transcript = []
     word_count = 0
@@ -961,29 +1076,36 @@ async def process_transcription_response(bucket: storage.Bucket, video_id: str):
 
     try:
         # Find the transcript JSON file
-        transcript_blobs = list(bucket.list_blobs(prefix=f"{video_id}/transcripts/audio_transcript_"))
-        if not transcript_blobs:
-            raise FileNotFoundError(f"No transcript file found for video {video_id}")
+        transcript_key = f"{video_id}/transcripts/transcript.json"
         
-        transcript_blob = transcript_blobs[0]
-        transcript_content = transcript_blob.download_as_text()
-        transcript_data = json.loads(transcript_content)
+        try:
+            response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=transcript_key)
+            transcript_content = response['Body'].read().decode('utf-8')
+            transcript_data = json.loads(transcript_content)
+        except s3_client.exceptions.NoSuchKey:
+            raise FileNotFoundError(f"No transcript file found for video {video_id}")
 
-        for result in transcript_data.get('results', []):
-            for alternative in result.get('alternatives', []):
-                transcript = alternative.get('transcript', '')
-                plain_transcript += transcript + " "
+        # Process the transcript data
+        for item in transcript_data['results']['items']:
+            if item['type'] == 'pronunciation':
+                word = item['alternatives'][0]['content']
+                confidence = float(item['alternatives'][0]['confidence'])
+                start_time = item.get('start_time', '0')
+                end_time = item.get('end_time', '0')
 
-                for word in alternative.get('words', []):
-                    word_count += 1
-                    confidence = word.get('confidence', 0)
-                    total_confidence += confidence
-                    json_transcript.append({
-                        "start_time": word.get('startOffset', '0s').rstrip('s'),
-                        "end_time": word.get('endOffset', '0s').rstrip('s'),
-                        "word": word.get('word', ''),
-                        "confidence": confidence
-                    })
+                word_count += 1
+                total_confidence += confidence
+                
+                json_transcript.append({
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "word": word,
+                    "confidence": confidence
+                })
+
+                plain_transcript += word + " "
+            elif item['type'] == 'punctuation':
+                plain_transcript = plain_transcript.rstrip() + item['alternatives'][0]['content'] + " "
 
         # Clean up the plain transcript
         plain_transcript = plain_transcript.strip()
@@ -991,6 +1113,12 @@ async def process_transcription_response(bucket: storage.Bucket, video_id: str):
         # Calculate overall confidence score
         overall_confidence = total_confidence / word_count if word_count > 0 else 0
 
+    except FileNotFoundError as e:
+        logger.error(f"Transcript file not found for video {video_id}: {str(e)}")
+        plain_transcript = "Transcript file not found."
+        json_transcript = []
+        word_count = 0
+        overall_confidence = 0
     except Exception as e:
         logger.error(f"Error processing transcription response for video {video_id}: {str(e)}", exc_info=True)
         plain_transcript = "Error processing transcription."
@@ -1000,39 +1128,29 @@ async def process_transcription_response(bucket: storage.Bucket, video_id: str):
 
     return plain_transcript, json_transcript, word_count, overall_confidence
 
-def process_batch(batch, video_id, bucket):
+def process_batch(batch, video_id):
     try:
         uploads = []
         for frame, frame_number in batch:
             frame_filename = f'{frame_number:06d}.jpg'
             _, buffer = cv2.imencode('.jpg', frame)
-            frame_blob = bucket.blob(f'{video_id}/frames/{frame_filename}')
-            uploads.append((frame_blob, buffer.tobytes()))
+            uploads.append((f'{video_id}/frames/{frame_filename}', buffer.tobytes()))
 
         # Perform batch upload
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(uploads), 10)) as executor:
-            list(executor.map(lambda x: x[0].upload_from_string(x[1], content_type='image/jpeg'), uploads))
-        
+            list(executor.map(lambda x: s3_client.put_object(Bucket=PROCESSING_BUCKET, Key=x[0], Body=x[1], ContentType='image/jpeg'), uploads))
+    
     except Exception as e:
         logger.error(f"Error processing batch for video {video_id}: {str(e)}")
 
-async def get_video_resolution(bucket: storage.Bucket, video_id: str) -> Tuple[int, int]:
-    """
-    Retrieve the video resolution by analyzing the first frame (000000.jpg) in the frames folder.
-    """
+async def get_video_resolution(video_id: str) -> Tuple[int, int]:
     try:
         # Construct the path to the first frame
         first_frame_path = f'{video_id}/frames/000000.jpg'
         
-        # Get the blob for the first frame
-        frame_blob = bucket.blob(first_frame_path)
-        
-        # Check if the blob exists
-        if not frame_blob.exists():
-            raise FileNotFoundError(f"First frame not found for video {video_id}")
-        
         # Download the frame data
-        frame_data = frame_blob.download_as_bytes()
+        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=first_frame_path)
+        frame_data = response['Body'].read()
         
         # Open the image using PIL
         with Image.open(io.BytesIO(frame_data)) as img:
@@ -1041,9 +1159,9 @@ async def get_video_resolution(bucket: storage.Bucket, video_id: str) -> Tuple[i
         logger.info(f"Detected resolution for video {video_id}: {width}x{height}")
         return (width, height)
     
-    except FileNotFoundError as e:
-        logger.error(f"Error retrieving video resolution for {video_id}: {str(e)}")
-        raise
+    except s3_client.exceptions.NoSuchKey:
+        logger.error(f"First frame not found for video {video_id}")
+        raise FileNotFoundError(f"First frame not found for video {video_id}")
     except Exception as e:
         logger.error(f"Unexpected error retrieving video resolution for {video_id}: {str(e)}")
         # Return a default resolution if unable to retrieve

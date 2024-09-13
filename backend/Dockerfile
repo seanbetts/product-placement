@@ -10,7 +10,7 @@ RUN pip install --upgrade pip
 
 COPY requirements.txt .
 
-COPY keyfile.json .
+# COPY keyfile.json .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -26,10 +26,14 @@ RUN apt-get update && apt-get install -y \
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup --home /home/appuser appuser
 
-USER appuser
-
 COPY --chown=appuser:appgroup . .
+
+USER appuser
 
 EXPOSE 8080
 
-CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 main:app -k uvicorn.workers.UvicornWorker --log-level debug --access-logfile - --error-logfile -
+# Local command
+# CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "0", "main:app", "-k", "uvicorn.workers.UvicornWorker", "--log-level", "debug", "--access-logfile", "-", "--error-logfile", "-"]
+
+# Server command
+CMD exec gunicorn --bind :${PORT:-8080} --workers 1 --threads 8 --timeout 0 main:app -k uvicorn.workers.UvicornWorker --log-level debug --access-logfile - --error-logfile -
