@@ -1,7 +1,6 @@
 fastapi
 uvicorn
 gunicorn
-google-cloud-speech
 google-cloud-vision
 torch
 torchvision

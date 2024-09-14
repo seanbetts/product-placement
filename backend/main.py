@@ -19,11 +19,6 @@ from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException, F
 from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from botocore.exceptions import ClientError
-from google.cloud import vision
-from google.oauth2 import service_account
-from google.auth import default
-from google.cloud.speech_v2 import SpeechClient
-from google.cloud.speech_v2.types import cloud_speech
 from dotenv import load_dotenv
 from PIL import Image
 from io import BytesIO
@@ -80,9 +75,6 @@ s3_client = boto3.client(
     region_name=AWS_DEFAULT_REGION,
     config=retry_config
 )
-
-# Set up Google Cloud Vision client
-vision_client = vision.ImageAnnotatorClient()
 
 class StatusTracker:
     def __init__(self, video_id: str):
@@ -1005,7 +997,7 @@ async def transcribe_audio(video_id: str, s3_client, video_length: float, status
         transcribe_client = boto3.client('transcribe')
 
         # Set up the transcription job
-        job_name = f"transcribe-{video_id}"  # Removed the timestamp
+        job_name = f"audio_transcript_{video_id}"
         job_uri = f"s3://{PROCESSING_BUCKET}/{audio_key}"
         
         transcription_start_time = time.time()
