@@ -10,12 +10,12 @@ import matplotlib.pyplot as plt
 import asyncio
 import matplotlib
 import boto3
+from PIL import Image
 from botocore.exceptions import ClientError
 from matplotlib import font_manager
 from dotenv import load_dotenv
 from thefuzz import fuzz, process
 from typing import List, Dict, Tuple, Optional, Set, Callable, TYPE_CHECKING
-from google.cloud import vision
 from wordcloud import WordCloud
 from collections import defaultdict, Counter
 from typing import TYPE_CHECKING
@@ -32,12 +32,14 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Initialize Rekognition client
+rekognition_client = boto3.client('rekognition', region_name=os.getenv('AWS_DEFAULT_REGION'))
+
 # Use the 'Agg' backend which doesn't require a GUI
 matplotlib.use('Agg')
 
 MAX_WORKERS = int(os.getenv('MAX_WORKERS', '10'))
 PROCESSING_BUCKET = os.getenv('PROCESSING_BUCKET')
-
 
 # Simple in-memory brand database
 BRAND_DATABASE = {
@@ -612,39 +614,61 @@ def create_word_cloud(s3_client, video_id: str, cleaned_results: List[Dict]):
 
     plt.close()
 
-async def process_single_frame_ocr(s3_client, video_id, frame_number):
+def convert_relative_bbox(bbox: Dict, video_resolution: Tuple[int, int]) -> Dict:
+    """
+    Convert relative bounding box coordinates to absolute pixel values.
+
+    Args:
+        bbox (Dict): Bounding box with relative 'Width', 'Height', 'Left', 'Top'.
+        video_resolution (Tuple[int, int]): (width, height) of the video.
+
+    Returns:
+        Dict: Bounding box with absolute 'vertices' coordinates.
+    """
+    video_width, video_height = video_resolution
+    left = bbox.get('Left', 0) * video_width
+    top = bbox.get('Top', 0) * video_height
+    width = bbox.get('Width', 0) * video_width
+    height = bbox.get('Height', 0) * video_height
+
+    vertices = [
+        {"x": int(left), "y": int(top)},
+        {"x": int(left + width), "y": int(top)},
+        {"x": int(left + width), "y": int(top + height)},
+        {"x": int(left), "y": int(top + height)}
+    ]
+
+    return {"vertices": vertices}
+
+async def process_single_frame_ocr(s3_client, video_id, frame_number, video_resolution: Tuple[int, int]):
     try:
         # Get the frame from S3
         response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=f'{video_id}/frames/{frame_number:06d}.jpg')
         image_content = response['Body'].read()
 
-        # Create a client (assuming you're still using Google Vision API for OCR)
-        client = vision.ImageAnnotatorClient()
-
-        # Create an Image object
-        image = vision.Image(content=image_content)
-
-        # Perform OCR on the image
-        response = client.text_detection(image=image)
+        # Perform OCR using Amazon Rekognition
+        response = rekognition_client.detect_text(
+            Image={'Bytes': image_content}
+        )
 
         # Process the response
-        texts = response.text_annotations
+        texts = response.get('TextDetections', [])
 
         if texts:
-            # The first annotation contains the entire detected text
-            full_text = texts[0].description
+            # Concatenate all detected text snippets
+            full_text = ' '.join([text['DetectedText'] for text in texts if text['Type'] == 'LINE'])
 
-            # Process individual text annotations
+            # Process individual text detections
             text_annotations = []
-            for annotation in texts[1:]:  # Skip the first one as it's the full text
+            for text in texts:
+                if text['Type'] != 'LINE':
+                    continue  # Skip non-line detections
+                relative_bbox = text['Geometry']['BoundingBox']
+                absolute_bbox = convert_relative_bbox(relative_bbox, video_resolution)
+
                 text_annotation = {
-                    "text": annotation.description,
-                    "bounding_box": {
-                        "vertices": [
-                            {"x": vertex.x, "y": vertex.y}
-                            for vertex in annotation.bounding_poly.vertices
-                        ]
-                    }
+                    "text": text['DetectedText'],
+                    "bounding_box": absolute_bbox
                 }
                 text_annotations.append(text_annotation)
 
@@ -724,19 +748,103 @@ async def post_process_ocr(video_id: str, fps: float, video_resolution: Tuple[in
         logger.error(traceback.format_exc())
         raise
 
+async def get_video_resolution(video_id: str) -> Tuple[int, int]:
+    """
+    Retrieve the resolution (width, height) of the video by fetching the first frame from S3.
+
+    Args:
+        video_id (str): The unique identifier for the video.
+
+    Returns:
+        Tuple[int, int]: A tuple containing the width and height of the video in pixels.
+
+    Raises:
+        FileNotFoundError: If the first frame is not found in the S3 bucket.
+        Exception: For any other unexpected errors.
+    """
+    try:
+        # Construct the path to the first frame
+        first_frame_path = f'{video_id}/frames/000000.jpg'
+        
+        # Download the frame data from S3
+        response = await asyncio.to_thread(
+            s3_client.get_object,
+            Bucket=PROCESSING_BUCKET,
+            Key=first_frame_path
+        )
+        frame_data = response['Body'].read()
+        
+        # Open the image using PIL
+        with Image.open(io.BytesIO(frame_data)) as img:
+            width, height = img.size
+        
+        logger.info(f"Detected resolution for video {video_id}: {width}x{height}")
+        return (width, height)
+    
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            logger.error(f"First frame not found for video {video_id}")
+            raise FileNotFoundError(f"First frame not found for video {video_id}") from e
+        else:
+            logger.error(f"ClientError retrieving video resolution for {video_id}: {str(e)}")
+            raise
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving video resolution for {video_id}: {str(e)}")
+        # Return a default resolution if unable to retrieve
+        logger.warning(f"Using default resolution (1920x1080) for video {video_id}")
+        return (1920, 1080)  # Default to 1080p
+
+async def async_paginate(paginator, **kwargs):
+    """
+    Asynchronously paginate through S3 objects.
+
+    Args:
+        paginator: The S3 paginator object.
+        **kwargs: Arguments to pass to paginator.paginate.
+
+    Yields:
+        Each page of the paginator.
+    """
+    try:
+        # Retrieve the paginator as a generator in a separate thread
+        paginate_gen = await asyncio.to_thread(paginator.paginate, **kwargs)
+        
+        # Iterate over the paginator generator
+        for page in paginate_gen:
+            yield page
+    except Exception as e:
+        logger.error(f"Error during pagination: {str(e)}")
+        raise
+
 async def process_ocr(video_id: str, status_tracker: 'StatusTracker', s3_client):
     logger.info(f"Starting OCR processing for video: {video_id}")
     status_tracker.update_process_status("ocr", "in_progress", 0)
 
     ocr_start_time = time.time()
-    
+
+    # Get video resolution
+    try:
+        video_resolution = await get_video_resolution(video_id)
+    except FileNotFoundError:
+        logger.error(f"Cannot retrieve video resolution for OCR processing of video: {video_id}")
+        status_tracker.set_error("Video resolution not found.")
+        status_tracker.update_s3_status(s3_client)
+        return
+    except Exception as e:
+        logger.error(f"Error retrieving video resolution for OCR processing of video {video_id}: {str(e)}")
+        status_tracker.set_error("Error retrieving video resolution.")
+        status_tracker.update_s3_status(s3_client)
+        return
+
     # List frames in S3
     frame_objects = []
     paginator = s3_client.get_paginator('list_objects_v2')
-    for page in paginator.paginate(Bucket=PROCESSING_BUCKET, Prefix=f'{video_id}/frames/'):
-        frame_objects.extend(page.get('Contents', []))
-    
+    async for page in async_paginate(paginator, Bucket=PROCESSING_BUCKET, Prefix=f'{video_id}/frames/'):
+        contents = page.get('Contents', [])
+        frame_objects.extend(contents)
+
     total_frames = len(frame_objects)
+    logger.info(f"Total frames to process for video {video_id}: {total_frames}")
 
     ocr_results = []
     processed_frames = 0
@@ -746,7 +854,15 @@ async def process_ocr(video_id: str, status_tracker: 'StatusTracker', s3_client)
     batch_size = 10
     for i in range(0, len(frame_objects), batch_size):
         batch = frame_objects[i:i+batch_size]
-        tasks = [process_single_frame_ocr(s3_client, video_id, int(frame['Key'].split('/')[-1].split('.')[0])) for frame in batch]
+        tasks = [
+            process_single_frame_ocr(
+                s3_client, 
+                video_id, 
+                int(frame['Key'].split('/')[-1].split('.')[0]), 
+                video_resolution
+            ) 
+            for frame in batch
+        ]
         batch_results = await asyncio.gather(*tasks)
 
         for result in batch_results:
@@ -767,7 +883,8 @@ async def process_ocr(video_id: str, status_tracker: 'StatusTracker', s3_client)
 
     # Store OCR results
     try:
-        s3_client.put_object(
+        await asyncio.to_thread(
+            s3_client.put_object,
             Bucket=PROCESSING_BUCKET,
             Key=f'{video_id}/ocr/ocr_results.json',
             Body=json.dumps(ocr_results, indent=2),
