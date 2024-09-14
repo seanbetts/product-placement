@@ -38,7 +38,7 @@ rekognition_client = boto3.client('rekognition', region_name=os.getenv('AWS_DEFA
 # Use the 'Agg' backend which doesn't require a GUI
 matplotlib.use('Agg')
 
-MAX_WORKERS = int(os.getenv('MAX_WORKERS', '10'))
+MAX_WORKERS = int(os.getenv('MAX_WORKERS', '20'))
 PROCESSING_BUCKET = os.getenv('PROCESSING_BUCKET')
 
 # Simple in-memory brand database
@@ -643,16 +643,20 @@ def convert_relative_bbox(bbox: Dict, video_resolution: Tuple[int, int]) -> Dict
 async def process_single_frame_ocr(s3_client, video_id, frame_number, video_resolution: Tuple[int, int]):
     try:
         # Get the frame from S3
-        response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=f'{video_id}/frames/{frame_number:06d}.jpg')
+        response = await asyncio.to_thread(
+            s3_client.get_object, 
+            Bucket=PROCESSING_BUCKET, 
+            Key=f'{video_id}/frames/{frame_number:06d}.jpg'
+        )
         image_content = response['Body'].read()
 
         # Perform OCR using Amazon Rekognition
-        response = rekognition_client.detect_text(
+        rekognition_response = rekognition_client.detect_text(
             Image={'Bytes': image_content}
         )
 
-        # Process the response
-        texts = response.get('TextDetections', [])
+        # Process the Rekognition response
+        texts = rekognition_response.get('TextDetections', [])
 
         if texts:
             # Concatenate all detected text snippets
@@ -672,22 +676,34 @@ async def process_single_frame_ocr(s3_client, video_id, frame_number, video_reso
                 }
                 text_annotations.append(text_annotation)
 
-            return {
+            processed_data = {
                 "frame_number": frame_number,
                 "full_text": full_text,
                 "text_annotations": text_annotations
             }
+
+            raw_data = {
+                "frame_number": frame_number,
+                "rekognition_response": rekognition_response
+            }
+
+            return processed_data, raw_data
         else:
             logger.info(f"No text found in frame {frame_number}")
-            return {
+            processed_data = {
                 "frame_number": frame_number,
                 "full_text": "",
                 "text_annotations": []
             }
+            raw_data = {
+                "frame_number": frame_number,
+                "rekognition_response": rekognition_response
+            }
+            return processed_data, raw_data
 
     except Exception as e:
         logger.error(f"Error processing OCR for frame {frame_number}: {str(e)}")
-        return None
+        return None, None
     
 def filter_brand_results(brand_results: List[Dict], brand_appearances: Dict[str, Set[int]], fps: float) -> List[Dict]:
     min_frames = int(fps)  # Minimum number of frames (1 second)
@@ -748,7 +764,7 @@ async def post_process_ocr(video_id: str, fps: float, video_resolution: Tuple[in
         logger.error(traceback.format_exc())
         raise
 
-async def get_video_resolution(video_id: str) -> Tuple[int, int]:
+async def get_video_resolution(video_id: str, s3_client) -> Tuple[int, int]:
     """
     Retrieve the resolution (width, height) of the video by fetching the first frame from S3.
 
@@ -824,7 +840,7 @@ async def process_ocr(video_id: str, status_tracker: 'StatusTracker', s3_client)
 
     # Get video resolution
     try:
-        video_resolution = await get_video_resolution(video_id)
+        video_resolution = await get_video_resolution(video_id, s3_client)
     except FileNotFoundError:
         logger.error(f"Cannot retrieve video resolution for OCR processing of video: {video_id}")
         status_tracker.set_error("Video resolution not found.")
@@ -847,11 +863,12 @@ async def process_ocr(video_id: str, status_tracker: 'StatusTracker', s3_client)
     logger.info(f"Total frames to process for video {video_id}: {total_frames}")
 
     ocr_results = []
+    raw_ocr_results = []
     processed_frames = 0
     total_words = 0
 
     # Process frames in batches to limit concurrency
-    batch_size = 10
+    batch_size = int(os.getenv('BATCH_SIZE', '30'))
     for i in range(0, len(frame_objects), batch_size):
         batch = frame_objects[i:i+batch_size]
         tasks = [
@@ -865,10 +882,11 @@ async def process_ocr(video_id: str, status_tracker: 'StatusTracker', s3_client)
         ]
         batch_results = await asyncio.gather(*tasks)
 
-        for result in batch_results:
-            if result:
-                ocr_results.append(result)
-                total_words += len(result['full_text'].split())
+        for processed_data, raw_data in batch_results:
+            if processed_data and raw_data:
+                ocr_results.append(processed_data)
+                raw_ocr_results.append(raw_data)
+                total_words += len(processed_data['full_text'].split())
 
         processed_frames += len(batch)
         progress = (processed_frames / total_frames) * 100
@@ -880,8 +898,9 @@ async def process_ocr(video_id: str, status_tracker: 'StatusTracker', s3_client)
 
     # Sort OCR results by frame number
     ocr_results.sort(key=lambda x: x['frame_number'])
+    raw_ocr_results.sort(key=lambda x: x['frame_number'])
 
-    # Store OCR results
+    # Store processed OCR results
     try:
         await asyncio.to_thread(
             s3_client.put_object,
@@ -890,8 +909,23 @@ async def process_ocr(video_id: str, status_tracker: 'StatusTracker', s3_client)
             Body=json.dumps(ocr_results, indent=2),
             ContentType='application/json'
         )
+        logger.info(f"Saved processed OCR results for video: {video_id}")
     except ClientError as e:
         logger.error(f"Error saving OCR results for video {video_id}: {str(e)}")
+        raise
+
+    # Store raw OCR results
+    try:
+        await asyncio.to_thread(
+            s3_client.put_object,
+            Bucket=PROCESSING_BUCKET,
+            Key=f'{video_id}/ocr/raw_ocr.json',
+            Body=json.dumps(raw_ocr_results, indent=2),
+            ContentType='application/json'
+        )
+        logger.info(f"Saved raw OCR results for video: {video_id}")
+    except ClientError as e:
+        logger.error(f"Error saving raw OCR results for video {video_id}: {str(e)}")
         raise
 
     ocr_processing_time = time.time() - ocr_start_time

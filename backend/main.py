@@ -47,9 +47,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GCP_PROJECT_ID = os.getenv('GCP_PROJECT_ID')
-GOOGLE_APPLICATION_CREDENTIALS = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-BATCH_SIZE = int(os.getenv('BATCH_SIZE', '20'))
+BATCH_SIZE = int(os.getenv('BATCH_SIZE', '30'))
 FRAME_INTERVAL = int(os.getenv('FRAME_INTERVAL', '1'))
 STATUS_UPDATE_INTERVAL = int(os.getenv('STATUS_UPDATE_INTERVAL', '3'))
 MAX_WORKERS = int(os.getenv('MAX_WORKERS', '10'))
