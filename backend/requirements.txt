@@ -16,3 +16,4 @@ pyenchant
 wordcloud
 pydantic
 boto3
+amazon-transcribe

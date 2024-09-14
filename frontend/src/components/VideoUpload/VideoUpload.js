@@ -187,8 +187,8 @@ const handleCancel = async () => {
       setProcessingProgress(prevProgress => ({
         ...prevProgress,
         total: { status: response.status, progress: response.progress || 0 },
-        video: { status: response.video_processing?.status || 'pending', progress: response.video_processing?.progress || 0 },
-        audio: { status: response.audio_extraction?.status || 'pending', progress: response.audio_extraction?.progress || 0 },
+        video_processing: { status: response.video_processing?.status || 'pending', progress: response.video_processing?.progress || 0 },
+        audio_extraction: { status: response.audio_extraction?.status || 'pending', progress: response.audio_extraction?.progress || 0 },
         transcription: { status: response.transcription?.status || 'pending', progress: response.transcription?.progress || 0 },
         ocr: { status: response.ocr?.status || 'pending', progress: response.ocr?.progress || 0 }
       }));
@@ -372,13 +372,13 @@ const handleCancel = async () => {
             <HourglassEmptyIcon color="action" sx={{ mr: 1 }} />
           )}
           <Typography variant="body2" color="text.secondary">
-            {status === 'complete' ? '100%' : `${Math.round(progress)}%`}
+            {status === 'complete' ? '100%' : `${Math.round(progress || 0)}%`}
           </Typography>
         </Box>
       </Box>
       <LinearProgress 
         variant="determinate" 
-        value={status === 'complete' ? 100 : progress} 
+        value={status === 'complete' ? 100 : (progress || 0)} 
         sx={{ 
           height: 8, 
           borderRadius: 4,
@@ -394,11 +394,11 @@ const handleCancel = async () => {
 
   const renderProcessingProgress = () => (
     <Box>
-      {renderProgressBar('Total Progress', processingProgress.total.status, processingProgress.total.progress)}
-      {renderProgressBar('Video Processing', processingProgress.video.status, processingProgress.video.progress)}
-      {renderProgressBar('Audio Processing', processingProgress.audio.status, processingProgress.audio.progress)}
-      {renderProgressBar('Transcription', processingProgress.transcription.status, processingProgress.transcription.progress)}
-      {renderProgressBar('Text Processing', processingProgress.ocr.status, processingProgress.ocr.progress)}
+      {renderProgressBar('Total Progress', processingProgress.total?.status, processingProgress.total?.progress)}
+      {renderProgressBar('Video Processing', processingProgress.video_processing?.status, processingProgress.video_processing?.progress)}
+      {renderProgressBar('Audio Processing', processingProgress.audio_extraction?.status, processingProgress.audio_extraction?.progress)}
+      {renderProgressBar('Transcription', processingProgress.transcription?.status, processingProgress.transcription?.progress)}
+      {renderProgressBar('Text Processing', processingProgress.ocr?.status, processingProgress.ocr?.progress)}
     </Box>
   );
 

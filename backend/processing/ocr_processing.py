@@ -18,6 +18,9 @@ from typing import List, Dict, Tuple, Optional, Set, Callable, TYPE_CHECKING
 from google.cloud import vision
 from wordcloud import WordCloud
 from collections import defaultdict, Counter
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from main import StatusTracker
 
 if TYPE_CHECKING:
     from main import StatusTracker
@@ -35,8 +38,6 @@ matplotlib.use('Agg')
 MAX_WORKERS = int(os.getenv('MAX_WORKERS', '10'))
 PROCESSING_BUCKET = os.getenv('PROCESSING_BUCKET')
 
-# Initialize S3 client
-s3_client = boto3.client('s3')
 
 # Simple in-memory brand database
 BRAND_DATABASE = {
@@ -723,7 +724,7 @@ async def post_process_ocr(video_id: str, fps: float, video_resolution: Tuple[in
         logger.error(traceback.format_exc())
         raise
 
-async def process_ocr(video_id: str, s3_client, status_tracker: 'StatusTracker'):
+async def process_ocr(video_id: str, status_tracker: 'StatusTracker', s3_client):
     logger.info(f"Starting OCR processing for video: {video_id}")
     status_tracker.update_process_status("ocr", "in_progress", 0)
 

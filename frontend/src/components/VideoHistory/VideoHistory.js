@@ -46,6 +46,7 @@ const VideoHistory = () => {
   const [sortCriteria, setSortCriteria] = useState('date');
   const [sortOrder, setSortOrder] = useState('desc');
   const [firstFramesLoading, setFirstFramesLoading] = useState({});
+  const processedVideos = useRef(new Set());
   const hasCheckedVideos = useRef(false);
 
   const filterAndSortVideos = useCallback((videos, searchTerm, startDate, endDate, sortCriteria, sortOrder) => {
@@ -88,8 +89,9 @@ const VideoHistory = () => {
 
   const memoizedDispatchFirstFrames = useCallback(() => {
     videos.forEach(video => {
-      if (!firstFrames[video.video_id] && !firstFramesLoading[video.video_id]) {
+      if (!firstFrames[video.video_id] && !firstFramesLoading[video.video_id] && !processedVideos.current.has(video.video_id)) {
         setFirstFramesLoading(prev => ({ ...prev, [video.video_id]: true }));
+        processedVideos.current.add(video.video_id);
         dispatch(fetchFirstVideoFrame(video.video_id))
           .then(() => {
             setFirstFramesLoading(prev => ({ ...prev, [video.video_id]: false }));
@@ -100,7 +102,7 @@ const VideoHistory = () => {
           });
       }
     });
-  }, [dispatch, videos, firstFrames, firstFramesLoading]);
+  }, [videos, firstFrames, dispatch, firstFramesLoading]);
 
   useEffect(() => {
     if (!hasCheckedVideos.current) {

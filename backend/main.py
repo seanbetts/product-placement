@@ -103,6 +103,7 @@ class StatusTracker:
             "transcription": asyncio.Event(),
             "ocr": asyncio.Event()
         }
+        self.status["error"] = None
 
     def update_process_status(self, process: str, status: str, progress: float):
         self.status[process]["status"] = status
@@ -132,6 +133,12 @@ class StatusTracker:
             Body=json.dumps(current_status),
             ContentType='application/json'
         )
+
+    def set_error(self, error_message: str):
+        self.status["error"] = error_message
+        self.status["status"] = "error"
+        self.update_s3_status(s3_client)
+
 
 class NameUpdate(BaseModel):
     name: str
@@ -594,7 +601,7 @@ async def reprocess_ocr(video_id: str):
         raise HTTPException(status_code=500, detail="Error retrieving processing stats")
 
     try:
-        processed_results = await post_process_ocr(video_id, fps, video_resolution)
+        processed_results = await post_process_ocr(video_id, fps, video_resolution, s3_client)
         if processed_results:
             return {"status": "success", "message": "OCR results reprocessed and saved"}
         else:
@@ -696,7 +703,7 @@ def mark_video_as_completed(video_id: str):
         response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=stats_key)
         stats_data = json.loads(response['Body'].read().decode('utf-8'))
         stats_data['status'] = 'completed'
-        stats_data['completion_time'] = datetime.utcnow().isoformat()
+        stats_data['completion_time'] = datetime.datetime.utcnow().isoformat()
         
         s3_client.put_object(
             Bucket=PROCESSING_BUCKET,
@@ -742,19 +749,33 @@ async def process_video(video_id: str):
         # Wait for both tasks to complete
         video_stats, audio_stats = await asyncio.gather(video_task, audio_task)
 
+        if status_tracker.status.get("error"):
+            logger.error(f"Error encountered during video/audio processing: {status_tracker.status['error']}")
+            return
+
         # Start transcription only after audio extraction is complete
-        transcription_start_time = time.time()
-        transcription_stats = await transcribe_audio(video_id, float(video_stats['video_length'].split()[0]), status_tracker)
-        transcription_processing_time = time.time() - transcription_start_time
+        # transcription_start_time = time.time()
+        transcription_stats = await transcribe_audio(video_id, s3_client, float(video_stats['video_length'].split()[0]), status_tracker)
+        
+        if status_tracker.status.get("error"):
+            logger.error(f"Error encountered during transcription: {status_tracker.status['error']}")
+            return
+
+        # transcription_processing_time = time.time() - transcription_start_time
 
         # Start OCR processing
         ocr_start_time = time.time()
-        ocr_stats = await process_ocr(video_id, status_tracker)
+        ocr_stats = await process_ocr(video_id, status_tracker, s3_client)
+
+        if status_tracker.status.get("error"):
+            logger.error(f"Error encountered during OCR processing: {status_tracker.status['error']}")
+            return
 
         # Post-process OCR results
-        brand_results = await post_process_ocr(video_id, video_stats['video_fps'])
+        video_resolution = await get_video_resolution(video_id)
+        brand_results = await post_process_ocr(video_id, video_stats['video_fps'], video_resolution, s3_client)
 
-        ocr_processing_time = time.time() - ocr_start_time
+        # ocr_processing_time = time.time() - ocr_start_time
 
         # Wait for all processes to complete
         await status_tracker.wait_for_completion()
@@ -817,8 +838,7 @@ async def process_video(video_id: str):
 
     except Exception as e:
         logger.error(f"Error processing video {video_id}: {str(e)}", exc_info=True)
-        status_tracker.status["status"] = "error"
-        status_tracker.status["error"] = str(e)
+        status_tracker.set_error(str(e))
         status_tracker.update_s3_status(s3_client)
     finally:
         os.unlink(temp_video_path)
@@ -965,6 +985,7 @@ async def extract_audio(video_path: str, video_id: str, s3_client, status_tracke
 async def transcribe_audio(video_id: str, s3_client, video_length: float, status_tracker: StatusTracker):
     logger.info(f"Transcribing audio for video: {video_id}")
     audio_key = f'{video_id}/audio.mp3'
+    transcript_key = f"{video_id}/transcripts/audio_transcript_{video_id}.json"
 
     status_tracker.update_process_status("transcription", "in_progress", 0)
 
@@ -984,7 +1005,7 @@ async def transcribe_audio(video_id: str, s3_client, video_length: float, status
         transcribe_client = boto3.client('transcribe')
 
         # Set up the transcription job
-        job_name = f"transcribe-{video_id}-{int(time.time())}"
+        job_name = f"transcribe-{video_id}"  # Removed the timestamp
         job_uri = f"s3://{PROCESSING_BUCKET}/{audio_key}"
         
         transcription_start_time = time.time()
@@ -998,8 +1019,7 @@ async def transcribe_audio(video_id: str, s3_client, video_length: float, status
             Settings={
                 'ShowSpeakerLabels': True,
                 'MaxSpeakerLabels': 10,
-                'ShowAlternatives': False,
-                'EnableAutomaticPunctuation': True
+                'ShowAlternatives': False
             }
         )
         
@@ -1024,26 +1044,23 @@ async def transcribe_audio(video_id: str, s3_client, video_length: float, status
         if job_status == 'COMPLETED':
             logger.info(f"Transcription completed for video {video_id}")
             
+            # Wait for the transcript file to be available in S3
+            max_retries = 10
+            for i in range(max_retries):
+                try:
+                    s3_client.head_object(Bucket=PROCESSING_BUCKET, Key=transcript_key)
+                    logger.info(f"Transcript file found for video {video_id}")
+                    break
+                except s3_client.exceptions.ClientError:
+                    if i < max_retries - 1:
+                        await asyncio.sleep(5)
+                    else:
+                        raise FileNotFoundError(f"Transcript file not found for video {video_id} after {max_retries} retries")
+
             # Process the response and create transcripts
             plain_transcript, json_transcript, word_count, overall_confidence = await process_transcription_response(s3_client, video_id)
 
-            # Upload plain transcript
-            s3_client.put_object(
-                Bucket=PROCESSING_BUCKET,
-                Key=f'{video_id}/transcripts/transcript.txt',
-                Body=plain_transcript,
-                ContentType='text/plain'
-            )
-
-            # Upload JSON transcript
-            s3_client.put_object(
-                Bucket=PROCESSING_BUCKET,
-                Key=f'{video_id}/transcripts/transcript.json',
-                Body=json.dumps(json_transcript, indent=2),
-                ContentType='application/json'
-            )
-
-            logger.info(f"Transcripts uploaded for video: {video_id}")
+            logger.info(f"Transcripts processed and uploaded for video: {video_id}")
 
             # Calculate transcription stats
             transcription_time = transcription_end_time - transcription_start_time
@@ -1076,7 +1093,7 @@ async def process_transcription_response(s3_client, video_id: str):
 
     try:
         # Find the transcript JSON file
-        transcript_key = f"{video_id}/transcripts/transcript.json"
+        transcript_key = f"{video_id}/transcripts/audio_transcript_{video_id}.json"
         
         try:
             response = s3_client.get_object(Bucket=PROCESSING_BUCKET, Key=transcript_key)
@@ -1086,7 +1103,8 @@ async def process_transcription_response(s3_client, video_id: str):
             raise FileNotFoundError(f"No transcript file found for video {video_id}")
 
         # Process the transcript data
-        for item in transcript_data['results']['items']:
+        items = transcript_data['results']['items']
+        for item in items:
             if item['type'] == 'pronunciation':
                 word = item['alternatives'][0]['content']
                 confidence = float(item['alternatives'][0]['confidence'])
@@ -1113,6 +1131,22 @@ async def process_transcription_response(s3_client, video_id: str):
         # Calculate overall confidence score
         overall_confidence = total_confidence / word_count if word_count > 0 else 0
 
+        # Save transcript.json
+        s3_client.put_object(
+            Bucket=PROCESSING_BUCKET,
+            Key=f'{video_id}/transcripts/transcript.json',
+            Body=json.dumps(json_transcript, indent=2),
+            ContentType='application/json'
+        )
+
+        # Save transcript.txt
+        s3_client.put_object(
+            Bucket=PROCESSING_BUCKET,
+            Key=f'{video_id}/transcripts/transcript.txt',
+            Body=plain_transcript,
+            ContentType='text/plain'
+        )
+
     except FileNotFoundError as e:
         logger.error(f"Transcript file not found for video {video_id}: {str(e)}")
         plain_transcript = "Transcript file not found."
@@ -1128,7 +1162,15 @@ async def process_transcription_response(s3_client, video_id: str):
 
     return plain_transcript, json_transcript, word_count, overall_confidence
 
-def process_batch(batch, video_id):
+def upload_frame_to_s3(s3_client, bucket, key, body):
+    try:
+        s3_client.put_object(Bucket=bucket, Key=key, Body=body, ContentType='image/jpeg')
+        return True
+    except Exception as e:
+        logger.error(f"Failed to upload frame {key}: {str(e)}")
+        return False
+
+def process_batch(batch, video_id, s3_client):
     try:
         uploads = []
         for frame, frame_number in batch:
@@ -1138,10 +1180,19 @@ def process_batch(batch, video_id):
 
         # Perform batch upload
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(uploads), 10)) as executor:
-            list(executor.map(lambda x: s3_client.put_object(Bucket=PROCESSING_BUCKET, Key=x[0], Body=x[1], ContentType='image/jpeg'), uploads))
+            results = list(executor.map(
+                lambda x: upload_frame_to_s3(s3_client, PROCESSING_BUCKET, x[0], x[1]), 
+                uploads
+            ))
+        
+        successful_uploads = sum(results)
+        logger.info(f"Successfully uploaded {successful_uploads} out of {len(uploads)} frames for video {video_id}")
+        
+        if successful_uploads != len(uploads):
+            logger.warning(f"Failed to upload {len(uploads) - successful_uploads} frames for video {video_id}")
     
     except Exception as e:
-        logger.error(f"Error processing batch for video {video_id}: {str(e)}")
+        logger.error(f"Error processing batch for video {video_id}: {str(e)}", exc_info=True)
 
 async def get_video_resolution(video_id: str) -> Tuple[int, int]:
     try:

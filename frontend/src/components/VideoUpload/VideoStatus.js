@@ -5,7 +5,6 @@ import api from '../../services/api';
 const VideoStatus = ({ videoId }) => {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [pollingCount, setPollingCount] = useState(0);
 
   const fetchStatus = useCallback(async () => {
@@ -13,20 +12,20 @@ const VideoStatus = ({ videoId }) => {
       const statusData = await api.getVideoStatus(videoId);
       setStatus(statusData);
       setLoading(false);
-      setError(null);
-
-      if (statusData.status === 'complete' || pollingCount > 60) {
+      // setError(null);  // Uncomment if you decide to use error state
+  
+      if (statusData.status === 'complete' || statusData.status === 'error') {
         return true; // Signal to stop polling
       }
       setPollingCount(prev => prev + 1);
     } catch (error) {
       console.error('Error fetching video status:', error);
-      setError('Failed to fetch status. Please try again.');
+      // setError('Failed to fetch status. Please try again.');  // Uncomment if you decide to use error state
       setLoading(false);
       return true; // Signal to stop polling on error
     }
     return false; // Continue polling
-  }, [videoId, pollingCount]);
+  }, [videoId]);
 
   useEffect(() => {
     let intervalId;
@@ -53,10 +52,10 @@ const VideoStatus = ({ videoId }) => {
     return <CircularProgress />;
   }
 
-  if (error) {
+  if (status?.status === 'error') {
     return (
       <Paper sx={{ p: 2, mt: 2 }}>
-        <Typography color="error">{error}</Typography>
+        <Typography color="error">Error: {status.error || 'An unknown error occurred'}</Typography>
         <Button onClick={handleRefresh} sx={{ mt: 1 }}>Retry</Button>
       </Paper>
     );
