@@ -256,7 +256,7 @@ async def cancel_upload(video_id: str):
 @app.get("/video/processed-videos")
 async def get_processed_videos():
     logger.info("Received request for processed videos")
-    completed_videos_key = 'completed_videos.json'
+    completed_videos_key = '_completed_videos.json'
     
     try:
         # Get the list of completed video IDs
@@ -659,7 +659,7 @@ async def get_brands_ocr_results(video_id: str):
 ## FUNCTIONS                                          ##
 ########################################################
 def update_completed_videos_list(video_id: str):
-    completed_videos_key = 'completed_videos.json'
+    completed_videos_key = '_completed_videos.json'
     
     try:
         # Try to get the existing list
