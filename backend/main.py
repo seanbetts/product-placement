@@ -19,6 +19,7 @@ from fastapi import FastAPI, File, UploadFile, BackgroundTasks, HTTPException, F
 from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from botocore.exceptions import ClientError
+from botocore.config import Config
 from dotenv import load_dotenv
 from PIL import Image
 from io import BytesIO
@@ -57,21 +58,18 @@ AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
 AWS_DEFAULT_REGION = os.getenv('AWS_DEFAULT_REGION')
 PROCESSING_BUCKET = os.getenv('PROCESSING_BUCKET')
 
-# Configure retry strategy
-retry_config = Config(
-    retries={
-        'max_attempts': 10,
-        'mode': 'adaptive'
-    }
+# Initialize S3 client
+s3_config = Config(
+    retries={'max_attempts': 10, 'mode': 'adaptive'},
+    max_pool_connections=50  # Increase this value
 )
 
-# Initialize S3 client
 s3_client = boto3.client(
     's3',
     aws_access_key_id=AWS_ACCESS_KEY_ID,
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
     region_name=AWS_DEFAULT_REGION,
-    config=retry_config
+    config=s3_config
 )
 
 class StatusTracker:
@@ -736,26 +734,25 @@ async def process_video(video_id: str):
         video_task = asyncio.create_task(process_video_frames(temp_video_path, video_id, s3_client, status_tracker))
         audio_task = asyncio.create_task(extract_audio(temp_video_path, video_id, s3_client, status_tracker))
 
-        # Wait for both tasks to complete
+        # Wait for video and audio tasks to complete
         video_stats, audio_stats = await asyncio.gather(video_task, audio_task)
 
         if status_tracker.status.get("error"):
             logger.error(f"Error encountered during video/audio processing: {status_tracker.status['error']}")
             return
 
-        # Start transcription only after audio extraction is complete
-        # transcription_start_time = time.time()
+        # Start OCR processing after video frames are available
+        ocr_task = asyncio.create_task(process_ocr(video_id, status_tracker, s3_client))
+
+        # Start transcription after audio extraction is complete
         transcription_stats = await transcribe_audio(video_id, s3_client, float(video_stats['video_length'].split()[0]), status_tracker)
         
         if status_tracker.status.get("error"):
             logger.error(f"Error encountered during transcription: {status_tracker.status['error']}")
             return
 
-        # transcription_processing_time = time.time() - transcription_start_time
-
-        # Start OCR processing
-        ocr_start_time = time.time()
-        ocr_stats = await process_ocr(video_id, status_tracker, s3_client)
+        # Wait for OCR processing to complete
+        ocr_stats = await ocr_task
 
         if status_tracker.status.get("error"):
             logger.error(f"Error encountered during OCR processing: {status_tracker.status['error']}")
@@ -764,8 +761,6 @@ async def process_video(video_id: str):
         # Post-process OCR results
         video_resolution = await get_video_resolution(video_id)
         brand_results = await post_process_ocr(video_id, video_stats['video_fps'], video_resolution, s3_client)
-
-        # ocr_processing_time = time.time() - ocr_start_time
 
         # Wait for all processes to complete
         await status_tracker.wait_for_completion()
@@ -779,31 +774,10 @@ async def process_video(video_id: str):
         processing_stats = {
             "video_id": video_id,
             "video_length": video_stats['video_length'],
-            "video": {
-                "total_frames": video_stats['total_frames'],
-                "extracted_frames": video_stats['extracted_frames'],
-                "video_fps": video_stats['video_fps'],
-                "video_processing_time": f"{video_stats['video_processing_time']:.2f} seconds",
-                "video_processing_fps": f"{video_stats['video_processing_fps']:.2f}",
-                "video_processing_speed": f"{video_stats['video_processing_speed']:.1f}% of real-time",
-            },
-            "audio": {
-                "audio_length": audio_stats['audio_length'],
-                "audio_processing_time": f"{audio_stats['audio_processing_time']:.2f} seconds",
-                "audio_processing_speed": f"{audio_stats['audio_processing_speed']:.1f}% of real-time",
-            },
-            "transcription": {
-                "transcription_processing_time": f"{transcription_stats['transcription_time']:.2f} seconds",
-                "word_count": transcription_stats['word_count'],
-                "confidence": f"{transcription_stats['overall_confidence']:.1f}%",
-                "transcription_speed": f"{transcription_stats['transcription_speed']:.1f}% of real-time"
-            },
-            "ocr": {
-                "ocr_processing_time": ocr_stats['ocr_processing_time'],
-                "frames_processed": ocr_stats['frames_processed'],
-                "frames_with_text": ocr_stats['frames_with_text'],
-                "total_words_detected": ocr_stats['total_words_detected']
-            },
+            "video": video_stats,
+            "audio": audio_stats,
+            "transcription": transcription_stats,
+            "ocr": ocr_stats,
             "total_processing_start_time": datetime.datetime.fromtimestamp(total_start_time).isoformat(),
             "total_processing_end_time": datetime.datetime.fromtimestamp(total_end_time).isoformat(),
             "total_processing_time": f"{total_processing_time:.2f} seconds",
