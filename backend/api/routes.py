@@ -1,12 +1,14 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from api.endpoints import audio, download, frames, management, ocr, status, videos
+from core.auth import get_api_key
 
 router = APIRouter()
 
-router.include_router(audio.router, tags=["audio"])
-router.include_router(download.router, tags=["download"])
-router.include_router(frames.router, tags=["frames"])
-router.include_router(management.router, tags=["management"])
-router.include_router(ocr.router, tags=["ocr"])
-router.include_router(status.router, tags=["status"])
-router.include_router(videos.router, tags=["upload"])
+# Apply the API key dependency to all routes
+router.include_router(audio.router, tags=["audio"], dependencies=[Depends(get_api_key)])
+router.include_router(download.router, tags=["download"], dependencies=[Depends(get_api_key)])
+router.include_router(frames.router, tags=["frames"], dependencies=[Depends(get_api_key)])
+router.include_router(management.router, tags=["management"], dependencies=[Depends(get_api_key)])
+router.include_router(ocr.router, tags=["ocr"], dependencies=[Depends(get_api_key)])
+router.include_router(status.router, tags=["status"], dependencies=[Depends(get_api_key)])
+router.include_router(videos.router, tags=["upload"], dependencies=[Depends(get_api_key)])

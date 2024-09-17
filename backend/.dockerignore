@@ -51,7 +51,6 @@ Thumbs.db
 *.mov
 *.flv
 *.wmv
-data/
 logs/
 *.sqlite
 
