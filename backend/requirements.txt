@@ -17,3 +17,4 @@ boto3
 amazon-transcribe
 pydantic
 pydantic_settings
+moviepy

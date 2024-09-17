@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from api.endpoints import audio, download, frames, management, ocr, status, upload
+from api.endpoints import audio, download, frames, management, ocr, status, videos
 
 router = APIRouter()
 
@@ -9,4 +9,4 @@ router.include_router(frames.router, tags=["frames"])
 router.include_router(management.router, tags=["management"])
 router.include_router(ocr.router, tags=["ocr"])
 router.include_router(status.router, tags=["status"])
-router.include_router(upload.router, tags=["upload"])
+router.include_router(videos.router, tags=["upload"])

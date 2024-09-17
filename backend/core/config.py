@@ -1,8 +1,12 @@
-import json
-from typing import List, Dict, Optional
-from pydantic_settings import BaseSettings
-from pydantic import FilePath, field_validator
 import os
+import json
+from pathlib import Path
+from typing import List, Dict, Any
+from pydantic_settings import BaseSettings
+from pydantic import Field, field_validator
+
+# Get the absolute path to the project root directory
+PROJECT_ROOT = Path(__file__).parent.parent.absolute()
 
 class Settings(BaseSettings):
     ## Project Settings
@@ -31,7 +35,7 @@ class Settings(BaseSettings):
 
     ## OCR Settings
     MIN_BRAND_TIME: int = 1  # minimum number of seconds a brand needs to appear
-    BRAND_DATABASE_FILE: Optional[FilePath] = None
+    BRAND_DATABASE_FILE: Path = Field(default="data/brand_database.json")
     BRAND_DATABASE: Dict[str, Dict] = {}
     HIGH_CONFIDENCE_THRESHOLD: int = 90    # Minimum score for high-confidence detections
     LOW_CONFIDENCE_THRESHOLD: int = 80     # Minimum score for low-confidence detections
@@ -43,34 +47,38 @@ class Settings(BaseSettings):
     MIN_TEXT_HEIGHT: int = 5               # Minimum text height as percentage of video height
     INTERPOLATION_CONFIDENCE: int = 70     # Confidence score for interpolated brand appearances
 
-    @field_validator('BRAND_DATABASE_FILE', mode='before')
+    @field_validator("BRAND_DATABASE_FILE", mode="before")
+    @classmethod
     def validate_brand_database_file(cls, v):
-        if v is None:
-            return v
-        if os.path.isfile(v):
-            return v
-        raise ValueError(f"Brand database file not found: {v}")
+        if isinstance(v, str):
+            v = Path(v)
+        if not v.is_absolute():
+            v = PROJECT_ROOT / v
+        return v
 
-    class Config:
-        env_file = ".env"
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.load_brand_database()
-
-    def load_brand_database(self):
-        if self.BRAND_DATABASE_FILE:
-            try:
-                with open(self.BRAND_DATABASE_FILE, 'r') as f:
-                    self.BRAND_DATABASE = json.load(f)
-            except json.JSONDecodeError:
-                print(f"Error decoding JSON from file: {self.BRAND_DATABASE_FILE}")
-                self.BRAND_DATABASE = {}
-        else:
-            print("No brand database file specified. Using empty dictionary.")
+    def load_brand_database(self):        
+        try:
+            with self.BRAND_DATABASE_FILE.open('r') as f:
+                self.BRAND_DATABASE = json.load(f)
+        except FileNotFoundError:
+            print(f"Brand database file not found: {self.BRAND_DATABASE_FILE}")
+            self.BRAND_DATABASE = {}
+        except json.JSONDecodeError:
+            print(f"Error decoding JSON from file: {self.BRAND_DATABASE_FILE}")
+            self.BRAND_DATABASE = {}
+        except Exception as e:
+            print(f"Unexpected error loading brand database: {str(e)}")
             self.BRAND_DATABASE = {}
 
-    def refresh_brand_database(self):
+    def model_post_init(self, __context: Any) -> None:
         self.load_brand_database()
 
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
+
+# Add these lines at the end of config.py
 settings = Settings()
+print(f"Brand database loaded with {len(settings.BRAND_DATABASE)} brands.")
