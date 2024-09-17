@@ -24,7 +24,7 @@ def process_video_frames(video_id: str):
         # Process each frame
         for frame_data in ocr_results:
             frame_number = frame_data['frame_number']
-            original_frame_key = f"{video_id}/frames/frame_{frame_number:04d}.jpg"
+            original_frame_key = f"{video_id}/frames/{frame_number:06d}.jpg"
             
             # Download the original frame
             frame_obj = s3_client.get_object(Bucket=settings.PROCESSING_BUCKET, Key=original_frame_key)
@@ -43,7 +43,7 @@ def process_video_frames(video_id: str):
             with open(processed_frame_path, 'rb') as f:
                 s3_client.put_object(
                     Bucket=settings.PROCESSING_BUCKET,
-                    Key=f"{video_id}/processed_frames/processed_frame_{frame_number:04d}.jpg",
+                    Key=f"{video_id}/processed_frames/processed_frame_{frame_number:06d}.jpg",
                     Body=f
                 )
         
