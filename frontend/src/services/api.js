@@ -2,6 +2,15 @@ import axios from 'axios'
 import { handleApiError } from '../utils/errorHandling';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+const API_KEY = process.env.REACT_APP_API_KEY;
+
+// Create an axios instance with default headers
+const axiosInstance = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'X-API-Key': API_KEY
+  }
+});
 
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
 
@@ -25,7 +34,7 @@ const api = {
     for (let chunkNumber = 1; chunkNumber <= totalChunks; chunkNumber++) {
         if (cancelSignal.isCancelled) {
             if (videoId) {
-                await axios.post(`${API_BASE_URL}/video/cancel-upload/${videoId}`);
+                await axiosInstance.post(`${API_BASE_URL}/video/cancel-upload/${videoId}`);
             }
             throw new Error('Upload cancelled');
         }
@@ -40,7 +49,7 @@ const api = {
         if (videoId) formData.append('video_id', videoId);
 
         try {
-            const response = await axios.post(`${API_BASE_URL}/video/upload`, formData, {
+            const response = await axiosInstance.post(`${API_BASE_URL}/video/upload`, formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
                 onUploadProgress: (progressEvent) => {
                     const percentCompleted = Math.round(
@@ -57,7 +66,7 @@ const api = {
             }
         } catch (error) {
             if (videoId) {
-                await axios.post(`${API_BASE_URL}/video/cancel-upload/${videoId}`);
+                await axiosInstance.post(`${API_BASE_URL}/video/cancel-upload/${videoId}`);
             }
             throw error;
         }
@@ -80,7 +89,7 @@ const api = {
     }
 
     try {
-      const response = await axios.get(`${API_BASE_URL}/video/processed-videos`);
+      const response = await axiosInstance.get(`${API_BASE_URL}/video/processed-videos`);
       const data = Array.isArray(response.data) ? response.data : [];
       localStorage.setItem(cacheKey, JSON.stringify(data));
       localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
@@ -92,7 +101,7 @@ const api = {
 
   getVideoStatus: async (videoId) => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/${videoId}/video/status`);
+      const response = await axiosInstance.get(`${API_BASE_URL}/${videoId}/video/status`);
       invalidateCache([`processingStats_${videoId}`, `videoDetails_${videoId}`]);
       return response.data;
     } catch (error) {
@@ -110,7 +119,7 @@ const api = {
     }
   
     try {
-      const response = await axios.get(`${API_BASE_URL}/${videoId}/video/processing-stats`);
+      const response = await axiosInstance.get(`${API_BASE_URL}/${videoId}/video/processing-stats`);
       localStorage.setItem(cacheKey, JSON.stringify(response.data));
       localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
       return response.data;
@@ -121,7 +130,7 @@ const api = {
 
   updateVideoName: async (videoId, newName) => {
     try {
-      const response = await axios.post(`${API_BASE_URL}/${videoId}/video/update-name`, { name: newName });
+      const response = await axiosInstance.post(`${API_BASE_URL}/${videoId}/video/update-name`, { name: newName });
       invalidateCache([
         `videoDetails_${videoId}`,
         'processedVideos',
@@ -143,7 +152,7 @@ const api = {
     }
   
     try {
-      const response = await axios.get(`${API_BASE_URL}/${videoId}/images/first-frame`, {
+      const response = await axiosInstance.get(`${API_BASE_URL}/${videoId}/images/first-frame`, {
         responseType: 'arraybuffer',
         timeout: 10000 // 10 seconds timeout
       });
@@ -173,7 +182,7 @@ const api = {
     }
   
     try {
-      const response = await axios.get(`${API_BASE_URL}/${videoId}/images/all-frames`);
+      const response = await axiosInstance.get(`${API_BASE_URL}/${videoId}/images/all-frames`);
       localStorage.setItem(cacheKey, JSON.stringify(response.data));
       localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
       return response.data;
@@ -192,7 +201,7 @@ const api = {
     }
   
     try {
-      const response = await axios.get(`${API_BASE_URL}/${videoId}/transcript`);
+      const response = await axiosInstance.get(`${API_BASE_URL}/${videoId}/transcript`);
       localStorage.setItem(cacheKey, JSON.stringify(response.data));
       localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
       return response.data;
@@ -203,7 +212,7 @@ const api = {
 
   downloadFile: async (videoId, fileType) => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/${videoId}/files/download/${fileType}`, {
+      const response = await axiosInstance.get(`${API_BASE_URL}/${videoId}/files/download/${fileType}`, {
         responseType: 'blob',
       });
       return response.data;
@@ -222,7 +231,7 @@ const api = {
     }
   
     try {
-      const response = await axios.get(`${API_BASE_URL}/${videoId}/ocr/wordcloud`, {
+      const response = await axiosInstance.get(`${API_BASE_URL}/${videoId}/ocr/wordcloud`, {
         responseType: 'arraybuffer'
       });
       
@@ -253,7 +262,7 @@ const api = {
     }
   
     try {
-      const response = await axios.get(`${API_BASE_URL}/${videoId}/ocr/brands-ocr-table`);
+      const response = await axiosInstance.get(`${API_BASE_URL}/${videoId}/ocr/brands-ocr-table`);
       localStorage.setItem(cacheKey, JSON.stringify(response.data));
       localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
       return response.data;
