@@ -16,6 +16,9 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
+# Ensure /tmp has correct permissions
+RUN mkdir -p /tmp && chmod 777 /tmp
+
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --upgrade pip && \
@@ -30,6 +33,7 @@ FROM --platform=linux/arm64 python:3.11-slim
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app
+ENV TEMP=/app/temp
 
 WORKDIR /app
 
@@ -48,7 +52,12 @@ RUN apt-get update && apt-get install -y \
 COPY --from=builder /usr/local /usr/local
 COPY --from=builder /app /app
 
+# Create a dedicated temp directory and set permissions
+RUN mkdir -p /app/temp && chmod 777 /app/temp
+
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup --home /home/appuser appuser
+RUN chown -R appuser:appgroup /app/temp
+
 USER appuser
 
 EXPOSE 8080

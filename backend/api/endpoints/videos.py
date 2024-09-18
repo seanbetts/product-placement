@@ -54,7 +54,7 @@ async def cancel_video_upload(video_id):
 async def process_video_endpoint(video_id: str):
     logger.info(f"Received request to run post-processing on video {video_id}")
     try:
-        video_post_processing.process_video(video_id)
+        video_post_processing.process_video_frames(video_id)
         return {"message": f"Video post-processing initiated for video_id: {video_id}"}
     except Exception as e:
         logger.error(f"Error processing video {video_id}: {str(e)}", exc_info=True)

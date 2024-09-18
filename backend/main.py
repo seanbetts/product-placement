@@ -7,8 +7,6 @@ from core.middleware import add_middleware
 
 logger.info("Starting FastAPI server...")
 
-print(f"Main.py - Current working directory: {os.getcwd()}")
-
 # Set up FastAPI
 app = FastAPI(title=settings.PROJECT_NAME)
 

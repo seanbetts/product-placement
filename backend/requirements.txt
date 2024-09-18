@@ -18,3 +18,4 @@ amazon-transcribe
 pydantic
 pydantic_settings
 moviepy
+retry

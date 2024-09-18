@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     PORT: int = 8080  # Port for FastAPI endpoint
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000"]  # add frontend URL
     API_KEY: str
+    TEMP_DIR: str = Field(default="/app/temp")
 
     ## AWS env Settings
     AWS_ACCESS_KEY_ID: str
@@ -82,4 +83,3 @@ class Settings(BaseSettings):
 
 # Add these lines at the end of config.py
 settings = Settings()
-print(f"Brand database loaded with {len(settings.BRAND_DATABASE)} brands.")
