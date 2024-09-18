@@ -1,4 +1,3 @@
-import os
 import json
 from pathlib import Path
 from typing import List, Dict, Any
@@ -50,7 +49,6 @@ class Settings(BaseSettings):
     INTERPOLATION_CONFIDENCE: int = 70     # Confidence score for interpolated brand appearances
 
     # Video post-processing settings
-    MAX_WORKERS: int = 4
     SHOW_CONFIDENCE: bool = False
     ANNOTATION_STYLE: str = "box"
     TEXT_BG_OPACITY: float = 0.7
@@ -58,12 +56,12 @@ class Settings(BaseSettings):
 
     # FFmpeg settings
     VIDEO_CODEC: str = 'libx264'
-    VIDEO_PIXEL_FORMAT: str = 'yuv444p'
+    VIDEO_PIXEL_FORMAT: str = 'yuv420p'
     AUDIO_CODEC: str = 'aac'
     VIDEO_BITRATE: str = '5M'  # 5 Mbps
     AUDIO_BITRATE: str = '192k'  # 192 kbps
     VIDEO_PRESET: str = 'medium'  # Options: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
-    VIDEO_PROFILE: str = 'main'  # Options: baseline, main, high
+    VIDEO_PROFILE: str = 'high'  # Options: baseline, main, high
 
     @field_validator("BRAND_DATABASE_FILE", mode="before")
     @classmethod
