@@ -57,6 +57,6 @@ async def process_video_endpoint(video_id: str):
         video_post_processing.process_video(video_id)
         return {"message": f"Video post-processing initiated for video_id: {video_id}"}
     except Exception as e:
-        logger.error(f"Error processing video: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error running video post-processing")
+        logger.error(f"Error processing video {video_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error running video post-processing: {str(e)}")
 ########################################################

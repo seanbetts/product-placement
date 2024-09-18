@@ -23,48 +23,60 @@ def process_video_frames(video_id: str):
         
         # Process each frame
         for frame_data in ocr_results:
-            frame_number = frame_data['frame_number']
+            try:
+                frame_number = int(frame_data['frame_number'])  # Ensure frame_number is an integer
+            except (KeyError, ValueError) as e:
+                logger.error(f"Invalid frame number in OCR results for video {video_id}: {str(e)}")
+                continue
+            
             original_frame_key = f"{video_id}/frames/{frame_number:06d}.jpg"
             
             # Download the original frame
-            frame_obj = s3_client.get_object(Bucket=settings.PROCESSING_BUCKET, Key=original_frame_key)
-            frame_array = np.frombuffer(frame_obj['Body'].read(), np.uint8)
-            frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+            try:
+                frame_obj = s3_client.get_object(Bucket=settings.PROCESSING_BUCKET, Key=original_frame_key)
+                frame_array = np.frombuffer(frame_obj['Body'].read(), np.uint8)
+                frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+            except Exception as e:
+                logger.error(f"Error downloading frame {frame_number} for video {video_id}: {str(e)}")
+                continue
             
             # Annotate the frame if brands are detected
-            if frame_data['detected_brands']:
+            if frame_data.get('detected_brands'):
                 frame = annotate_frame(frame, frame_data['detected_brands'])
             
             # Save the processed frame locally
-            processed_frame_path = os.path.join(processed_frames_dir, f"processed_frame_{frame_number:04d}.jpg")
+            processed_frame_path = os.path.join(processed_frames_dir, f"processed_frame_{frame_number:06d}.jpg")
             cv2.imwrite(processed_frame_path, frame)
             
             # Upload the processed frame to S3
-            with open(processed_frame_path, 'rb') as f:
-                s3_client.put_object(
-                    Bucket=settings.PROCESSING_BUCKET,
-                    Key=f"{video_id}/processed_frames/processed_frame_{frame_number:06d}.jpg",
-                    Body=f
-                )
+            try:
+                with open(processed_frame_path, 'rb') as f:
+                    s3_client.put_object(
+                        Bucket=settings.PROCESSING_BUCKET,
+                        Key=f"{video_id}/processed_frames/processed_frame_{frame_number:06d}.jpg",
+                        Body=f
+                    )
+            except Exception as e:
+                logger.error(f"Error uploading processed frame {frame_number} for video {video_id}: {str(e)}")
         
         # Reconstruct video from processed frames
         reconstruct_video(video_id, temp_dir)
 
 def annotate_frame(frame: np.ndarray, detected_brands: List[Dict]) -> np.ndarray:
     for brand in detected_brands:
-        if 'bounding_box' in brand:
+        if 'bounding_box' in brand and 'vertices' in brand['bounding_box']:
             vertices = brand['bounding_box']['vertices']
-            text = brand['text']
-            confidence = brand['confidence']
+            text = str(brand.get('text', ''))
+            confidence = float(brand.get('confidence', 0.0))
             
-            # Draw bounding box
-            pts = np.array(vertices, np.int32)
+            # Ensure vertices are integers
+            pts = np.array([(int(v['x']), int(v['y'])) for v in vertices], np.int32)
             pts = pts.reshape((-1, 1, 2))
             cv2.polylines(frame, [pts], True, (0, 255, 0), 2)
             
             # Add text label
             label = f"{text} ({confidence:.2f})"
-            cv2.putText(frame, label, (vertices[0]['x'], vertices[0]['y'] - 10),
+            cv2.putText(frame, label, (int(vertices[0]['x']), int(vertices[0]['y']) - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
     
     return frame
@@ -123,5 +135,9 @@ def reconstruct_video(video_id: str, temp_dir: str):
 
 # Main function to process video
 def process_video(video_id: str):
-    process_video_frames(video_id)
-    print(f"Video processing completed for video_id: {video_id}")
+    try:
+        process_video_frames(video_id)
+        print(f"Video processing completed for video_id: {video_id}")
+    except Exception as e:
+        logger.error(f"Error in process_video for video_id {video_id}: {str(e)}", exc_info=True)
+        raise
