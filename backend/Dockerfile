@@ -53,20 +53,4 @@ USER appuser
 
 EXPOSE 8080
 
-# Add more logging and error checking
-CMD ["sh", "-c", "\
-    echo 'Starting container' && \
-    echo 'Python version:' && python --version && \
-    echo 'Pip version:' && pip --version && \
-    echo 'Installed packages:' && pip list && \
-    echo 'Current directory:' && pwd && \
-    echo 'Directory contents:' && ls -la && \
-    if command -v gunicorn &> /dev/null; then \
-        echo 'Gunicorn found, starting server' && \
-        gunicorn --bind :${PORT:-8080} --workers 1 --threads 8 --timeout 0 main:app -k uvicorn.workers.UvicornWorker --log-level debug --access-logfile - --error-logfile -; \
-    else \
-        echo 'Gunicorn not found in PATH' && \
-        echo 'PATH:' && echo $PATH && \
-        exit 1; \
-    fi \
-"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "0", "main:app", "-k", "uvicorn.workers.UvicornWorker", "--log-level", "info", "--access-logfile", "-", "--error-logfile", "-"]
