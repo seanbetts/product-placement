@@ -49,6 +49,22 @@ class Settings(BaseSettings):
     MIN_TEXT_HEIGHT: int = 5               # Minimum text height as percentage of video height
     INTERPOLATION_CONFIDENCE: int = 70     # Confidence score for interpolated brand appearances
 
+    # Video post-processing settings
+    MAX_WORKERS: int = 4
+    SHOW_CONFIDENCE: bool = False
+    ANNOTATION_STYLE: str = "box"
+    TEXT_BG_OPACITY: float = 0.7
+    ROUNDED_CORNERS: bool = True
+
+    # FFmpeg settings
+    VIDEO_CODEC: str = 'libx264'
+    VIDEO_PIXEL_FORMAT: str = 'yuv444p'
+    AUDIO_CODEC: str = 'aac'
+    VIDEO_BITRATE: str = '5M'  # 5 Mbps
+    AUDIO_BITRATE: str = '192k'  # 192 kbps
+    VIDEO_PRESET: str = 'medium'  # Options: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
+    VIDEO_PROFILE: str = 'main'  # Options: baseline, main, high
+
     @field_validator("BRAND_DATABASE_FILE", mode="before")
     @classmethod
     def validate_brand_database_file(cls, v):
