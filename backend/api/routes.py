@@ -1,8 +1,11 @@
 from fastapi import APIRouter, Depends
-from api.endpoints import audio, download, frames, management, ocr, status, videos
+from api.endpoints import audio, download, frames, health, management, ocr, status, videos
 from core.auth import get_api_key
 
 router = APIRouter()
+
+# Include the health check router without API key dependency
+router.include_router(health.router, tags=["health"])
 
 # Apply the API key dependency to all routes
 router.include_router(audio.router, tags=["audio"], dependencies=[Depends(get_api_key)])
