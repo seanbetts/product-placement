@@ -8,6 +8,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import PublishIcon from '@mui/icons-material/Publish';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
+import { styled, keyframes } from '@mui/material/styles';
 import api from '../../services/api';
 
 const VideoUpload = () => {
@@ -361,26 +362,65 @@ const handleCancel = async () => {
     </Box>
   );
 
+  // Create a rotation animation with pauses
+  const spinWithPauses = keyframes`
+    0% {
+      transform: rotate(0deg);
+    }
+    25% {
+      transform: rotate(180deg);
+    }
+    50% {
+      transform: rotate(180deg);
+    }
+    75% {
+      transform: rotate(360deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
+  `;
+
+  // Create a styled component for the spinning icon with pauses
+  const SpinningIcon = styled(HourglassEmptyIcon)(({ theme }) => ({
+    animation: `${spinWithPauses} 4s cubic-bezier(0.65, 0, 0.35, 1) infinite`,
+    color: theme.palette.action.active,
+  }));
+
   const renderProgressBar = (label, status, progress) => (
     <Box sx={{ mt: 2 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
         <Typography variant="body2">{label}</Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center' }}>
-          {status === 'complete' ? (
-            <CheckCircleOutlineIcon color="success" sx={{ mr: 1 }} />
-          ) : (
-            <HourglassEmptyIcon color="action" sx={{ mr: 1 }} />
-          )}
-          <Typography variant="body2" color="text.secondary">
+        <Box sx={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          width: '80px',  // Fixed width to accommodate icon and percentage
+          justifyContent: 'flex-end'  // Align contents to the right
+        }}>
+          <Box sx={{ 
+            width: '24px',  // Fixed width for the icon
+            display: 'flex', 
+            justifyContent: 'center',  // Center the icon horizontally
+            mr: 1  // Margin right to separate icon from text
+          }}>
+            {status === 'complete' ? (
+              <CheckCircleOutlineIcon color="success" />
+            ) : progress > 0 && progress < 100 ? (
+              <SpinningIcon />
+            ) : (
+              <HourglassEmptyIcon color="action" />
+            )}
+          </Box>
+          <Typography variant="body2" color="text.secondary" sx={{ width: '40px', textAlign: 'right' }}>
             {status === 'complete' ? '100%' : `${Math.round(progress || 0)}%`}
           </Typography>
         </Box>
       </Box>
-      <LinearProgress 
-        variant="determinate" 
-        value={status === 'complete' ? 100 : (progress || 0)} 
-        sx={{ 
-          height: 8, 
+      <LinearProgress
+        variant="determinate"
+        value={status === 'complete' ? 100 : (progress || 0)}
+        sx={{
+          height: 8,
           borderRadius: 4,
           backgroundColor: 'rgba(0, 0, 0, 0.1)',
           '& .MuiLinearProgress-bar': {
