@@ -19,3 +19,4 @@ pydantic
 pydantic_settings
 moviepy
 retry
+pillow

@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import subprocess
+from PIL import Image, ImageDraw, ImageFont
 from retry import retry
 from typing import List, Dict, Tuple
 from core.config import settings
@@ -45,7 +46,7 @@ def process_video_frames(video_id: str):
         logger.error(f"Error in process_video_frames for video {video_id}: {str(e)}", exc_info=True)
         raise
     finally:
-        logger.info(f"Completed video processing for video {video_id}")
+        logger.info(f"Completed video post-processing for video {video_id}")
 
 @retry(exceptions=(Exception,), tries=3, delay=1, backoff=2)
 def process_single_frame(video_id: str, frame_data: dict, s3_client, processed_frames_dir: str):
@@ -72,9 +73,7 @@ def process_single_frame(video_id: str, frame_data: dict, s3_client, processed_f
             frame, 
             frame_data['detected_brands'],
             show_confidence=settings.SHOW_CONFIDENCE,
-            annotation_style=settings.ANNOTATION_STYLE,
-            text_bg_opacity=settings.TEXT_BG_OPACITY,
-            rounded_corners=settings.ROUNDED_CORNERS
+            text_bg_opacity=settings.TEXT_BG_OPACITY
         )
     
     processed_frame_path = os.path.join(processed_frames_dir, f"processed_frame_{frame_number:06d}.jpg")
@@ -97,66 +96,65 @@ def annotate_frame(
     frame: np.ndarray,
     detected_brands: List[Dict],
     show_confidence: bool = True,
-    annotation_style: str = "box",
     text_bg_opacity: float = 0.7,
-    rounded_corners: bool = True
 ) -> np.ndarray:
     if not isinstance(frame, np.ndarray):
         raise ValueError("Frame must be a numpy array")
     
-    # Ensure the frame is in the correct format for OpenCV
-    if frame.dtype != np.uint8:
-        frame = (frame * 255).astype(np.uint8)
+    # Convert OpenCV BGR to RGB
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    pil_image = Image.fromarray(frame_rgb)
+    draw = ImageDraw.Draw(pil_image)
     
-    # Create a copy of the frame to avoid modifying the original
-    annotated_frame = frame.copy()
-
-    height, width = annotated_frame.shape[:2]
+    # Load a nicer font (you may need to adjust the path)
+    font_size = 20
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+    except IOError:
+        font = ImageFont.load_default()
 
     for brand in detected_brands:
-        try:
-            if 'bounding_box' not in brand or 'vertices' not in brand['bounding_box']:
-                continue
-
-            vertices = brand['bounding_box']['vertices']
-            text = str(brand.get('text', ''))
-            confidence = float(brand.get('confidence', 0.0))
-
-            pts = np.array([(int(v['x']), int(v['y'])) for v in vertices], np.int32)
-            x_min, y_min = pts.min(axis=0)
-            x_max, y_max = pts.max(axis=0)
-            
-            color = get_color_by_confidence(confidence)
-            
-            if annotation_style == "box":
-                draw_rectangle(annotated_frame, (x_min, y_min), (x_max, y_max), color, 2, rounded_corners)
-            elif annotation_style == "underline":
-                cv2.line(annotated_frame, (x_min, y_max), (x_max, y_max), color, 2)
-            
-            font_scale = min((x_max - x_min) / 200, 1.0)
-            label = f"{text}" + (f" ({confidence:.2f})" if show_confidence else "")
-            (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2)
-            text_x = max(x_min, 0)
-            text_y = max(y_min - 10, text_height + 10) if y_min > text_height + 10 else min(y_max + text_height + 10, height - 10)
-            
-            # Ensure the background rectangle stays within the frame
-            bg_top = max(text_y - text_height - 5, 0)
-            bg_bottom = min(text_y + 5, height)
-            bg_left = max(text_x, 0)
-            bg_right = min(text_x + text_width + 10, width)
-            
-            bg_rect = annotated_frame[bg_top:bg_bottom, bg_left:bg_right]
-            overlay = bg_rect.copy()
-            cv2.rectangle(overlay, (0, 0), (bg_right - bg_left, bg_bottom - bg_top), color, -1)
-            cv2.addWeighted(overlay, text_bg_opacity, bg_rect, 1 - text_bg_opacity, 0, bg_rect)
-            annotated_frame[bg_top:bg_bottom, bg_left:bg_right] = bg_rect
-            
-            cv2.putText(annotated_frame, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 2)
-        except Exception as e:
-            logger.error(f"Error annotating brand: {str(e)}")
+        if 'bounding_box' not in brand or 'vertices' not in brand['bounding_box']:
             continue
 
-    return annotated_frame
+        vertices = brand['bounding_box']['vertices']
+        text = str(brand.get('text', '')).upper()  # Capitalize the brand name
+        confidence = float(brand.get('confidence', 0.0))
+
+        pts = np.array([(int(v['x']), int(v['y'])) for v in vertices], np.int32)
+        x_min, y_min = pts.min(axis=0)
+        x_max, y_max = pts.max(axis=0)
+        
+        color = get_color_by_confidence(confidence)
+        
+        # Draw bounding box
+        draw.rectangle([x_min, y_min, x_max, y_max], outline=color, width=2)
+
+        # Prepare label
+        label = f"{text}" + (f" ({confidence:.2f})" if show_confidence else "")
+        label_size = draw.textbbox((0, 0), label, font=font)
+        label_width = label_size[2] - label_size[0]
+        label_height = label_size[3] - label_size[1]
+
+        # Position label box
+        label_x = x_min
+        label_y = y_min - label_height if y_min > label_height else y_max
+
+        # Draw label background
+        label_bg = Image.new('RGBA', pil_image.size, (0, 0, 0, 0))
+        label_bg_draw = ImageDraw.Draw(label_bg)
+        label_bg_draw.rectangle((label_x, label_y, label_x + label_width, label_y + label_height), 
+                                fill=(color[0], color[1], color[2], int(255 * text_bg_opacity)))
+        pil_image = Image.alpha_composite(pil_image.convert('RGBA'), label_bg)
+        draw = ImageDraw.Draw(pil_image)
+
+        # Draw text
+        text_x = label_x + (label_width - label_size[2]) // 2
+        text_y = label_y + (label_height - label_size[3]) // 2
+        draw.text((text_x, text_y), label, font=font, fill=(255, 255, 255))
+
+    # Convert back to OpenCV format
+    return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
 
 def reconstruct_video(video_id: str, temp_dir: str):
     logger.info(f"Starting video reconstruction for video {video_id}")
@@ -173,7 +171,7 @@ def reconstruct_video(video_id: str, temp_dir: str):
             stats_obj = s3_client.get_object(Bucket=settings.PROCESSING_BUCKET, Key=f'{video_id}/processing_stats.json')
             stats = json.loads(stats_obj['Body'].read().decode('utf-8'))
             original_fps = stats['video']['video_fps']
-            logger.info(f"Original video frame rate: {original_fps} fps")
+            # logger.info(f"Original video frame rate: {original_fps} fps")
         except Exception as e:
             logger.error(f"Error fetching processing stats for video {video_id}: {str(e)}")
             original_fps = 30  # Fallback to 30 fps if we can't get the original
@@ -188,13 +186,13 @@ def reconstruct_video(video_id: str, temp_dir: str):
             '-preset', settings.VIDEO_PRESET,
             '-profile:v', settings.VIDEO_PROFILE,
             '-b:v', settings.VIDEO_BITRATE,
-            '-pix_fmt', 'yuv420p',  # Changed from yuv444p to yuv420p
+            '-pix_fmt', settings.VIDEO_PIXEL_FORMAT,
             output_video_path
         ]
         
         # Run FFmpeg command and capture output
         result = subprocess.run(ffmpeg_command, check=True, capture_output=True, text=True)
-        logger.info(f"FFmpeg output: {result.stdout}")
+        # logger.info(f"FFmpeg output: {result.stdout}")
         
         s3_client.download_file(settings.PROCESSING_BUCKET, f"{video_id}/audio.mp3", audio_path)
         
@@ -210,7 +208,7 @@ def reconstruct_video(video_id: str, temp_dir: str):
         
         # Run FFmpeg command to combine video and audio
         result = subprocess.run(combine_command, check=True, capture_output=True, text=True)
-        logger.info(f"FFmpeg combine output: {result.stdout}")
+        # logger.info(f"FFmpeg combine output: {result.stdout}")
         
         s3_client.upload_file(final_output_path, settings.PROCESSING_BUCKET, f"{video_id}/processed_video.mp4")
         
@@ -232,15 +230,6 @@ def reconstruct_video(video_id: str, temp_dir: str):
                 logger.warning(f"Error removing temporary file {file_path}: {str(e)}")
         logger.info(f"Completed video reconstruction for video {video_id}")
 
-@retry(exceptions=(IOError, subprocess.CalledProcessError), tries=3, delay=1, backoff=2)
-def write_video_with_retry(video_clip, output_path, codec='libx264', audio_codec='aac'):
-    temp_audio_path = tempfile.mktemp(suffix=".aac", dir=TEMP_DIR)
-    try:
-        video_clip.write_videofile(output_path, codec=codec, audio_codec=audio_codec, temp_audiofile=temp_audio_path)
-    finally:
-        if os.path.exists(temp_audio_path):
-            os.remove(temp_audio_path)
-
 def get_color_by_confidence(confidence: float) -> Tuple[int, int, int]:
     if confidence > 0.8:
         return (0, 255, 0)  # Green for high confidence
@@ -248,19 +237,3 @@ def get_color_by_confidence(confidence: float) -> Tuple[int, int, int]:
         return (0, 255, 255)  # Yellow for medium confidence
     else:
         return (0, 0, 255)  # Red for low confidence
-
-def draw_rectangle(img: np.ndarray, pt1: Tuple[int, int], pt2: Tuple[int, int], color: Tuple[int, int, int], thickness: int, rounded: bool = True) -> None:
-    try:
-        if rounded:
-            # Simplified rounded rectangle
-            radius = min(10, (pt2[0] - pt1[0]) // 4, (pt2[1] - pt1[1]) // 4)
-            cv2.line(img, (pt1[0] + radius, pt1[1]), (pt2[0] - radius, pt1[1]), color, thickness)
-            cv2.line(img, (pt1[0] + radius, pt2[1]), (pt2[0] - radius, pt2[1]), color, thickness)
-            cv2.line(img, (pt1[0], pt1[1] + radius), (pt1[0], pt2[1] - radius), color, thickness)
-            cv2.line(img, (pt2[0], pt1[1] + radius), (pt2[0], pt2[1] - radius), color, thickness)
-        else:
-            cv2.rectangle(img, pt1, pt2, color, thickness)
-    except Exception as e:
-        logger.error(f"Error in draw_rectangle: {str(e)}")
-        # Fallback to simple rectangle if rounded rectangle fails
-        cv2.rectangle(img, pt1, pt2, color, thickness)

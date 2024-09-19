@@ -50,18 +50,16 @@ class Settings(BaseSettings):
 
     # Video post-processing settings
     SHOW_CONFIDENCE: bool = False
-    ANNOTATION_STYLE: str = "box"
     TEXT_BG_OPACITY: float = 0.7
-    ROUNDED_CORNERS: bool = True
 
     # FFmpeg settings
     VIDEO_CODEC: str = 'libx264'
-    VIDEO_PIXEL_FORMAT: str = 'yuv420p'
-    AUDIO_CODEC: str = 'aac'
-    VIDEO_BITRATE: str = '5M'  # 5 Mbps
-    AUDIO_BITRATE: str = '192k'  # 192 kbps
     VIDEO_PRESET: str = 'medium'  # Options: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
     VIDEO_PROFILE: str = 'high'  # Options: baseline, main, high
+    VIDEO_BITRATE: str = '5M'  # 5 Mbps
+    VIDEO_PIXEL_FORMAT: str = 'yuv420p'
+    AUDIO_CODEC: str = 'aac'
+    AUDIO_BITRATE: str = '192k'  # 192 kbps
 
     @field_validator("BRAND_DATABASE_FILE", mode="before")
     @classmethod
