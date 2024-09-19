@@ -13,9 +13,10 @@ from core.aws import get_s3_client
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 TEMP_DIR = settings.TEMP_DIR
+SMOOTHING_WINDOW = settings.SMOOTHING_WINDOW
 
 def process_video_frames(video_id: str):
-    logger.info(f"Starting post-processing for video {video_id}")
+    # logger.info(f"Starting post-processing for video {video_id}")
     s3_client = get_s3_client()
     
     try:
@@ -36,7 +37,6 @@ def process_video_frames(video_id: str):
                 for i, future in enumerate(as_completed(futures), 1):
                     try:
                         future.result()
-                        # logger.info(f"Processed {i}/{total_frames} frames for video {video_id}")
                     except Exception as e:
                         logger.error(f"Error processing frame for video {video_id}: {str(e)}")
             
@@ -56,8 +56,6 @@ def process_single_frame(video_id: str, frame_data: dict, s3_client, processed_f
         logger.error(f"Invalid frame number in OCR results for video {video_id}: {str(e)}")
         return
     
-    # logger.info(f"Processing frame {frame_number} for video {video_id}")
-    
     original_frame_key = f"{video_id}/frames/{frame_number:06d}.jpg"
     
     try:
@@ -68,13 +66,13 @@ def process_single_frame(video_id: str, frame_data: dict, s3_client, processed_f
         logger.error(f"Error downloading frame {frame_number} for video {video_id}: {str(e)}")
         raise
     
-    if frame_data.get('detected_brands'):
-        frame = annotate_frame(
-            frame, 
-            frame_data['detected_brands'],
-            show_confidence=settings.SHOW_CONFIDENCE,
-            text_bg_opacity=settings.TEXT_BG_OPACITY
-        )
+    # Always annotate the frame, even if there are no detected brands
+    frame = annotate_frame(
+        frame, 
+        frame_data.get('detected_brands', []),
+        show_confidence=settings.SHOW_CONFIDENCE,
+        text_bg_opacity=settings.TEXT_BG_OPACITY
+    )
     
     processed_frame_path = os.path.join(processed_frames_dir, f"processed_frame_{frame_number:06d}.jpg")
     cv2.imwrite(processed_frame_path, frame)
@@ -115,7 +113,7 @@ def annotate_frame(
 
     for brand in detected_brands:
         if 'bounding_box' not in brand or 'vertices' not in brand['bounding_box']:
-            continue
+            continue  # Skip brands without bounding boxes
 
         vertices = brand['bounding_box']['vertices']
         text = str(brand.get('text', '')).upper()  # Capitalize the brand name
@@ -225,15 +223,25 @@ def reconstruct_video(video_id: str, temp_dir: str):
             try:
                 if os.path.exists(file_path):
                     os.remove(file_path)
-                    logger.info(f"Removed temporary file: {file_path}")
+                    # logger.info(f"Removed temporary file: {file_path}")
             except Exception as e:
                 logger.warning(f"Error removing temporary file {file_path}: {str(e)}")
         logger.info(f"Completed video reconstruction for video {video_id}")
 
 def get_color_by_confidence(confidence: float) -> Tuple[int, int, int]:
-    if confidence > 0.8:
-        return (0, 255, 0)  # Green for high confidence
-    elif confidence > 0.5:
-        return (0, 255, 255)  # Yellow for medium confidence
+    # Ensure confidence is between 0 and 1
+    confidence = max(0, min(1, confidence))
+    
+    # Define color ranges
+    if confidence < 0.5:
+        # Red (255, 0, 0) to Yellow (255, 255, 0)
+        r = 255
+        g = int(255 * (confidence * 2))
+        b = 0
     else:
-        return (0, 0, 255)  # Red for low confidence
+        # Yellow (255, 255, 0) to Green (0, 255, 0)
+        r = int(255 * ((1 - confidence) * 2))
+        g = 255
+        b = 0
+    
+    return (r, g, b)

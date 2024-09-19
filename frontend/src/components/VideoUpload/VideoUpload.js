@@ -437,7 +437,7 @@ const handleCancel = async () => {
       {renderProgressBar('Total Progress', processingProgress.total?.status, processingProgress.total?.progress)}
       {renderProgressBar('Video Processing', processingProgress.video_processing?.status, processingProgress.video_processing?.progress)}
       {renderProgressBar('Audio Processing', processingProgress.audio_extraction?.status, processingProgress.audio_extraction?.progress)}
-      {renderProgressBar('Transcription', processingProgress.transcription?.status, processingProgress.transcription?.progress)}
+      {renderProgressBar('Transcript Processing', processingProgress.transcription?.status, processingProgress.transcription?.progress)}
       {renderProgressBar('Text Processing', processingProgress.ocr?.status, processingProgress.ocr?.progress)}
     </Box>
   );

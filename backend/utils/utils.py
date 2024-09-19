@@ -139,17 +139,23 @@ def create_word_cloud(s3_client, video_id: str, cleaned_results: List[Dict]):
     """
     # Use the 'Agg' backend which doesn't require a GUI
     matplotlib.use('Agg')
-
+    
     # Extract all text annotations
     all_text = []
     for frame in cleaned_results:
-        for annotation in frame['cleaned_annotations']:
-            # Use the cleaned_text instead of text to avoid brand names dominating the cloud
-            all_text.append(annotation['cleaned_text'].lower())
+        for detection in frame['cleaned_detections']:
+            # Use cleaned_text if available, otherwise fall back to text
+            text = detection.get('cleaned_text', detection.get('text', '')).lower()
+            if text:
+                all_text.append(text)
+    
+    if not all_text:
+        logger.warning(f"No text found for word cloud creation for video: {video_id}")
+        return
 
     # Count word frequencies
     word_freq = Counter(all_text)
-
+    
     # Create a mask image (circle shape)
     x, y = np.ogrid[:300, :300]
     mask = (x - 150) ** 2 + (y - 150) ** 2 > 130 ** 2
@@ -166,31 +172,30 @@ def create_word_cloud(s3_client, video_id: str, cleaned_results: List[Dict]):
     if not font_path:
         logger.warning("No preferred font found. Using default.")
 
-    # Generate word cloud
-    wordcloud = WordCloud(width=600, height=600,
-                          background_color='white',
-                          max_words=100,  # Limit to top 100 words for clarity
-                          min_font_size=10,
-                          max_font_size=120,
-                          mask=mask,
-                          font_path=font_path,
-                          colormap='ocean',  # Use a colorful colormap
-                          prefer_horizontal=0.9,
-                          scale=2
-                         ).generate_from_frequencies(word_freq)
-
-    # Create a figure and save it to a BytesIO object
-    plt.figure(figsize=(10,10), frameon=False)
-    plt.imshow(wordcloud, interpolation='bilinear')
-    plt.axis("off")
-    plt.tight_layout(pad=0)
-
-    img_buffer = io.BytesIO()
-    plt.savefig(img_buffer, format='jpg', dpi=300, bbox_inches='tight', pad_inches=0)
-    img_buffer.seek(0)
-
-    # Upload to S3
     try:
+        # Generate word cloud
+        wordcloud = WordCloud(width=600, height=600,
+                              background_color='white',
+                              max_words=100,  # Limit to top 100 words for clarity
+                              min_font_size=10,
+                              max_font_size=120,
+                              mask=mask,
+                              font_path=font_path,
+                              colormap='ocean',  # Use a colorful colormap
+                              prefer_horizontal=0.9,
+                              scale=2
+                              ).generate_from_frequencies(word_freq)
+
+        # Create a figure and save it to a BytesIO object
+        plt.figure(figsize=(10,10), frameon=False)
+        plt.imshow(wordcloud, interpolation='bilinear')
+        plt.axis("off")
+        plt.tight_layout(pad=0)
+        img_buffer = io.BytesIO()
+        plt.savefig(img_buffer, format='jpg', dpi=300, bbox_inches='tight', pad_inches=0)
+        img_buffer.seek(0)
+
+        # Upload to S3
         s3_client.put_object(
             Bucket=settings.PROCESSING_BUCKET,
             Key=f'{video_id}/ocr/wordcloud.jpg',
@@ -198,11 +203,11 @@ def create_word_cloud(s3_client, video_id: str, cleaned_results: List[Dict]):
             ContentType='image/jpeg'
         )
         logger.info(f"Word cloud created and saved for video: {video_id}")
-    except ClientError as e:
-        logger.error(f"Error saving word cloud for video {video_id}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error creating or saving word cloud for video {video_id}: {str(e)}")
         raise
-
-    plt.close()
+    finally:
+        plt.close()
 ########################################################
 
 ## Find font for wordcloud

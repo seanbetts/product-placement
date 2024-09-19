@@ -3,7 +3,7 @@
   "coca cola": {"variations": ["coke", "coca-cola"], "category": "beverage"},
   "pizza hut": {"variations": ["pizzahut"], "category": "food"},
   "doritos": {"variations": ["dorito"], "category": "food"},
-  "reebok": {"variations": ["rebok"], "category": "apparel"},
+  "reebok": {"variations": ["rebok", "robok", "qabok"], "category": "apparel"},
   "adidas": {"variations": ["addidas", "adiddas", "addiddas"], "category": "apparel"},
   "betano": {"variations": ["beteno"], "category": "gaming"},
   "₿c.game": {"variations": ["bc.game", "☐c.game", "₿c game", "☐c game", "bc game", "₿c-game", "☐c-game", "bc-game", "₿cgame", "bcgame", "bccane", "bc.came", "bc came", "bc cane"], "category": "gaming"},

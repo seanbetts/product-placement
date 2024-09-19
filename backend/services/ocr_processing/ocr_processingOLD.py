@@ -136,31 +136,3 @@ def consolidate_words(words: List[Dict]) -> List[Dict]:
         i += 1
 
     return consolidated
-
-def interpolate_brand(current_brand: Dict, next_brand: Dict, current_frame: int, next_frame: int, frame_number: int, fps: float) -> Dict:
-    t = (frame_number - current_frame) / (next_frame - current_frame)
-    
-    # Check if bounding boxes exist before interpolating
-    if 'bounding_box' in current_brand and 'bounding_box' in next_brand:
-        interpolated_box = {
-            'vertices': [
-                {k: int(current_brand['bounding_box']['vertices'][j][k] + 
-                         t * (next_brand['bounding_box']['vertices'][j][k] - 
-                              current_brand['bounding_box']['vertices'][j][k]))
-                 for k in ['x', 'y']}
-                for j in range(4)
-            ]
-        }
-    else:
-        interpolated_box = None
-
-    confidence_decay = np.exp(-0.5 * (frame_number - current_frame) / fps)
-    interpolated_confidence = current_brand['confidence'] * confidence_decay
-
-    return {
-        "text": current_brand['text'],
-        "original_text": current_brand['text'],
-        "confidence": interpolated_confidence,
-        "bounding_box": interpolated_box,
-        "is_interpolated": True
-    }

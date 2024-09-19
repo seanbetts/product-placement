@@ -157,7 +157,7 @@ async def download_file_from_s3(video_id: str, file_type: str):
 ########################################################
 def load_ocr_results(s3_client, video_id: str) -> List[Dict]:
     try:
-        response = s3_client.get_object(Bucket=settings.PROCESSING_BUCKET, Key=f'{video_id}/ocr/ocr_results.json')
+        response = s3_client.get_object(Bucket=settings.PROCESSING_BUCKET, Key=f'{video_id}/ocr/raw_ocr.json')
         return json.loads(response['Body'].read().decode('utf-8'))
     except ClientError as e:
         if e.response['Error']['Code'] == 'NoSuchKey':

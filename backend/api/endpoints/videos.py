@@ -55,7 +55,7 @@ async def process_video_endpoint(video_id: str):
     logger.info(f"Received request to run post-processing on video {video_id}")
     try:
         video_post_processing.process_video_frames(video_id)
-        return {"message": f"Video post-processing initiated for video_id: {video_id}"}
+        return {"message": f"Video post-processing completed for video_id: {video_id}"}
     except Exception as e:
         logger.error(f"Error processing video {video_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error running video post-processing: {str(e)}")

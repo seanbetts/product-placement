@@ -38,8 +38,9 @@ class Settings(BaseSettings):
     MIN_BRAND_TIME: int = 1  # minimum number of seconds a brand needs to appear
     BRAND_DATABASE_FILE: Path = Field(default="data/brand_database.json")
     BRAND_DATABASE: Dict[str, Dict] = {}
-    HIGH_CONFIDENCE_THRESHOLD: int = 90    # Minimum score for high-confidence detections
-    LOW_CONFIDENCE_THRESHOLD: int = 80     # Minimum score for low-confidence detections
+    MAX_CLEANING_CONFIDENCE: int = 67      # Maximum confidence score required to skip text cleaning
+    HIGH_CONFIDENCE_THRESHOLD: int = 80    # Minimum score for high-confidence detections
+    LOW_CONFIDENCE_THRESHOLD: int = 70     # Minimum score for low-confidence detections
     MIN_BRAND_LENGTH: int = 3              # Minimum length of a brand name
     MIN_DETECTIONS: int = 2                # Minimum number of detections for a brand to be considered
     FRAME_WINDOW: int = 1                  # Window (in seconds) for checking brand consistency
@@ -49,6 +50,7 @@ class Settings(BaseSettings):
     INTERPOLATION_CONFIDENCE: int = 70     # Confidence score for interpolated brand appearances
 
     # Video post-processing settings
+    SMOOTHING_WINDOW: int = 5
     SHOW_CONFIDENCE: bool = False
     TEXT_BG_OPACITY: float = 0.7
 

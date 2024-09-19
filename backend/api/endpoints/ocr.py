@@ -1,7 +1,11 @@
+import json
 from fastapi import APIRouter, HTTPException
 from core.logging import logger
+from core.config import settings
+from core.aws import get_s3_client
 from services import s3_operations
 from services.ocr_processing import main_ocr_processing
+from utils import utils
 
 router = APIRouter()
 
@@ -12,8 +16,13 @@ router = APIRouter()
 async def reprocess_ocr(video_id: str):
     logger.info(f"Received request to reprocess OCR for video: {video_id}")
     try:
-        result = await main_ocr_processing.post_process_ocr(video_id)
-        return {"status": "success", "message": "OCR reprocessing completed"}
+        s3_client = get_s3_client()
+        stats_obj = s3_client.get_object(Bucket=settings.PROCESSING_BUCKET, Key=f'{video_id}/processing_stats.json')
+        stats = json.loads(stats_obj['Body'].read().decode('utf-8'))
+        fps = stats['video']['video_fps']
+        video_resolution = await utils.get_video_resolution(video_id)
+        result = await main_ocr_processing.post_process_ocr(video_id, fps, video_resolution, s3_client)
+        return {"status": "success", "message": f"OCR reprocessing completed, identified {len(result)} brands"}
     except Exception as e:
         logger.error(f"Error reprocessing OCR for video {video_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Error reprocessing OCR")

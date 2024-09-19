@@ -2,8 +2,8 @@ import time
 import json
 import traceback
 import asyncio
-from typing import Tuple, List, Dict
 import boto3
+from typing import Tuple
 from botocore.exceptions import ClientError
 from core.logging import logger
 from core.config import settings
@@ -84,20 +84,6 @@ async def process_ocr(video_id: str, status_tracker: 'StatusTracker', s3_client)
     # Sort OCR results by frame number
     ocr_results.sort(key=lambda x: x['frame_number'])
     raw_ocr_results.sort(key=lambda x: x['frame_number'])
-
-    # Store processed OCR results
-    try:
-        await asyncio.to_thread(
-            s3_client.put_object,
-            Bucket=settings.PROCESSING_BUCKET,
-            Key=f'{video_id}/ocr/ocr_results.json',
-            Body=json.dumps(ocr_results, indent=2),
-            ContentType='application/json'
-        )
-        logger.info(f"Saved processed OCR results for video: {video_id}")
-    except ClientError as e:
-        logger.error(f"Error saving OCR results for video {video_id}: {str(e)}")
-        raise
 
     # Store raw OCR results
     try:
@@ -206,7 +192,7 @@ async def post_process_ocr(video_id: str, fps: float, video_resolution: Tuple[in
 
         # Step 1: Clean and consolidate OCR data
         # logger.info(f"Cleaning and consolidating OCR data for video: {video_id}")
-        cleaned_results = ocr_cleaning.clean_and_consolidate_ocr_data(ocr_results)
+        cleaned_results = ocr_cleaning.clean_and_consolidate_ocr_data(ocr_results, video_resolution)
         # logger.info(f"Cleaned and consolidated {len(cleaned_results)} frames for video: {video_id}")
         await s3_operations.save_processed_ocr_results(s3_client, video_id, cleaned_results)
 
