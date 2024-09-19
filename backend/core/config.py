@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     MIN_TEXT_WIDTH: int = 5                # Minimum text width as percentage of video width
     MIN_TEXT_HEIGHT: int = 5               # Minimum text height as percentage of video height
     INTERPOLATION_CONFIDENCE: int = 70     # Confidence score for interpolated brand appearances
+    INTERPOLATION_LIMIT: int = 15          # Maximum consecutive interpolated frames allowed
 
     # Video post-processing settings
     SMOOTHING_WINDOW: int = 5

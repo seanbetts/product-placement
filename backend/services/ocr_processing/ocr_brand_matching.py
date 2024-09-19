@@ -97,7 +97,8 @@ def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float, video
         "text_difference_threshold": settings.TEXT_DIFF_THRESHOLD,
         "min_text_width_pct": settings.MIN_TEXT_WIDTH,
         "min_text_height_pct": settings.MIN_TEXT_HEIGHT,
-        "interpolation_confidence": settings.INTERPOLATION_CONFIDENCE, 
+        "interpolation_confidence": settings.INTERPOLATION_CONFIDENCE,
+        "interpolation_limit": settings.INTERPOLATION_LIMIT,
     }
 
     # Calculate minimum text dimensions in pixels
@@ -202,26 +203,42 @@ def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float, video
             final_brand_appearances[brand] = set(range(first_appearance, last_appearance + 1))
 
             # Interpolate missing frames
-            for frame_number in range(first_appearance, last_appearance + 1):
-                if frame_number not in frame_appearances:
-                    # Find nearest previous and next frames with detections
-                    prev_frame = max((f for f in all_frames if f < frame_number), default=None)
-                    next_frame = min((f for f in all_frames if f > frame_number), default=None)
-                    
-                    if prev_frame is not None and next_frame is not None:
-                        prev_instances = frame_appearances[prev_frame]
-                        next_instances = frame_appearances[next_frame]
+            final_brand_appearances = defaultdict(set)
+            for brand, frame_appearances in brand_appearances.items():
+                all_frames = sorted(frame_appearances.keys())
+                
+                if not all_frames:
+                    continue  # Skip if there are no appearances for this brand
+                
+                first_appearance = all_frames[0]
+                last_appearance = all_frames[-1]
+                
+                for frame_number in range(first_appearance, last_appearance + 1):
+                    if frame_number in frame_appearances:
+                        final_brand_appearances[brand].add(frame_number)
+                    else:
+                        # Find nearest previous and next frames with detections
+                        prev_frame = max((f for f in all_frames if f < frame_number), default=None)
+                        next_frame = min((f for f in all_frames if f > frame_number), default=None)
                         
-                        interpolated_instances = interpolate_brand_instances(
-                            prev_instances, next_instances,
-                            prev_frame, next_frame,
-                            frame_number, fps
-                        )
-                        
-                        # Add interpolated instances to brand_results
-                        frame_index = frame_number - cleaned_results[0]['frame_number']
-                        if frame_index < len(brand_results):
-                            brand_results[frame_index]['detected_brands'].extend(interpolated_instances)
+                        if prev_frame is not None and next_frame is not None:
+                            prev_instances = frame_appearances[prev_frame]
+                            next_instances = frame_appearances[next_frame]
+                            
+                            interpolated_instances = interpolate_brand_instances(
+                                prev_instances, next_instances,
+                                prev_frame, next_frame,
+                                frame_number, fps
+                            )
+                            
+                            # Add interpolated instances to brand_results
+                            frame_index = frame_number - cleaned_results[0]['frame_number']
+                            if frame_index < len(brand_results):
+                                brand_results[frame_index]['detected_brands'].extend(interpolated_instances)
+                                final_brand_appearances[brand].add(frame_number)
+
+            # Post-processing to remove over-interpolated sections
+            brand_results, final_brand_appearances = remove_over_interpolated_sections(brand_results, dict(final_brand_appearances))
 
     # Sort detected brands in each frame by confidence
     for frame in brand_results:
@@ -378,4 +395,64 @@ def fade_in_brand(brand: Dict, current_frame: int, next_frame: int, frame_number
     except Exception as e:
         logger.error(f"Error in fade_in_brand: {str(e)}")
         return None
+########################################################
+
+## Removes sections where a brand has been over interpolated
+########################################################
+def remove_over_interpolated_sections(brand_results: List[Dict], final_brand_appearances: Dict[str, Set[int]]) -> Tuple[List[Dict], Dict[str, Set[int]]]:
+    # Get unique brand names
+    brand_names = set(brand['text'] for frame in brand_results for brand in frame['detected_brands'])
+    
+    for brand_name in brand_names:
+        interpolated_sequences = find_interpolated_sequences(brand_results, brand_name)
+        
+        for start, end in interpolated_sequences:
+            if end - start + 1 > settings.INTERPOLATION_LIMIT:
+                # Remove all interpolated brands in this sequence
+                for frame in brand_results[start-brand_results[0]['frame_number']:end-brand_results[0]['frame_number']+1]:
+                    frame['detected_brands'] = [b for b in frame['detected_brands'] if b['text'] != brand_name or not b.get('is_interpolated', False)]
+
+    # Update final_brand_appearances
+    new_final_brand_appearances = {}
+    for brand_name in brand_names:
+        appearances = set(frame['frame_number'] for frame in brand_results if any(b['text'] == brand_name for b in frame['detected_brands']))
+        if appearances:
+            new_final_brand_appearances[brand_name] = appearances
+
+    return brand_results, new_final_brand_appearances
+########################################################
+
+## Find sequences where a brand has been interpolated too many times
+########################################################
+def find_interpolated_sequences(brand_results: List[Dict], brand_name: str) -> List[Tuple[int, int]]:
+    sequences = []
+    start = None
+    for frame in brand_results:
+        brand = next((b for b in frame['detected_brands'] if b['text'] == brand_name), None)
+        if brand and brand.get('is_interpolated', False):
+            if start is None:
+                start = frame['frame_number']
+        elif start is not None:
+            sequences.append((start, frame['frame_number'] - 1))
+            start = None
+    
+    if start is not None:
+        sequences.append((start, brand_results[-1]['frame_number']))
+    
+    return sequences
+########################################################
+## Detects if a brand has been interpolated too many times consecutively
+########################################################
+def is_over_interpolated(brand: Dict, brand_results: List[Dict], current_frame: int) -> bool:
+    if not brand.get('is_interpolated', False):
+        return False
+
+    brand_name = brand['text']
+    sequences = find_interpolated_sequences(brand_results, brand_name)
+    
+    for start, end in sequences:
+        if start <= current_frame <= end and end - start + 1 > settings.INTERPOLATION_LIMIT:
+            return True
+    
+    return False
 ########################################################
