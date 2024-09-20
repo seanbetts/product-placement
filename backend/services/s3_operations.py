@@ -101,6 +101,20 @@ async def cancel_video_upload(video_id: str):
         return JSONResponse(status_code=404, content={"error": "Upload not found", "video_id": video_id})
 ########################################################
 
+## Uploads processed reults to s3
+########################################################
+async def upload_processed_results(processed_dir, video_id, s3_client, chunk_index):
+    try:
+        for root, _, files in os.walk(processed_dir):
+            for file in files:
+                local_path = os.path.join(root, file)
+                s3_key = f"{video_id}/chunks/{chunk_index}/{file}"
+                s3_client.upload_file(local_path, settings.PROCESSING_BUCKET, s3_key)
+    except Exception as e:
+        logger.error(f"Error uploading processed results: {str(e)}")
+        raise
+########################################################
+
 ## Uploads a video frame to s3
 ########################################################
 def upload_frame_to_s3(s3_client, bucket, key, body):

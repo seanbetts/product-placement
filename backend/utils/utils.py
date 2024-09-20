@@ -1,13 +1,14 @@
 import json
 import io
 import asyncio
-from typing import Tuple, Dict, List
-from PIL import Image
-from collections import Counter
+import enchant
+import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
-import numpy as np
+from typing import Tuple, Dict, List
+from PIL import Image
+from collections import Counter
 from thefuzz import fuzz
 from wordcloud import WordCloud
 from core.logging import logger
@@ -135,23 +136,53 @@ def convert_relative_bbox(bbox: Dict, video_resolution: Tuple[int, int]) -> Dict
 def create_word_cloud(s3_client, video_id: str, cleaned_results: List[Dict]):
     """
     Create a styled word cloud from the processed OCR results, using individual text annotations
-    and a default system font.
+    and a default system font. Only includes words with confidence above the minimum threshold
+    and length greater than 2 characters.
     """
     # Use the 'Agg' backend which doesn't require a GUI
     matplotlib.use('Agg')
+
+    # Create an enchant dictionary for English
+    d = enchant.Dict("en_US")
     
-    # Extract all text annotations
+    # Extract all text annotations with confidence above the threshold and length > 2
     all_text = []
+    excluded_confidence_count = 0
+    excluded_length_count = 0
+    excluded_not_word_count = 0
+    brand_match_count = 0
     for frame in cleaned_results:
         for detection in frame['cleaned_detections']:
-            # Use cleaned_text if available, otherwise fall back to text
-            text = detection.get('cleaned_text', detection.get('text', '')).lower()
-            if text:
-                all_text.append(text)
+            confidence = detection.get('confidence', 1.0)  # Default to 1.0 if confidence is not available
+            
+            # Prioritize brand_match, then cleaned_text (if it's a valid word), then original text
+            if detection.get('brand_match') is not None:
+                text = detection['brand_match'].lower().strip()
+                brand_match_count += 1
+            elif 'cleaned_text' in detection and d.check(detection['cleaned_text'].strip()):
+                text = detection['cleaned_text'].lower().strip()
+            elif 'cleaned_text' in detection:
+                excluded_not_word_count += 1
+                continue
+            else:
+                text = detection.get('text', '').lower().strip()
+
+            if confidence >= settings.WORDCLOUD_MINIMUM_CONFIDENCE:
+                if len(text) > 2:
+                    all_text.append(text)
+                else:
+                    excluded_length_count += 1
+            else:
+                excluded_confidence_count += 1
     
     if not all_text:
         logger.warning(f"No text found for word cloud creation for video: {video_id}")
         return
+    
+    logger.info(f"Excluded {excluded_confidence_count} words due to low confidence, "
+                f"{excluded_length_count} words due to short length, and "
+                f"{excluded_not_word_count} words not in dictionary. "
+                f"Included {brand_match_count} brand matches for video: {video_id}")
 
     # Count word frequencies
     word_freq = Counter(all_text)

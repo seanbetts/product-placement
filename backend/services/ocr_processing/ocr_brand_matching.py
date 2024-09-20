@@ -18,14 +18,14 @@ def fuzzy_match_brand(text: str, min_score: int = 85) -> Tuple[Optional[str], in
         
         cleaned_text = re.sub(r'[^a-zA-Z0-9\s]', '', str(text).lower()).strip()
         if len(cleaned_text) < 3:
-            logger.debug(f"Text too short for brand matching: '{text}'")
+            # logger.debug(f"Text too short for brand matching: '{text}'")
             return None, 0
         
         # logger.debug(f"Attempting to match brand for text: '{text}', cleaned: '{cleaned_text}'")
         
         # Check for exact match first
         if cleaned_text in settings.BRAND_DATABASE:
-            logger.debug(f"Exact match found for '{cleaned_text}'")
+            # logger.debug(f"Exact match found for '{cleaned_text}'")
             return cleaned_text, 100
         
         # Check for partial matches in variations
@@ -84,7 +84,7 @@ def fuzzy_match_brand(text: str, min_score: int = 85) -> Tuple[Optional[str], in
 
 ## Find brands and interpolate appearances
 ########################################################
-def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float, video_resolution: Tuple[int, int]) -> Tuple[List[Dict], Dict[str, Set[int]]]:
+def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float, video_resolution: Tuple[int, int]) -> Tuple[List[Dict], Dict[str, Dict[int, List[Dict]]]]:
     video_width, video_height = video_resolution
 
     # Configurable parameters
@@ -105,60 +105,43 @@ def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float, video
     min_text_width = video_width * params["min_text_width_pct"] / 100
     min_text_height = video_height * params["min_text_height_pct"] / 100
 
-    # logger.info(f"Minimum text dimensions: width={min_text_width:.2f}px, height={min_text_height:.2f}px")
-
     brand_results = []
     brand_appearances = defaultdict(lambda: defaultdict(list))
 
+    # logger.info("Starting first pass: Detect brands")
     # First pass: Detect brands
-    total_detections = 0
     for frame in cleaned_results:
         frame_number = frame['frame_number']
-        detected_brands = []
-        seen_texts = set()  # To avoid duplicates
-
         # logger.info(f"Processing frame {frame_number}")
-        # logger.info(f"Number of cleaned detections: {len(frame['cleaned_detections'])}")
+        detected_brands = []
 
         for detection in frame['cleaned_detections']:
-            total_detections += 1
-            # Skip if we've already processed this text (to avoid LINE/WORD duplication)
-            if detection['text'] in seen_texts:
-                # logger.debug(f"Skipping duplicate text: {detection['text']}")
-                continue
-            seen_texts.add(detection['text'])
-
             # logger.debug(f"Examining detection: {detection['text']}")
-            # logger.debug(f"Brand match: {detection.get('brand_match')}, Brand score: {detection.get('brand_score')}")
 
             if not detection.get('brand_match'):
-                # logger.debug("No brand match found, skipping")
+                # logger.debug(f"No brand match for: {detection['text']}")
                 continue
 
             if detection.get('brand_score', 0) < params["low_confidence_threshold"]:
-                # logger.debug(f"Brand score {detection.get('brand_score')} below threshold {params['low_confidence_threshold']}, skipping")
+                # logger.debug(f"Brand score {detection.get('brand_score')} below threshold {params['low_confidence_threshold']}")
                 continue
 
-            # Check for difference between original and matched text
             text_diff_score = fuzz.ratio(detection.get('original_text', '').lower(), detection['brand_match'].lower())
-            # logger.debug(f"Text difference score: {text_diff_score}")
             if text_diff_score < params["text_difference_threshold"]:
-                # logger.debug(f"Text difference score below threshold {params['text_difference_threshold']}, skipping")
+                # logger.debug(f"Text difference score {text_diff_score} below threshold {params['text_difference_threshold']}")
                 continue
 
-            # Check text size
             box = detection.get('bounding_box', {})
             if 'vertices' in box:
                 width = max(v['x'] for v in box['vertices']) - min(v['x'] for v in box['vertices'])
                 height = max(v['y'] for v in box['vertices']) - min(v['y'] for v in box['vertices'])
                 width_px = width * video_width
                 height_px = height * video_height
-                # logger.debug(f"Text dimensions: width={width_px:.2f}px, height={height_px:.2f}px")
                 if width_px < min_text_width or height_px < min_text_height:
-                    logger.debug("Text size below minimum threshold, skipping")
+                    # logger.debug(f"Text size ({width_px}x{height_px}) below minimum threshold ({min_text_width}x{min_text_height})")
                     continue
             else:
-                # logger.debug("No bounding box found, skipping")
+                # logger.debug("No bounding box found")
                 continue
 
             # logger.info(f"Brand detected: {detection['brand_match']}")
@@ -177,15 +160,13 @@ def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float, video
             "frame_number": frame_number,
             "detected_brands": detected_brands
         })
+        # logger.info(f"Frame {frame_number}: detected {len(detected_brands)} brands")
 
-    # logger.info(f"Total detections processed: {total_detections}")
-    # logger.info(f"Initial brand detection: {len(brand_appearances)} potential brands found")
-    # for brand, appearances in brand_appearances.items():
-    #     logger.info(f"Brand '{brand}' detected in {len(appearances)} frames")
-
+    # logger.info("Starting second pass: Interpolate brands")
     # Second pass: Interpolate brands
-    final_brand_appearances = {}
+    final_brand_appearances = defaultdict(lambda: defaultdict(list))
     for brand, frame_appearances in brand_appearances.items():
+        # logger.info(f"Processing brand: {brand}")
         all_frames = sorted(frame_appearances.keys())
         consistent_appearances = []
         for frame in all_frames:
@@ -199,91 +180,53 @@ def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float, video
         if consistent_appearances:
             first_appearance = consistent_appearances[0]
             last_appearance = consistent_appearances[-1]
+            # logger.info(f"Brand {brand} appears from frame {first_appearance} to {last_appearance}")
             
-            final_brand_appearances[brand] = set(range(first_appearance, last_appearance + 1))
-
-            # Interpolate missing frames
-            final_brand_appearances = defaultdict(set)
-            for brand, frame_appearances in brand_appearances.items():
-                all_frames = sorted(frame_appearances.keys())
-                
-                if not all_frames:
-                    continue  # Skip if there are no appearances for this brand
-                
-                first_appearance = all_frames[0]
-                last_appearance = all_frames[-1]
-                
-                for frame_number in range(first_appearance, last_appearance + 1):
-                    if frame_number in frame_appearances:
-                        final_brand_appearances[brand].add(frame_number)
-                    else:
-                        # Find nearest previous and next frames with detections
-                        prev_frame = max((f for f in all_frames if f < frame_number), default=None)
-                        next_frame = min((f for f in all_frames if f > frame_number), default=None)
+            for frame_number in range(first_appearance, last_appearance + 1):
+                if frame_number in frame_appearances:
+                    final_brand_appearances[brand][frame_number] = frame_appearances[frame_number]
+                    # logger.debug(f"Frame {frame_number}: {len(frame_appearances[frame_number])} instances of {brand}")
+                else:
+                    prev_frame = max((f for f in all_frames if f < frame_number), default=None)
+                    next_frame = min((f for f in all_frames if f > frame_number), default=None)
+                    
+                    if prev_frame is not None and next_frame is not None:
+                        prev_instances = frame_appearances[prev_frame]
+                        next_instances = frame_appearances[next_frame]
                         
-                        if prev_frame is not None and next_frame is not None:
-                            prev_instances = frame_appearances[prev_frame]
-                            next_instances = frame_appearances[next_frame]
-                            
-                            interpolated_instances = interpolate_brand_instances(
-                                prev_instances, next_instances,
-                                prev_frame, next_frame,
-                                frame_number, fps
-                            )
-                            
-                            # Add interpolated instances to brand_results
-                            frame_index = frame_number - cleaned_results[0]['frame_number']
-                            if frame_index < len(brand_results):
-                                brand_results[frame_index]['detected_brands'].extend(interpolated_instances)
-                                final_brand_appearances[brand].add(frame_number)
+                        interpolated_instances = interpolate_brand_instances(
+                            prev_instances, next_instances,
+                            prev_frame, next_frame,
+                            frame_number, fps
+                        )
+                        
+                        frame_index = frame_number - cleaned_results[0]['frame_number']
+                        if frame_index < len(brand_results):
+                            brand_results[frame_index]['detected_brands'].extend(interpolated_instances)
+                            final_brand_appearances[brand][frame_number] = interpolated_instances
+                            # logger.debug(f"Frame {frame_number}: Interpolated {len(interpolated_instances)} instances of {brand}")
 
-            # Post-processing to remove over-interpolated sections
-            brand_results, final_brand_appearances = remove_over_interpolated_sections(brand_results, dict(final_brand_appearances))
+    # logger.info("Starting post-processing")
+    # Post-processing to remove over-interpolated sections
+    brand_results, final_brand_appearances = remove_over_interpolated_sections(brand_results, final_brand_appearances)
 
-    # Sort detected brands in each frame by confidence
+    # logger.info("Updating brand_results")
+    # Update brand_results to include all instances from final_brand_appearances
+    for frame in brand_results:
+        frame_number = frame['frame_number']
+        frame['detected_brands'] = []
+        for brand, appearances in final_brand_appearances.items():
+            if frame_number in appearances:
+                frame['detected_brands'].extend(appearances[frame_number])
+        # logger.debug(f"Frame {frame_number}: Final count of {len(frame['detected_brands'])} brands")
+
+    # Sort detected brands in each frame by confidence, preserving multiple detections
     for frame in brand_results:
         frame['detected_brands'].sort(key=lambda x: x['confidence'], reverse=True)
 
     logger.info(f"Final result: {len(final_brand_appearances)} brands detected and interpolated")
 
     return brand_results, final_brand_appearances
-
-## Calculate bounding boxes for interpolated brands
-########################################################
-def interpolate_brand(prev: Dict, next: Dict, current_frame: int, next_frame: int, frame_number: int, fps: float) -> Dict:
-    t = (frame_number - current_frame) / (next_frame - current_frame)
-    
-    # Interpolate bounding box
-    interpolated_box = {
-        'vertices': [
-            {k: int(prev['bounding_box']['vertices'][i][k] + 
-                    t * (next['bounding_box']['vertices'][i][k] - prev['bounding_box']['vertices'][i][k]))
-             for k in ['x', 'y']}
-            for i in range(4)
-        ]
-    }
-    
-    # Interpolate confidence
-    confidence = prev['confidence'] + t * (next['confidence'] - prev['confidence'])
-    
-    return {
-        "text": prev['text'],
-        "original_text": prev.get('original_text', prev['text']),
-        "confidence": confidence,
-        "bounding_box": interpolated_box,
-        "is_interpolated": True,
-        "frame_number": frame_number
-    }
-########################################################
-
-## Calculate distances between two bounding boxes
-########################################################
-def calculate_distance(box1: Dict, box2: Dict) -> float:
-    """Calculate the Euclidean distance between the centers of two bounding boxes."""
-    center1 = np.mean([[v['x'], v['y']] for v in box1['vertices']], axis=0)
-    center2 = np.mean([[v['x'], v['y']] for v in box2['vertices']], axis=0)
-    return np.linalg.norm(center1 - center2)
-########################################################
 
 ## Interpolate instances where brands appear 2+ times in a single frame
 ########################################################
@@ -319,15 +262,17 @@ def interpolate_brand_instances(prev_instances: List[Dict], next_instances: List
 
 ## Detect when brands appear multiple times in a single frame
 ########################################################
-def match_brand_instances(prev_instances: List[Dict], next_instances: List[Dict]) -> List[Tuple[Dict, Dict]]:
+def match_brand_instances(prev_instances: List[Dict], next_instances: List[Dict]) -> List[Tuple[Optional[Dict], Optional[Dict]]]:
     matched_pairs = []
     unmatched_prev = prev_instances.copy()
     unmatched_next = next_instances.copy()
 
-    # Match instances based on position
+    # Match instances based on position and confidence
     for prev in prev_instances:
         if unmatched_next:
-            closest = min(unmatched_next, key=lambda next: calculate_distance(prev['bounding_box'], next['bounding_box']))
+            closest = min(unmatched_next, 
+                          key=lambda next: (calculate_distance(prev['bounding_box'], next['bounding_box']),
+                                            abs(prev['confidence'] - next['confidence'])))
             matched_pairs.append((prev, closest))
             unmatched_prev.remove(prev)
             unmatched_next.remove(closest)
@@ -350,7 +295,7 @@ def maintain_brand(brand: Dict, current_frame: int, next_frame: int, frame_numbe
         return {
             "text": brand['text'],
             "original_text": brand.get('original_text', brand['text']),
-            "cleaned_text": brand.get('cleaned_text', brand['text']),  # Add this line
+            "cleaned_text": brand.get('cleaned_text', brand['text']),
             "confidence": brand['confidence'] * confidence_decay,
             "bounding_box": brand['bounding_box'],
             "is_interpolated": True,
@@ -358,6 +303,26 @@ def maintain_brand(brand: Dict, current_frame: int, next_frame: int, frame_numbe
         }
     except Exception as e:
         logger.error(f"Error in maintain_brand: {str(e)}")
+        return None
+########################################################
+
+## Handle brands fading in to frames
+########################################################
+def fade_in_brand(brand: Dict, current_frame: int, next_frame: int, frame_number: int, fps: float) -> Dict:
+    try:
+        t = (frame_number - current_frame) / (next_frame - current_frame)
+        confidence_increase = 1 - np.exp(-2 * t)  # Faster increase for fading in
+        return {
+            "text": brand['text'],
+            "original_text": brand.get('original_text', brand['text']),
+            "cleaned_text": brand.get('cleaned_text', brand['text']),
+            "confidence": brand['confidence'] * confidence_increase,
+            "bounding_box": brand['bounding_box'],
+            "is_interpolated": True,
+            "frame_number": frame_number
+        }
+    except Exception as e:
+        logger.error(f"Error in fade_in_brand: {str(e)}")
         return None
 ########################################################
 
@@ -370,6 +335,7 @@ def fade_out_brand(brand: Dict, current_frame: int, next_frame: int, frame_numbe
     return {
         "text": brand['text'],
         "original_text": brand.get('original_text', brand['text']),
+        "cleaned_text": brand.get('cleaned_text', brand['text']),
         "confidence": brand['confidence'] * confidence_decay,
         "bounding_box": brand['bounding_box'],
         "is_interpolated": True,
@@ -377,29 +343,47 @@ def fade_out_brand(brand: Dict, current_frame: int, next_frame: int, frame_numbe
     }
 ########################################################
 
-## Handle brands fading in to frames
+## Calculate bounding boxes for interpolated brands
 ########################################################
-def fade_in_brand(brand: Dict, current_frame: int, next_frame: int, frame_number: int, fps: float) -> Dict:
-    try:
-        t = (frame_number - current_frame) / (next_frame - current_frame)
-        confidence_increase = 1 - np.exp(-2 * t)  # Faster increase for fading in
-        return {
-            "text": brand['text'],
-            "original_text": brand.get('original_text', brand['text']),
-            "cleaned_text": brand.get('cleaned_text', brand['text']),  # Add this line
-            "confidence": brand['confidence'] * confidence_increase,
-            "bounding_box": brand['bounding_box'],
-            "is_interpolated": True,
-            "frame_number": frame_number
-        }
-    except Exception as e:
-        logger.error(f"Error in fade_in_brand: {str(e)}")
-        return None
+def interpolate_brand(prev: Dict, next: Dict, current_frame: int, next_frame: int, frame_number: int, fps: float) -> Dict:
+    t = (frame_number - current_frame) / (next_frame - current_frame)
+    
+    # Interpolate bounding box
+    interpolated_box = {
+        'vertices': [
+            {k: int(prev['bounding_box']['vertices'][i][k] + 
+                    t * (next['bounding_box']['vertices'][i][k] - prev['bounding_box']['vertices'][i][k]))
+             for k in ['x', 'y']}
+            for i in range(4)
+        ]
+    }
+    
+    # Interpolate confidence
+    confidence = prev['confidence'] + t * (next['confidence'] - prev['confidence'])
+    
+    return {
+        "text": prev['text'],
+        "original_text": prev.get('original_text', prev['text']),
+        "cleaned_text": prev.get('cleaned_text', prev['text']),  # Add this line
+        "confidence": confidence,
+        "bounding_box": interpolated_box,
+        "is_interpolated": True,
+        "frame_number": frame_number
+    }
+########################################################
+
+## Calculate distances between two bounding boxes
+########################################################
+def calculate_distance(box1: Dict, box2: Dict) -> float:
+    """Calculate the Euclidean distance between the centers of two bounding boxes."""
+    center1 = np.mean([[v['x'], v['y']] for v in box1['vertices']], axis=0)
+    center2 = np.mean([[v['x'], v['y']] for v in box2['vertices']], axis=0)
+    return np.linalg.norm(center1 - center2)
 ########################################################
 
 ## Removes sections where a brand has been over interpolated
 ########################################################
-def remove_over_interpolated_sections(brand_results: List[Dict], final_brand_appearances: Dict[str, Set[int]]) -> Tuple[List[Dict], Dict[str, Set[int]]]:
+def remove_over_interpolated_sections(brand_results: List[Dict], final_brand_appearances: Dict[str, Dict[int, List[Dict]]]) -> Tuple[List[Dict], Dict[str, Dict[int, List[Dict]]]]:
     # Get unique brand names
     brand_names = set(brand['text'] for frame in brand_results for brand in frame['detected_brands'])
     
@@ -411,15 +395,21 @@ def remove_over_interpolated_sections(brand_results: List[Dict], final_brand_app
                 # Remove all interpolated brands in this sequence
                 for frame in brand_results[start-brand_results[0]['frame_number']:end-brand_results[0]['frame_number']+1]:
                     frame['detected_brands'] = [b for b in frame['detected_brands'] if b['text'] != brand_name or not b.get('is_interpolated', False)]
+                
+                # Update final_brand_appearances
+                for frame_num in range(start, end + 1):
+                    if frame_num in final_brand_appearances[brand_name]:
+                        final_brand_appearances[brand_name][frame_num] = [
+                            b for b in final_brand_appearances[brand_name][frame_num]
+                            if not b.get('is_interpolated', False)
+                        ]
+                        if not final_brand_appearances[brand_name][frame_num]:
+                            del final_brand_appearances[brand_name][frame_num]
 
-    # Update final_brand_appearances
-    new_final_brand_appearances = {}
-    for brand_name in brand_names:
-        appearances = set(frame['frame_number'] for frame in brand_results if any(b['text'] == brand_name for b in frame['detected_brands']))
-        if appearances:
-            new_final_brand_appearances[brand_name] = appearances
+    # Remove empty brand entries
+    final_brand_appearances = {k: v for k, v in final_brand_appearances.items() if v}
 
-    return brand_results, new_final_brand_appearances
+    return brand_results, final_brand_appearances
 ########################################################
 
 ## Find sequences where a brand has been interpolated too many times
@@ -428,8 +418,8 @@ def find_interpolated_sequences(brand_results: List[Dict], brand_name: str) -> L
     sequences = []
     start = None
     for frame in brand_results:
-        brand = next((b for b in frame['detected_brands'] if b['text'] == brand_name), None)
-        if brand and brand.get('is_interpolated', False):
+        interpolated_brands = [b for b in frame['detected_brands'] if b['text'] == brand_name and b.get('is_interpolated', False)]
+        if interpolated_brands:
             if start is None:
                 start = frame['frame_number']
         elif start is not None:

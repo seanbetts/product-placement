@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     MAX_POOL_CONNECTIONS: int = 50  # Max pool connections for s3
 
     ## Processing Settings
+    DOWNLOAD_CHUNK_SIZE: int = 8388608                      # 8MB chunks
     BATCH_SIZE: int = 30
     FRAME_INTERVAL: int = 1
     STATUS_UPDATE_INTERVAL: int = 3  # in seconds
@@ -38,17 +39,22 @@ class Settings(BaseSettings):
     MIN_BRAND_TIME: int = 1  # minimum number of seconds a brand needs to appear
     BRAND_DATABASE_FILE: Path = Field(default="data/brand_database.json")
     BRAND_DATABASE: Dict[str, Dict] = {}
-    MAX_CLEANING_CONFIDENCE: int = 67      # Maximum confidence score required to skip text cleaning
-    HIGH_CONFIDENCE_THRESHOLD: int = 80    # Minimum score for high-confidence detections
-    LOW_CONFIDENCE_THRESHOLD: int = 70     # Minimum score for low-confidence detections
-    MIN_BRAND_LENGTH: int = 3              # Minimum length of a brand name
-    MIN_DETECTIONS: int = 2                # Minimum number of detections for a brand to be considered
-    FRAME_WINDOW: int = 1                  # Window (in seconds) for checking brand consistency
-    TEXT_DIFF_THRESHOLD: int = 60          # Minimum fuzzy match score between original and matched text
-    MIN_TEXT_WIDTH: int = 5                # Minimum text width as percentage of video width
-    MIN_TEXT_HEIGHT: int = 5               # Minimum text height as percentage of video height
-    INTERPOLATION_CONFIDENCE: int = 70     # Confidence score for interpolated brand appearances
-    INTERPOLATION_LIMIT: int = 15          # Maximum consecutive interpolated frames allowed
+    MAX_CLEANING_CONFIDENCE: int = 67                       # Maximum confidence score required to skip text cleaning
+    MIN_WORD_MATCH: int = 80                                # Minimum confidence for applying word corrections
+    HIGH_CONFIDENCE_THRESHOLD: int = 80                     # Minimum score for high-confidence detections
+    LOW_CONFIDENCE_THRESHOLD: int = 70                      # Minimum score for low-confidence detections
+    MIN_BRAND_LENGTH: int = 3                               # Minimum length of a brand name
+    MIN_DETECTIONS: int = 2                                 # Minimum number of detections for a brand to be considered
+    FRAME_WINDOW: int = 1                                   # Window (in seconds) for checking brand consistency
+    TEXT_DIFF_THRESHOLD: int = 60                           # Minimum fuzzy match score between original and matched text
+    MIN_TEXT_WIDTH: int = 5                                 # Minimum text width as percentage of video width
+    MIN_TEXT_HEIGHT: int = 5                                # Minimum text height as percentage of video height
+    INTERPOLATION_CONFIDENCE: int = 70                      # Confidence score for interpolated brand appearances
+    INTERPOLATION_LIMIT: int = 15                           # Maximum consecutive interpolated frames allowed
+    WORDCLOUD_MINIMUM_CONFIDENCE: int = 70                  # Minium confidence threshold for words to be included in the wordcloud
+    MAX_BOUNDING_BOX_MERGE_DISTANCE_PERCENT: float = 0.02   # 2% of frame dimension
+    MIN_OVERLAP_RATIO_FOR_MERGE: float = 0.1                # 10% overlap required for automatic merging
+
 
     # Video post-processing settings
     SMOOTHING_WINDOW: int = 5
