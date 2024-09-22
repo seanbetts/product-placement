@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useNavigate } from 'react-router-dom';
-import { Button, Typography, CircularProgress, Box, Paper, Alert, Snackbar, Grid, LinearProgress, Stack, Divider } from '@mui/material';
+import { Button, Typography, CircularProgress, Box, Paper, Alert, Snackbar, Grid, LinearProgress, Stack, Divider, Chip } from '@mui/material';
 import { red } from '@mui/material/colors';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -17,6 +17,7 @@ const VideoUpload = () => {
   // eslint-disable-next-line no-unused-vars
   const [uploadProgress, setUploadProgress] = useState(0);
   const [displayedUploadProgress, setDisplayedUploadProgress] = useState(0);
+  const [extractingFrame, setExtractingFrame] = useState(false);
   const [preview, setPreview] = useState(null);
   const [error, setError] = useState(null);
   const [uploadedVideoId, setUploadedVideoId] = useState(null);
@@ -41,6 +42,7 @@ const VideoUpload = () => {
     const videoFile = acceptedFiles[0];
     setFile(videoFile);
     setError(null);
+    setExtractingFrame(true);
     try {
       const { frameUrl, width, height } = await extractFirstFrame(videoFile);
       setPreview(frameUrl);
@@ -50,6 +52,8 @@ const VideoUpload = () => {
       setError("Failed to generate video preview. The file might be corrupted or in an unsupported format.");
       setPreview(null);
       setVideoDimensions(null);
+    } finally {
+      setExtractingFrame(false);
     }
   }, []);
 
@@ -89,6 +93,21 @@ const VideoUpload = () => {
       };
       video.src = URL.createObjectURL(file);
     });
+  };
+
+  const getStatusBadge = (status) => {
+    switch (status) {
+      case 'pending':
+        return 'Not Started';
+      case 'in_progress':
+        return 'In Progress';
+      case 'complete':
+        return 'Completed';
+      case 'error':
+        return 'Error';
+      default:
+        return 'Not Started';
+    }
   };
 
   const handleUpload = async () => {
@@ -261,7 +280,34 @@ const handleCancel = async () => {
     <Paper elevation={3} sx={{ p: 3, borderRadius: 2 }}>
       <Grid container spacing={3}>
         <Grid item xs={12} md={6}>
-          {preview && (
+          {extractingFrame ? (
+            <Box sx={{ 
+              width: '100%', 
+              height: 0, 
+              paddingBottom: '56.25%', // 16:9 aspect ratio
+              position: 'relative', 
+              overflow: 'hidden',
+              borderRadius: 2,
+              boxShadow: 3,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              bgcolor: 'rgba(0, 0, 0, 0.1)'
+            }}>
+              <Box sx={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <CircularProgress size={60} /> {/* Increased size for visibility */}
+              </Box>
+            </Box>
+          ) : preview ? (
             <Box sx={{ 
               width: '100%', 
               height: 0, 
@@ -284,7 +330,7 @@ const handleCancel = async () => {
                 }} 
               />
             </Box>
-          )}
+          ) : null}
           <Typography variant="subtitle1" sx={{ mt: 2, fontWeight: 'bold' }}>
             {file.name}
           </Typography>
@@ -384,31 +430,45 @@ const handleCancel = async () => {
   // Create a styled component for the spinning icon with pauses
   const SpinningIcon = styled(HourglassEmptyIcon)(({ theme }) => ({
     animation: `${spinWithPauses} 4s cubic-bezier(0.65, 0, 0.35, 1) infinite`,
-    color: theme.palette.action.active,
+    color: theme.palette.primary.main,
   }));
 
-  const renderProgressBar = (label, status, progress) => (
+  const renderProgressBar = (label, status, progress, isTotal = false) => (
     <Box sx={{ mt: 2 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
         <Typography variant="body2">{label}</Typography>
         <Box sx={{ 
           display: 'flex', 
           alignItems: 'center', 
-          width: '80px',  // Fixed width to accommodate icon and percentage
-          justifyContent: 'flex-end'  // Align contents to the right
+          justifyContent: 'flex-end'
         }}>
+          {!isTotal && (
+            <Chip
+              label={getStatusBadge(status)}
+              size="small"
+              sx={{
+                mr: 3,
+                backgroundColor: status === 'complete' ? 'success.main' :
+                                 status === 'error' ? 'error.main' :
+                                 status === 'in_progress' ? 'primary.main' : 'grey.300',
+                color: status === 'complete' ? '#ffffff' :
+                       status === 'error' ? '#ffffff' :
+                       status === 'in_progress' ? '#ffffff' : 'grey.700',
+              }}
+            />
+          )}
           <Box sx={{ 
-            width: '24px',  // Fixed width for the icon
+            width: '24px',
             display: 'flex', 
-            justifyContent: 'center',  // Center the icon horizontally
-            mr: 1  // Margin right to separate icon from text
+            justifyContent: 'center',
+            mr: 1
           }}>
             {status === 'complete' ? (
               <CheckCircleOutlineIcon color="success" />
             ) : progress > 0 && progress < 100 ? (
               <SpinningIcon />
             ) : (
-              <HourglassEmptyIcon color="action" />
+              <HourglassEmptyIcon color="primary" />
             )}
           </Box>
           <Typography variant="body2" color="text.secondary" sx={{ width: '40px', textAlign: 'right' }}>
@@ -434,11 +494,13 @@ const handleCancel = async () => {
 
   const renderProcessingProgress = () => (
     <Box>
-      {renderProgressBar('Total Progress', processingProgress.total?.status, processingProgress.total?.progress)}
-      {renderProgressBar('Video Processing', processingProgress.video_processing?.status, processingProgress.video_processing?.progress)}
-      {renderProgressBar('Audio Processing', processingProgress.audio_extraction?.status, processingProgress.audio_extraction?.progress)}
-      {renderProgressBar('Transcript Processing', processingProgress.transcription?.status, processingProgress.transcription?.progress)}
-      {renderProgressBar('Text Processing', processingProgress.ocr?.status, processingProgress.ocr?.progress)}
+      {renderProgressBar('Total Progress', processingProgress.total?.status, processingProgress.total?.progress, true)}
+      <Divider sx={{ my: 2 }} />
+      {renderProgressBar('Extracting Video Frames...', processingProgress.video_processing?.status, processingProgress.video_processing?.progress)}
+      {renderProgressBar('Extracting Audio...', processingProgress.audio_extraction?.status, processingProgress.audio_extraction?.progress)}
+      {renderProgressBar('Transcribing Audio...', processingProgress.transcription?.status, processingProgress.transcription?.progress)}
+      {renderProgressBar('Detecting Brands...', processingProgress.ocr?.status, processingProgress.ocr?.progress)}
+      <Divider sx={{ my: 3 }} />
     </Box>
   );
 

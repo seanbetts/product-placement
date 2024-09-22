@@ -1,9 +1,12 @@
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from typing import Optional
-from core.logging import logger
+from core.logging import video_logger, AppLogger, dual_log
 from services import s3_operations
 from services import video_post_processing
+
+# Create a global instance of AppLogger
+app_logger = AppLogger()
 
 router = APIRouter()
 
@@ -18,45 +21,73 @@ async def upload_video_endpoint(
     total_chunks: int = Form(...),
     video_id: Optional[str] = Form(None)
 ):
-    logger.info(f"Received request to upload video for processing")
-    try:
-        result = await s3_operations.upload_video(
-            background_tasks,
-            file,
-            chunk_number,
-            total_chunks,
-            video_id
-        )
-        return result
-    except Exception as e:
-        logger.error(f"Error processing video: {str(e)}")
-        return JSONResponse(status_code=500, content={"error": "Upload failed", "details": str(e)})
+    with video_logger("api-endpoints", is_api_log=True) as vlogger:
+        @vlogger.log_performance
+        async def _upload_video_endpoint():
+            dual_log(vlogger, app_logger, 'info', "Received request to upload video for processing")
+            
+            try:
+                vlogger.logger.debug(f"Uploading chunk {chunk_number}/{total_chunks} for video ID: {video_id or 'new video'}")
+                result = await vlogger.log_performance(s3_operations.upload_video)(
+                    vlogger,
+                    background_tasks,
+                    file,
+                    chunk_number,
+                    total_chunks,
+                    video_id
+                )
+                vlogger.logger.info(f"Successfully uploaded video chunk {chunk_number}/{total_chunks} for video ID: {video_id or 'new video'}")
+                return result
+
+            except Exception as e:
+                dual_log(vlogger, app_logger, 'error', f"Error processing video upload: {str(e)}", exc_info=True)
+                return JSONResponse(status_code=500, content={"error": "Upload failed", "details": str(e)})
+
+        return await _upload_video_endpoint()
 ########################################################
 
 ## CANCEL UPLOAD ENDPOINT (POST)
 ## Cancels an upload for a given video ID
 ########################################################
 @router.post("/video/cancel-upload/{video_id}")
-async def cancel_video_upload(video_id):
-    logger.info(f"Received request to cancel upload for video {video_id}")
-    try:
-        result = await s3_operations.cancel_upload_video(video_id)
-        return {"status": "success", "message": f"Upload of video {video_id} cancelled"}
-    except Exception as e:
-        logger.error(f"Error processing video: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error cancelling video upload")
+async def cancel_video_upload(video_id: str):
+    with video_logger("api-endpoints", is_api_log=True) as vlogger:
+        @vlogger.log_performance
+        async def _cancel_video_upload():
+            vlogger.logger.info(f"Received request to cancel upload for video {video_id}")
+
+            try:
+                vlogger.logger.debug(f"Attempting to cancel upload for video: {video_id}")
+                result = await vlogger.log_performance(s3_operations.cancel_upload_video)(vlogger, video_id)
+                vlogger.logger.info(f"Successfully cancelled upload for video {video_id}")
+                return {"status": "success", "message": f"Upload of video {video_id} cancelled"}
+
+            except Exception as e:
+                dual_log(vlogger, app_logger, 'error', f"Error cancelling upload for video {video_id}: {str(e)}", exc_info=True)
+                raise HTTPException(status_code=500, detail="Error cancelling video upload")
+
+        return await _cancel_video_upload()
 ########################################################
 
 ## POST-PROCESS VIDEOS (POST)
 ## Annotates videos with brand, logos, and object detection
 ########################################################
-@router.post("/process_video/{video_id}")
-async def process_video_endpoint(video_id: str):
-    logger.info(f"Received request to run post-processing on video {video_id}")
-    try:
-        video_post_processing.process_video_frames(video_id)
-        return {"message": f"Video post-processing completed for video_id: {video_id}"}
-    except Exception as e:
-        logger.error(f"Error processing video {video_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error running video post-processing: {str(e)}")
+@router.post("/annotate_video/{video_id}")
+async def annotate_video_endpoint(video_id: str):
+    with video_logger("api-endpoints", is_api_log=True) as vlogger:
+        @vlogger.log_performance
+        async def _annotate_video_endpoint():
+            vlogger.logger.info(f"Received request to run post-processing on video {video_id}")
+
+            try:
+                vlogger.logger.debug(f"Starting post-processing for video: {video_id}")
+                await vlogger.log_performance(video_post_processing.process_video_frames)(vlogger, video_id)
+                vlogger.logger.info(f"Video post-processing completed for video {video_id}")
+                return {"message": f"Video post-processing completed for video_id: {video_id}"}
+
+            except Exception as e:
+                vlogger.logger.error(f"Error processing video {video_id}: {str(e)}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Error running video post-processing: {str(e)}")
+
+        return await _annotate_video_endpoint()
 ########################################################

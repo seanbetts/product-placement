@@ -219,8 +219,8 @@ const VideoDetails = () => {
               <Typography>Total Frames: {videoStats?.total_frames?.toLocaleString() ?? 'N/A'}</Typography>
               <Typography>Extracted Frames: {videoStats?.extracted_frames?.toLocaleString() ?? 'N/A'}</Typography>
               <Typography>Video FPS: {videoStats?.video_fps ?? 'N/A'}</Typography>
-              <Typography>Processing Time: {videoStats?.video_processing_time ? parseFloat(videoStats?.video_processing_time).toFixed(1) : 'N/A'} seconds</Typography>
-              <Typography>Processing Speed: {videoStats?.video_processing_speed ?? 'N/A'}</Typography>
+              <Typography>Processing Time: {videoStats?.video_processing_time ? parseFloat(videoStats?.video_processing_time).toFixed(0) : 'N/A'} seconds</Typography>
+              <Typography>Processing Speed: {videoStats?.video_processing_speed.toFixed(0) ?? 'N/A'}% of real-time</Typography>
               <Box sx={{ flexGrow: 1 }} />
               <Button 
                 variant="contained" 
@@ -235,8 +235,8 @@ const VideoDetails = () => {
             <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
               <Typography variant="h6" gutterBottom>Audio Stats</Typography>
               <Typography>Length: {audio?.audio_length ?? 'N/A'}</Typography>
-              <Typography>Processing Time: {audio?.audio_processing_time ?? 'N/A'}</Typography>
-              <Typography>Processing Speed: {audio?.audio_processing_speed ?? 'N/A'}</Typography>
+              <Typography>Processing Time: {audio?.audio_processing_time.toFixed(0) ?? 'N/A'} seconds</Typography>
+              <Typography>Processing Speed: {audio?.audio_processing_speed ? Number(audio.audio_processing_speed.toFixed(0)).toLocaleString() : 'N/A'}% of real-time</Typography>
               <Box sx={{ flexGrow: 1 }} />
               <Button 
                 variant="contained" 
@@ -253,7 +253,7 @@ const VideoDetails = () => {
               <Typography>Processing Time: {transcription?.transcription_processing_time ?? 'N/A'}</Typography>
               <Typography>Word Count: {transcription?.word_count?.toLocaleString() ?? 'N/A'}</Typography>
               <Typography>Confidence: {transcription?.confidence ?? 'N/A'}</Typography>
-              <Typography>Transcription Speed: {transcription?.transcription_speed ?? 'N/A'}</Typography>
+              <Typography>Transcription Speed: {transcription?.transcription_speed.toFixed(0) ?? 'N/A'}% of real-time</Typography>
               <Box sx={{ flexGrow: 1 }} />
               <Button 
                 variant="contained" 
@@ -292,7 +292,7 @@ const VideoDetails = () => {
         <Typography variant="h6" gutterBottom>Total Processing Stats</Typography>
         <Typography>Start Time: {formatDate(total_processing_start_time)}</Typography>
         <Typography>End Time: {formatDate(total_processing_end_time)}</Typography>
-        <Typography>Total Processing Time: {total_processing_time ? parseFloat(total_processing_time).toFixed(1) : 'N/A'} seconds</Typography>
+        <Typography>Total Processing Time: {total_processing_time ? parseFloat(total_processing_time).toFixed(0) : 'N/A'} seconds</Typography>
         <Typography>Total Processing Speed: {total_processing_speed}</Typography>
       </>
     );

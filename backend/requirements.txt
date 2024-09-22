@@ -20,3 +20,4 @@ pydantic_settings
 moviepy
 retry
 pillow
+psutil
