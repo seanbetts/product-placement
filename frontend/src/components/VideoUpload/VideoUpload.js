@@ -8,6 +8,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import PublishIcon from '@mui/icons-material/Publish';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
+import AssessmentIcon from '@mui/icons-material/Assessment';
 import { styled, keyframes } from '@mui/material/styles';
 import api from '../../services/api';
 
@@ -336,11 +337,11 @@ const handleCancel = async () => {
           </Typography>
           {videoDimensions && (
             <Typography variant="body2" color="text.secondary">
-              Resolution: {videoDimensions.width}x{videoDimensions.height}
+              <strong>Resolution:</strong> {videoDimensions.width}x{videoDimensions.height}
             </Typography>
           )}
           <Typography variant="body2" color="text.secondary">
-            {(file.size / (1024 * 1024)).toFixed(2)} MB
+            <strong>File Size:</strong> {(file.size / (1024 * 1024)).toFixed(2)} MB
           </Typography>
         </Grid>
         <Grid item xs={12} md={6}>
@@ -401,8 +402,7 @@ const handleCancel = async () => {
   const renderProcessingStatus = () => (
     <Box sx={{ width: '100%' }}>
       <Typography variant="h6" gutterBottom>Video Processing Status</Typography>
-      <Typography variant="body2" color="text.secondary" gutterBottom>Video ID: {uploadedVideoId}</Typography>
-      <Divider sx={{ my: 2 }} />
+      <Typography variant="body2" color="text.secondary" gutterBottom><strong>Video ID:</strong> {uploadedVideoId}</Typography>
       {renderProcessingProgress()}
       {processingStatus?.status === 'complete' && renderCompletedProcessing()}
     </Box>
@@ -434,9 +434,21 @@ const handleCancel = async () => {
   }));
 
   const renderProgressBar = (label, status, progress, isTotal = false) => (
-    <Box sx={{ mt: 2 }}>
+    <Box sx={{ 
+      mt: isTotal ? 3 : 2,
+      mb: isTotal ? 3 : 2,
+      p: isTotal ? 2 : 0,
+      backgroundColor: isTotal ? 'rgba(0, 0, 0, 0.04)' : 'transparent',
+      borderRadius: 2,
+    }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-        <Typography variant="body2">{label}</Typography>
+        <Typography 
+          variant={isTotal ? "h6" : "body2"} 
+          sx={{ fontWeight: isTotal ? 'bold' : 'normal' }}
+        >
+          {isTotal && <AssessmentIcon sx={{ mr: 1, verticalAlign: 'middle' }} />}
+          {label}
+        </Typography>
         <Box sx={{ 
           display: 'flex', 
           alignItems: 'center', 
@@ -451,36 +463,54 @@ const handleCancel = async () => {
                 backgroundColor: status === 'complete' ? 'success.main' :
                                  status === 'error' ? 'error.main' :
                                  status === 'in_progress' ? 'primary.main' : 'grey.300',
-                color: status === 'complete' ? '#ffffff' :
-                       status === 'error' ? '#ffffff' :
-                       status === 'in_progress' ? '#ffffff' : 'grey.700',
+                color: '#ffffff',
               }}
             />
           )}
           <Box sx={{ 
-            width: '24px',
-            display: 'flex', 
-            justifyContent: 'center',
-            mr: 1
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            mr: isTotal ? 0 : 1
           }}>
-            {status === 'complete' ? (
-              <CheckCircleOutlineIcon color="success" />
-            ) : progress > 0 && progress < 100 ? (
-              <SpinningIcon />
-            ) : (
-              <HourglassEmptyIcon color="primary" />
-            )}
+            <Box sx={{ 
+              width: isTotal ? '36px' : '24px',
+              height: isTotal ? '36px' : '24px',
+              display: 'flex', 
+              justifyContent: 'center',
+              alignItems: 'center',
+              mr: isTotal ? 0.5 : 1
+            }}>
+              {status === 'complete' ? (
+                <CheckCircleOutlineIcon sx={{ fontSize: isTotal ? 32 : 24 }} color="success" />
+              ) : progress > 0 && progress < 100 ? (
+                <SpinningIcon sx={{ fontSize: isTotal ? 32 : 24 }} />
+              ) : (
+                <HourglassEmptyIcon sx={{ 
+                  fontSize: isTotal ? 32 : 24, 
+                  color: progress === 0 ? 'grey.500' : 'primary.main' 
+                }} />
+              )}
+            </Box>
+            <Typography 
+              variant={isTotal ? "h6" : "body2"} 
+              color="text.secondary" 
+              sx={{ 
+                minWidth: isTotal ? '45px' : '40px',  // Changed from 60px to 45px for Total Progress
+                textAlign: 'right',
+                fontWeight: isTotal ? 'bold' : 'normal'
+              }}
+            >
+              {status === 'complete' ? '100%' : `${Math.round(progress || 0)}%`}
+            </Typography>
           </Box>
-          <Typography variant="body2" color="text.secondary" sx={{ width: '40px', textAlign: 'right' }}>
-            {status === 'complete' ? '100%' : `${Math.round(progress || 0)}%`}
-          </Typography>
         </Box>
       </Box>
       <LinearProgress
         variant="determinate"
         value={status === 'complete' ? 100 : (progress || 0)}
         sx={{
-          height: 8,
+          height: isTotal ? 12 : 8,
           borderRadius: 4,
           backgroundColor: 'rgba(0, 0, 0, 0.1)',
           '& .MuiLinearProgress-bar': {
@@ -500,7 +530,6 @@ const handleCancel = async () => {
       {renderProgressBar('Extracting Audio...', processingProgress.audio_extraction?.status, processingProgress.audio_extraction?.progress)}
       {renderProgressBar('Transcribing Audio...', processingProgress.transcription?.status, processingProgress.transcription?.progress)}
       {renderProgressBar('Detecting Brands...', processingProgress.ocr?.status, processingProgress.ocr?.progress)}
-      <Divider sx={{ my: 3 }} />
     </Box>
   );
 
@@ -509,8 +538,8 @@ const handleCancel = async () => {
       <Typography variant="h6" gutterBottom>Processing Complete</Typography>
       {processingStats ? (
         <>
-          <Typography variant="body2">Processing Time: {processingStats.total_processing_time || 'N/A'}</Typography>
-          <Typography variant="body2">Processing Speed: {processingStats.total_processing_speed || 'N/A'}</Typography>
+          <Typography variant="body2"><strong>Processing Time:</strong> {processingStats.total_processing_time ? parseFloat(processingStats?.total_processing_time).toFixed(0) : 'N/A'} seconds</Typography>
+          <Typography variant="body2"><strong>Processing Speed:</strong> {processingStats.total_processing_speed || 'N/A'}</Typography>
         </>
       ) : (
         <Typography variant="body2">Fetching final stats...</Typography>

@@ -190,6 +190,10 @@ async def process_transcription_response(vlogger, s3_client, video_id: str):
                     plain_transcript += word + " "
                 elif item['type'] == 'punctuation':
                     plain_transcript = plain_transcript.rstrip() + item['alternatives'][0]['content'] + " "
+                    # Add punctuation to the json_transcript as well
+                    if json_transcript and json_transcript[-1]['word']:  # Ensure that punctuation is applied to the last word
+                        json_transcript[-1]['word'] += item['alternatives'][0]['content']
+
 
             # Clean up the plain transcript
             plain_transcript = plain_transcript.strip()

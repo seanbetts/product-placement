@@ -250,11 +250,11 @@ async def interpolate_brand_instances(vlogger, prev_instances: List[Dict], next_
                     elif prev:
                         # Only previous instance exists, maintain with slight decay
                         vlogger.logger.debug(f"Maintaining previous instance with decay for frame {frame_number}")
-                        interpolated = maintain_brand(vlogger, prev, current_frame, next_frame, frame_number, fps)
+                        interpolated = await maintain_brand(vlogger, prev, current_frame, next_frame, frame_number, fps)
                     elif next:
                         # Only next instance exists, fade in
                         vlogger.logger.debug(f"Fading in next instance for frame {frame_number}")
-                        interpolated = fade_in_brand(vlogger, next, current_frame, next_frame, frame_number, fps)
+                        interpolated = await fade_in_brand(vlogger, next, current_frame, next_frame, frame_number, fps)
                     else:
                         vlogger.logger.warning(f"No valid instances to interpolate for frame {frame_number}")
                         continue
@@ -319,9 +319,9 @@ async def match_brand_instances(vlogger, prev_instances: List[Dict], next_instan
 
 ## Maintain brands across frames
 ########################################################
-def maintain_brand(vlogger, brand: Dict, current_frame: int, next_frame: int, frame_number: int, fps: float) -> Optional[Dict]:
+async def maintain_brand(vlogger, brand: Dict, current_frame: int, next_frame: int, frame_number: int, fps: float) -> Optional[Dict]:
     @vlogger.log_performance
-    def _maintain_brand():
+    async def _maintain_brand():
         try:
             vlogger.logger.debug(f"Maintaining brand '{brand['text']}' for frame {frame_number}")
 
@@ -347,14 +347,14 @@ def maintain_brand(vlogger, brand: Dict, current_frame: int, next_frame: int, fr
             vlogger.logger.error(f"Error in maintain_brand for frame {frame_number}: {str(e)}", exc_info=True)
             return None
 
-    return _maintain_brand()
+    return await _maintain_brand()
 ########################################################
 
 ## Handle brands fading in to frames
 ########################################################
-def fade_in_brand(vlogger, brand: Dict, current_frame: int, next_frame: int, frame_number: int, fps: float) -> Optional[Dict]:
+async def fade_in_brand(vlogger, brand: Dict, current_frame: int, next_frame: int, frame_number: int, fps: float) -> Optional[Dict]:
     @vlogger.log_performance
-    def _fade_in_brand():
+    async def _fade_in_brand():
         try:
             vlogger.logger.debug(f"Fading in brand '{brand['text']}' for frame {frame_number}")
 
@@ -380,14 +380,14 @@ def fade_in_brand(vlogger, brand: Dict, current_frame: int, next_frame: int, fra
             vlogger.logger.error(f"Error in fade_in_brand for frame {frame_number}: {str(e)}", exc_info=True)
             return None
 
-    return _fade_in_brand()
+    return await _fade_in_brand()
 ########################################################
 
 ## Handle brands fading out from frames
 ########################################################
-def fade_out_brand(vlogger, brand: Dict, current_frame: int, next_frame: int, frame_number: int, fps: float) -> Optional[Dict]:
+async def fade_out_brand(vlogger, brand: Dict, current_frame: int, next_frame: int, frame_number: int, fps: float) -> Optional[Dict]:
     @vlogger.log_performance
-    def _fade_out_brand():
+    async def _fade_out_brand():
         try:
             vlogger.logger.debug(f"Fading out brand '{brand['text']}' for frame {frame_number}")
 
@@ -413,7 +413,7 @@ def fade_out_brand(vlogger, brand: Dict, current_frame: int, next_frame: int, fr
             vlogger.logger.error(f"Error in fade_out_brand for frame {frame_number}: {str(e)}", exc_info=True)
             return None
 
-    return _fade_out_brand()
+    return await _fade_out_brand()
 ########################################################
 
 ## Calculate bounding boxes for interpolated brands

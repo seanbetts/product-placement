@@ -28,16 +28,18 @@ async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 
 
         try:
             # Synchronous S3 listing, run in a separate thread
-            def list_objects_sync(prefix, max_keys=1000):
+            def list_objects_sync(prefix):
                 all_objects = []
                 paginator = s3_client.get_paginator('list_objects_v2')
-                for page in paginator.paginate(Bucket=settings.PROCESSING_BUCKET, Prefix=prefix, PaginationConfig={'MaxItems': max_keys}):
+                page_iterator = paginator.paginate(Bucket=settings.PROCESSING_BUCKET, Prefix=prefix)
+                for page in page_iterator:
                     all_objects.extend(page.get('Contents', []))
+                    vlogger.logger.info(f"Retrieved {len(all_objects)} objects so far for video: {video_id}")
                 return all_objects
 
             vlogger.logger.info(f"Starting S3 listing for video: {video_id}")
             frame_objects = await asyncio.to_thread(list_objects_sync, f'{video_id}/frames/')
-            vlogger.logger.info(f"Completed S3 listing for video: {video_id}")
+            vlogger.logger.info(f"Completed S3 listing for video: {video_id}. Total frames: {len(frame_objects)}")
 
             total_frames = len(frame_objects)
             vlogger.logger.info(f"Total frames to process for video {video_id}: {total_frames}")

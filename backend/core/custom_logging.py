@@ -1,25 +1,37 @@
 import logging
 from uvicorn.logging import AccessFormatter
+import re
 
 class CustomAccessFormatter(AccessFormatter):
     def formatMessage(self, record):
-        message = super().formatMessage(record)
         if getattr(record, 'skip_logging', False):
-            return None  # Skip logging this message
+            return None
+        message = super().formatMessage(record)
         return message
 
 class SkipAccessFilter(logging.Filter):
+    def __init__(self):
+        super().__init__()
+        self.video_status_pattern = re.compile(r'/[^/]+/video/status$')
+
     def filter(self, record):
         try:
-            # Check for 'X-Skip-Logging' header
-            headers = record.scope['headers']
-            for name, value in headers:
-                if name == b'x-skip-logging' and value == b'true':
-                    return False
+            path = record.scope['path']
+            method = record.scope['method']
             
-            # Check for 'HTTP/1.1' in the log message
-            if 'HTTP/1.1' in record.args[1]:
+            # Filter out /video/status GET and OPTIONS requests
+            if self.video_status_pattern.search(path) and method in ['GET', 'OPTIONS']:
                 return False
+            
+            # Filter out specific OPTIONS requests
+            if method == 'OPTIONS' and any(excluded in path for excluded in [
+                '/images/first-frame',
+                '/images/all-frames',
+                '/video/processing-stats',
+                '/transcript'
+            ]):
+                return False
+            
         except Exception:
             pass
         return True
