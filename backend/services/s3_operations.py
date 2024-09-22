@@ -220,7 +220,7 @@ async def upload_frames_batch(vlogger, s3_client, bucket, frames):
 ## Downloads a file for a given video ID and file type
 ########################################################
 async def download_file_from_s3(video_id: str, file_type: str):
-    app_logger.log_info(f"Received download request for {file_type} of video: {video_id}")
+    # app_logger.log_info(f"Received download request for {file_type} of video: {video_id}")
 
     if file_type == "video":
         key = f'{video_id}/original.mp4'
@@ -235,13 +235,13 @@ async def download_file_from_s3(video_id: str, file_type: str):
         key = f'{video_id}/ocr/wordcloud.jpg'
         filename = f"{video_id}_wordcloud.jpg"
     else:
-        app_logger.error(f"Invalid file type requested: {file_type} for video: {video_id}")
+        # app_logger.error(f"Invalid file type requested: {file_type} for video: {video_id}")
         raise HTTPException(status_code=400, detail="Invalid file type")
 
     try:
-        app_logger.log_info(f"Checking if {file_type} exists in S3 for video: {video_id}")
+        # app_logger.log_info(f"Checking if {file_type} exists in S3 for video: {video_id}")
 
-        app_logger.log_info(f"Generating pre-signed URL for {file_type} of video: {video_id}")
+        # app_logger.log_info(f"Generating pre-signed URL for {file_type} of video: {video_id}")
         url = await asyncio.to_thread (
             s3_client.generate_presigned_url,
             'get_object',
@@ -250,7 +250,7 @@ async def download_file_from_s3(video_id: str, file_type: str):
             HttpMethod='GET'
         )
 
-        app_logger.log_info(f"Successfully generated download URL for {file_type} of video: {video_id}")
+        # app_logger.log_info(f"Successfully generated download URL for {file_type} of video: {video_id}")
         return RedirectResponse(url=url)
 
     except s3_client.exceptions.ClientError as e:
@@ -424,11 +424,11 @@ async def create_and_save_brand_table(vlogger, s3_client, video_id: str, brand_a
 ## Get video's wordcloud
 ########################################################
 async def get_word_cloud(video_id: str):
-    app_logger.log_info(f"Received request for word cloud of video: {video_id}")
+    # app_logger.log_info(f"Received request for word cloud of video: {video_id}")
     wordcloud_key = f'{video_id}/ocr/wordcloud.jpg'
 
     try:
-        app_logger.log_info(f"Attempting to retrieve word cloud from S3 for video: {video_id}")
+        # app_logger.log_info(f"Attempting to retrieve word cloud from S3 for video: {video_id}")
         response = await asyncio.to_thread (
             s3_client.get_object,
             Bucket=settings.PROCESSING_BUCKET, 
@@ -436,7 +436,7 @@ async def get_word_cloud(video_id: str):
         )
         image_data = response['Body'].read()
         image_size = len(image_data)
-        app_logger.log_info(f"Successfully retrieved word cloud for video {video_id}. Size: {image_size} bytes")
+        # app_logger.log_info(f"Successfully retrieved word cloud for video {video_id}. Size: {image_size} bytes")
 
         return StreamingResponse(BytesIO(image_data), media_type="image/jpeg")
 
@@ -452,11 +452,11 @@ async def get_word_cloud(video_id: str):
 ## Get brands OCR table for video
 ########################################################
 async def get_brands_ocr_table(video_id: str):
-    app_logger.log_info(f"Received request for brand OCR results of video: {video_id}")
+    # app_logger.log_info(f"Received request for brand OCR results of video: {video_id}")
     ocr_key = f'{video_id}/ocr/brands_table.json'
 
     try:
-        app_logger.log_info(f"Attempting to retrieve brand OCR table from S3 for video: {video_id}")
+        # app_logger.log_info(f"Attempting to retrieve brand OCR table from S3 for video: {video_id}")
         response = await asyncio.to_thread (
             s3_client.get_object,
             Bucket=settings.PROCESSING_BUCKET, 
@@ -466,7 +466,7 @@ async def get_brands_ocr_table(video_id: str):
         data_size = len(data)
 
         brands_table = json.loads(data.decode('utf-8'))
-        app_logger.log_info(f"Successfully retrieved brand OCR table for video {video_id}. Size: {data_size} bytes")
+        # app_logger.log_info(f"Successfully retrieved brand OCR table for video {video_id}. Size: {data_size} bytes")
         
         return brands_table
 
@@ -490,11 +490,11 @@ async def get_brands_ocr_table(video_id: str):
 ## Get video's OCR results
 ########################################################
 async def get_ocr_results(video_id: str):
-    app_logger.log_info(f"Received request for OCR results of video: {video_id}")
+    # app_logger.log_info(f"Received request for OCR results of video: {video_id}")
     ocr_key = f'{video_id}/ocr/ocr_results.json'
 
     try:
-        app_logger.log_info(f"Attempting to retrieve OCR results from S3 for video: {video_id}")
+        # app_logger.log_info(f"Attempting to retrieve OCR results from S3 for video: {video_id}")
         response = await asyncio.to_thread (
             s3_client.get_object,
             Bucket=settings.PROCESSING_BUCKET, 
@@ -504,7 +504,7 @@ async def get_ocr_results(video_id: str):
         data_size = len(data)
 
         ocr_results = json.loads(data.decode('utf-8'))
-        app_logger.log_info(f"Successfully retrieved OCR results for video {video_id}. Size: {data_size} bytes")
+        # app_logger.log_info(f"Successfully retrieved OCR results for video {video_id}. Size: {data_size} bytes")
         
         return ocr_results
 
@@ -528,11 +528,11 @@ async def get_ocr_results(video_id: str):
 ## Get video's processed OCR results
 ########################################################
 async def get_processed_ocr_results(video_id: str):
-    app_logger.log_info(f"Received request for processed OCR results of video: {video_id}")
+    # app_logger.log_info(f"Received request for processed OCR results of video: {video_id}")
     ocr_key = f'{video_id}/ocr/processed_ocr.json'
 
     try:
-        app_logger.log_info(f"Attempting to retrieve processed OCR results from S3 for video: {video_id}")
+        # app_logger.log_info(f"Attempting to retrieve processed OCR results from S3 for video: {video_id}")
         response = await asyncio.to_thread (
             s3_client.get_object,
             Bucket=settings.PROCESSING_BUCKET, 
@@ -542,7 +542,7 @@ async def get_processed_ocr_results(video_id: str):
         data_size = len(data)
 
         ocr_results = json.loads(data.decode('utf-8'))
-        app_logger.log_info(f"Successfully retrieved processed OCR results for video {video_id}. Size: {data_size} bytes")
+        # app_logger.log_info(f"Successfully retrieved processed OCR results for video {video_id}. Size: {data_size} bytes")
         
         return ocr_results
 
@@ -566,11 +566,11 @@ async def get_processed_ocr_results(video_id: str):
 ## Get video processed OCR results
 ########################################################
 async def get_brands_ocr_results(video_id: str):
-    app_logger.log_info(f"Received request for brand OCR results of video: {video_id}")
+    # app_logger.log_info(f"Received request for brand OCR results of video: {video_id}")
     ocr_key = f'{video_id}/ocr/brands_ocr.json'
     
     try:
-        app_logger.log_info(f"Attempting to retrieve brand OCR results from S3 for video: {video_id}")
+        # app_logger.log_info(f"Attempting to retrieve brand OCR results from S3 for video: {video_id}")
         response = await asyncio.to_thread (
             s3_client.get_object,
             Bucket=settings.PROCESSING_BUCKET, 
@@ -580,7 +580,7 @@ async def get_brands_ocr_results(video_id: str):
         data_size = len(data)
 
         ocr_results = json.loads(data.decode('utf-8'))
-        app_logger.log_info(f"Successfully retrieved brand OCR results for video {video_id}. Size: {data_size} bytes")
+        # app_logger.log_info(f"Successfully retrieved brand OCR results for video {video_id}. Size: {data_size} bytes")
         
         return ocr_results
 

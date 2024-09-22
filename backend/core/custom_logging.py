@@ -11,11 +11,15 @@ class CustomAccessFormatter(AccessFormatter):
 class SkipAccessFilter(logging.Filter):
     def filter(self, record):
         try:
+            # Check for 'X-Skip-Logging' header
             headers = record.scope['headers']
             for name, value in headers:
                 if name == b'x-skip-logging' and value == b'true':
-                    record.skip_logging = True
                     return False
+            
+            # Check for 'HTTP/1.1' in the log message
+            if 'HTTP/1.1' in record.args[1]:
+                return False
         except Exception:
             pass
         return True

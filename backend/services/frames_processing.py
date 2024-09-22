@@ -134,7 +134,7 @@ async def process_batch(vlogger, batch, video_id, s3_client):
 ## Get first video frame
 ########################################################
 async def get_first_video_frame(video_id: str):
-    app_logger.log_info(f"Received request for first frame of video: {video_id}")
+    # app_logger.log_info(f"Received request for first frame of video: {video_id}")
     
     # Construct the path to the first frame
     first_frame_path = f'{video_id}/frames/000000.jpg'
@@ -156,7 +156,7 @@ async def get_first_video_frame(video_id: str):
     
     try:
         # Download the frame data
-        app_logger.log_info(f"Downloading first frame for video: {video_id}")
+        # app_logger.log_info(f"Downloading first frame for video: {video_id}")
         response = await asyncio.to_thread(
             s3_client.get_object,
             Bucket=settings.PROCESSING_BUCKET, 
@@ -164,7 +164,7 @@ async def get_first_video_frame(video_id: str):
         )
         frame_data = response['Body'].read()
         
-        app_logger.log_info(f"Successfully retrieved first frame for video: {video_id}")
+        # app_logger.log_info(f"Successfully retrieved first frame for video: {video_id}")
         return StreamingResponse(BytesIO(frame_data), media_type="image/jpeg")
     
     except Exception as e:
@@ -201,12 +201,12 @@ async def get_first_video_frame(video_id: str):
 ## Get all video frames
 ########################################################
 async def get_all_video_frames(video_id: str) -> List[dict]:
-    app_logger.log_info(f"Received request for video frames: {video_id}")
+    # app_logger.log_info(f"Received request for video frames: {video_id}")
     frames_prefix = f'{video_id}/frames/'
     
     try:
         # List objects with the frames prefix
-        app_logger.log_info(f"Listing objects with prefix: {frames_prefix}")
+        # app_logger.log_info(f"Listing objects with prefix: {frames_prefix}")
         paginator = s3_client.get_paginator('list_objects_v2')
         pages = paginator.paginate(Bucket=settings.PROCESSING_BUCKET, Prefix=frames_prefix)
         
@@ -235,10 +235,10 @@ async def get_all_video_frames(video_id: str) -> List[dict]:
                 except Exception as e:
                     app_logger.log_error(f"Error generating signed URL for object {obj['Key']}: {str(e)}", exc_info=True)
             
-            app_logger.log_info(f"Processed {processed_objects}/{total_objects} objects")
+            # app_logger.log_info(f"Processed {processed_objects}/{total_objects} objects")
 
         sorted_frames = sorted(frames, key=lambda x: x["number"])
-        app_logger.log_info(f"Returning {len(sorted_frames)} frames for video {video_id}")
+        # app_logger.log_info(f"Returning {len(sorted_frames)} frames for video {video_id}")
         return sorted_frames
 
     except Exception as e:

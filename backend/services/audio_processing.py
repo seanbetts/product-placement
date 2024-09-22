@@ -245,7 +245,7 @@ async def process_transcription_response(vlogger, s3_client, video_id: str):
 async def get_transcript(video_id: str):
     transcript_key = f'{video_id}/transcripts/transcript.json'
     
-    app_logger.log_info(f"Attempting to retrieve transcript for video: {video_id}")
+    # app_logger.log_info(f"Attempting to retrieve transcript for video: {video_id}")
     
     try:
         response = s3_client.get_object(
@@ -255,7 +255,7 @@ async def get_transcript(video_id: str):
         transcript_data = response['Body'].read()
         
         transcript = json.loads(transcript_data.decode('utf-8'))
-        app_logger.log_info(f"Successfully retrieved transcript for video: {video_id}")
+        # app_logger.log_info(f"Successfully retrieved transcript for video: {video_id}")
         
         return transcript
     

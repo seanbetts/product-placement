@@ -165,7 +165,7 @@ async def get_processed_videos():
     
     try:
         # Get the list of completed video IDs
-        app_logger.log_info("Retrieving list of completed video IDs")
+        # app_logger.log_info("Retrieving list of completed video IDs")
         response = await asyncio.to_thread(
             s3_client.get_object,
             Bucket=settings.PROCESSING_BUCKET,
@@ -196,7 +196,7 @@ async def get_processed_videos():
             except Exception as e:
                 app_logger.log_error(f"Error retrieving details for video {video_id}: {str(e)}", exc_info=True)
 
-        app_logger.log_info(f"Returning {len(processed_videos)} processed videos")
+        # app_logger.log_info(f"Returning {len(processed_videos)} processed videos")
         return processed_videos
 
     except ClientError as e:
