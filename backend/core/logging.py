@@ -14,30 +14,11 @@ from utils.decorators import retry
 
 s3_client = boto3.client('s3')
 
-class StatusCheckFilter(logging.Filter):
-    def filter(self, record):
-        return not getattr(record, 'skip_logging', False)
-
-def setup_root_logger():
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
-    root_logger.addFilter(StatusCheckFilter())
-
-setup_root_logger()
-
 # Global tracker for active loggers
 active_loggers = {}
 
 # VideoLogger class for monitoring performance of video uploads and processing
 class VideoLogger:
-    root_logger = None
-
-    @classmethod
-    def setup_root_logger(cls):
-        if cls.root_logger is None:
-            cls.root_logger = logging.getLogger("VideoProcessor")
-            cls.root_logger.setLevel(logging.INFO)
-
     def __init__(self, video_id, is_api_log=False):
         self.video_id = video_id
         self.is_api_log = is_api_log
@@ -53,7 +34,6 @@ class VideoLogger:
         self.last_upload_time = time.time()
 
     def _get_logger(self):
-        VideoLogger.setup_root_logger()
         logger = logging.getLogger(f"VideoProcessor.{self.video_id}")
         logger.setLevel(logging.INFO)
 

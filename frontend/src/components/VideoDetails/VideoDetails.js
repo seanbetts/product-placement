@@ -13,7 +13,9 @@ import {
   Tooltip,
   IconButton,
   Snackbar,
-  Alert
+  Alert,
+  useTheme,
+  useMediaQuery
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import SaveIcon from '@mui/icons-material/Save';
@@ -43,6 +45,8 @@ const TranscriptTable = React.lazy(() => import('./TranscriptTable'));
 const VideoFrames = React.lazy(() => import('./VideoFrames'));
 
 const VideoDetails = () => {
+  const theme = useTheme();
+  const isLargeScreen = useMediaQuery(theme.breakpoints.up('md'));
   // eslint-disable-next-line
   const [isPending, startTransition] = useTransition();
   const { videoId } = useParams();
@@ -169,6 +173,34 @@ const VideoDetails = () => {
     }
   }, [videoId, video?.name, dispatch, getFileExtension]);
 
+  const renderVideoPlaceholder = useMemo(() => {
+    return (
+      <Box
+        sx={{
+          width: '100%',
+          paddingTop: '56.25%', // 16:9 Aspect Ratio
+          position: 'relative',
+          bgcolor: 'grey.300',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}
+      >
+        <Typography
+          variant="h6"
+          sx={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+          }}
+        >
+          Video Player Placeholder
+        </Typography>
+      </Box>
+    );
+  }, []);
+
   const renderVideoDetails = useMemo(() => {
     if (!video) return null;
 
@@ -179,7 +211,7 @@ const VideoDetails = () => {
     } = video;
 
     return (
-      <Box sx={{ mt: 2, mb: 4 }}>
+      <Box>
         <Typography variant="body1">
           <strong>Uploaded:</strong> {formatDate(total_processing_start_time)}
         </Typography>
@@ -395,7 +427,19 @@ const VideoDetails = () => {
         </Typography>
       )}
 
-      {renderVideoDetails}
+      <Grid container sx={{ mt: 2, mb: 4 }}>
+        <Grid item xs={12} md={5.5} sx={{ pr: isLargeScreen ? 2 : 0, pb: isLargeScreen ? 0 : 2 }}>
+          {renderVideoPlaceholder}
+        </Grid>
+        {isLargeScreen && (
+          <Grid item sx={{ display: 'flex', justifyContent: 'center', width: '1px', margin: '15px' }}>
+            <Divider orientation="vertical" flexItem />
+          </Grid>
+        )}
+        <Grid item xs={12} md={5.5} sx={{ pl: isLargeScreen ? 2 : 0, pt: isLargeScreen ? 0 : 2 }}>
+          {renderVideoDetails}
+        </Grid>
+      </Grid>
 
       <Divider sx={{ my: 4 }} />
 

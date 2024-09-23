@@ -1,11 +1,9 @@
 import os
-import logging
 from fastapi import FastAPI
 from api.routes import router
 from core.config import settings
 from core.logging import AppLogger
 from core.middleware import add_middleware
-from core.custom_logging import CustomAccessFormatter, SkipAccessFilter
 import uvicorn
 
 # Create a global instance of AppLogger
@@ -30,39 +28,7 @@ async def on_startup():
 async def on_shutdown():
     app_logger.log_info("FastAPI application shutdown initiated")
 
-# Configure Uvicorn logging
-uvicorn_access_logger = logging.getLogger("uvicorn.access")
-uvicorn_access_logger.addFilter(SkipAccessFilter())
-
 # Run the application
 if __name__ == "__main__":
     app_logger.log_info(f"Starting server on port {settings.PORT}")
-    uvicorn.run(
-        app, 
-        host="0.0.0.0", 
-        port=settings.PORT, 
-        log_level="info",
-        log_config={
-            "version": 1,
-            "formatters": {
-                "access": {
-                    "()": CustomAccessFormatter,
-                    "fmt": '%(client_addr)s - "%(request_line)s" %(status_code)s'
-                }
-            },
-            "handlers": {
-                "access": {
-                    "formatter": "access",
-                    "class": "logging.StreamHandler",
-                    "stream": "ext://sys.stdout",
-                }
-            },
-            "loggers": {
-                "uvicorn.access": {
-                    "handlers": ["access"],
-                    "level": "INFO",
-                    "propagate": False,
-                }
-            },
-        }
-    )
+    uvicorn.run(app, host="0.0.0.0", port=settings.PORT, log_level="info")
