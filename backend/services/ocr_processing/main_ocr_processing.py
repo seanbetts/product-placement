@@ -3,9 +3,11 @@ import json
 import asyncio
 import boto3
 from typing import Tuple, Dict
+from concurrent.futures import ThreadPoolExecutor
 from botocore.exceptions import ClientError
 from core.config import settings
 from core.logging import AppLogger, dual_log
+from core.aws import get_s3_client
 from models.status_tracker import StatusTracker
 from utils import utils
 from utils.decorators import retry
@@ -18,27 +20,31 @@ app_logger = AppLogger()
 # Initialize Rekognition client
 rekognition_client = boto3.client('rekognition', region_name=settings.AWS_DEFAULT_REGION)
 
+# Create a thread pool executor
+thread_pool = ThreadPoolExecutor()
+
 ## Runs OCR processing for an uploaded video
 ########################################################
-async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 'StatusTracker', s3_client) -> Dict:
+async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 'StatusTracker') -> Dict:
     @vlogger.log_performance
     async def _process_ocr():
         vlogger.logger.info(f"Detecting text in video: {video_id}")
         ocr_start_time = time.time()
 
+        s3_client = await get_s3_client()
+
         try:
-            # Synchronous S3 listing, run in a separate thread
-            def list_objects_sync(prefix):
+             # Asynchronous S3 listing
+            async def list_objects_async(prefix):
                 all_objects = []
                 paginator = s3_client.get_paginator('list_objects_v2')
-                page_iterator = paginator.paginate(Bucket=settings.PROCESSING_BUCKET, Prefix=prefix)
-                for page in page_iterator:
+                async for page in paginator.paginate(Bucket=settings.PROCESSING_BUCKET, Prefix=prefix):
                     all_objects.extend(page.get('Contents', []))
                     vlogger.logger.info(f"Retrieved {len(all_objects)} objects so far for video: {video_id}")
                 return all_objects
 
             vlogger.logger.info(f"Starting S3 listing for video: {video_id}")
-            frame_objects = await asyncio.to_thread(list_objects_sync, f'{video_id}/frames/')
+            frame_objects = await list_objects_async(f'{video_id}/frames/')
             vlogger.logger.info(f"Completed S3 listing for video: {video_id}. Total frames: {len(frame_objects)}")
 
             total_frames = len(frame_objects)
@@ -56,7 +62,6 @@ async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 
                 tasks = [
                     process_single_frame_ocr(
                         vlogger,
-                        s3_client,
                         video_id,
                         int(frame['Key'].split('/')[-1].split('.')[0]),
                         video_resolution
@@ -92,10 +97,10 @@ async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 
             raw_ocr_results.sort(key=lambda x: x['frame_number'])
 
             # Store raw OCR results
-            @retry(exceptions=(ClientError,), tries=3, delay=1, backoff=2)
-            def upload_raw_ocr_results():
+            @retry(exceptions=(ClientError), tries=3, delay=1, backoff=2)
+            async def upload_raw_ocr_results(s3_client, video_id, raw_ocr_results):
                 raw_ocr_json = json.dumps(raw_ocr_results, indent=2)
-                s3_client.put_object(
+                await s3_client.put_object(
                     Bucket=settings.PROCESSING_BUCKET,
                     Key=f'{video_id}/ocr/raw_ocr.json',
                     Body=raw_ocr_json,
@@ -104,7 +109,7 @@ async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 
                 return len(raw_ocr_json)
 
             try:
-                uploaded_size = await asyncio.to_thread(upload_raw_ocr_results)
+                uploaded_size = await upload_raw_ocr_results(s3_client, video_id, raw_ocr_results)
                 vlogger.log_s3_operation("upload", uploaded_size)
                 dual_log(vlogger, app_logger, 'info', f"Saved raw OCR results for video: {video_id}")
             except Exception as e:
@@ -137,25 +142,27 @@ async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 
 
 ## Perform OCR on a single video frame image
 ########################################################
-async def process_single_frame_ocr(vlogger, s3_client, video_id: str, frame_number: int, video_resolution: Tuple[int, int]):
+async def process_single_frame_ocr(vlogger, video_id: str, frame_number: int, video_resolution: Tuple[int, int]):
     @vlogger.log_performance
     async def _process_single_frame_ocr():
         try:
+            s3_client = await get_s3_client()
+
             # Get the frame from S3
             vlogger.logger.debug(f"Retrieving frame {frame_number} for video {video_id}")
-            response = await vlogger.log_performance(asyncio.to_thread)(
-                s3_client.get_object,
+            response = await s3_client.get_object(
                 Bucket=settings.PROCESSING_BUCKET,
                 Key=f'{video_id}/frames/{frame_number:06d}.jpg'
             )
-            image_content = response['Body'].read()
+            image_content = await response['Body'].read()
             vlogger.log_s3_operation("download", len(image_content))
 
-            # Perform OCR using Amazon Rekognition
+            # Perform OCR using Amazon Rekognition in a separate thread
             vlogger.logger.debug(f"Performing OCR on frame {frame_number} for video {video_id}")
-            rekognition_response = await vlogger.log_performance(asyncio.to_thread)(
-                rekognition_client.detect_text,
-                Image={'Bytes': image_content}
+            loop = asyncio.get_running_loop()
+            rekognition_response = await loop.run_in_executor(
+                thread_pool,
+                lambda: rekognition_client.detect_text(Image={'Bytes': image_content})
             )
 
             # Process the Rekognition response
@@ -202,7 +209,7 @@ async def process_single_frame_ocr(vlogger, s3_client, video_id: str, frame_numb
                 return processed_data, raw_data
 
         except Exception as e:
-            vlogger.logger.error(f"Error processing OCR for frame {frame_number} of video {video_id}: {str(e)}", exc_info=True)
+            dual_log(vlogger, app_logger, 'error', f"Error processing OCR for frame {frame_number} of video {video_id}: {str(e)}", exc_info=True)
             return None, None
 
     return await _process_single_frame_ocr()
@@ -210,62 +217,64 @@ async def process_single_frame_ocr(vlogger, s3_client, video_id: str, frame_numb
 
 ## Post processing on raw OCR data
 ########################################################
-async def post_process_ocr(vlogger, video_id: str, fps: float, video_resolution: Tuple[int, int], s3_client, status_tracker: StatusTracker):
+async def post_process_ocr(vlogger, video_id: str, fps: float, video_resolution: Tuple[int, int], status_tracker: StatusTracker):
     @vlogger.log_performance
     async def _post_process_ocr():
         try:
             # Assume post-processing is 20% of the total OCR process
-            total_steps = 6
+            total_steps = 7
             step_progress = 20 / total_steps
 
             await status_tracker.update_process_status("ocr", "in_progress", 80)  # Start at 80%
 
             # Load OCR results
             vlogger.logger.info(f"Loading OCR results for video: {video_id}")
-            ocr_results = await vlogger.log_performance(s3_operations.load_ocr_results)(vlogger, s3_client, video_id)
+            ocr_results = await s3_operations.load_ocr_results(vlogger, video_id)
             vlogger.logger.info(f"Loaded {len(ocr_results)} OCR results for video: {video_id}")
             await status_tracker.update_process_status("ocr", "in_progress", 80 + step_progress)
 
             # Step 1: Clean and consolidate OCR data
             dual_log(vlogger, app_logger, 'info', f"Cleaning and consolidating OCR data for video: {video_id}")
-            cleaned_results = await vlogger.log_performance(ocr_cleaning.clean_and_consolidate_ocr_data)(vlogger, ocr_results, video_resolution)
+            cleaned_results = await ocr_cleaning.clean_and_consolidate_ocr_data(vlogger, ocr_results, video_resolution)
             vlogger.logger.info(f"Cleaned and consolidated {len(cleaned_results)} frames for video: {video_id}")
             dual_log(vlogger, app_logger, 'info', f"Saving processed OCR results for video: {video_id}")
-            await vlogger.log_performance(s3_operations.save_processed_ocr_results)(vlogger, s3_client, video_id, cleaned_results)
+            await s3_operations.save_processed_ocr_results(vlogger, video_id, cleaned_results)
             vlogger.log_s3_operation("upload", len(json.dumps(cleaned_results)))
             await status_tracker.update_process_status("ocr", "in_progress", 80 + 2 * step_progress)
 
             # Step 2: Create word cloud
             dual_log(vlogger, app_logger, 'info', f"Creating word cloud for video: {video_id}")
-            await utils.create_word_cloud(vlogger, s3_client, video_id, cleaned_results)
+            await utils.create_word_cloud(vlogger, video_id, cleaned_results)
             await status_tracker.update_process_status("ocr", "in_progress", 80 + 3 * step_progress)
 
             # Step 3: Detect brands and interpolate
             dual_log(vlogger, app_logger, 'info', f"Detecting brands and interpolating for video: {video_id}")
-            brand_results, brand_appearances = await vlogger.log_performance(ocr_brand_matching.detect_brands_and_interpolate)(vlogger, cleaned_results, fps, video_resolution)
+            brand_results, brand_appearances = await ocr_brand_matching.detect_brands_and_interpolate(vlogger, cleaned_results, fps, video_resolution)
             vlogger.logger.info(f"Detected {len(brand_appearances)} unique brands for video: {video_id}")
             await status_tracker.update_process_status("ocr", "in_progress", 80 + 4 * step_progress)
 
             # Step 4: Filter brand results
             dual_log(vlogger, app_logger, 'info', f"Filtering brand results for video: {video_id}")
-            filtered_brand_results = await vlogger.log_performance(ocr_cleaning.filter_brand_results)(vlogger, brand_results, brand_appearances, fps)
+            filtered_brand_results = await ocr_cleaning.filter_brand_results(vlogger, brand_results, brand_appearances, fps)
             await status_tracker.update_process_status("ocr", "in_progress", 80 + 5 * step_progress)
 
             # Step 5: Save filtered brands OCR results
             vlogger.logger.info(f"Saving filtered brand OCR results for video: {video_id}")
-            await vlogger.log_performance(s3_operations.save_brands_ocr_results)(vlogger, s3_client, video_id, filtered_brand_results)
+            await s3_operations.save_brands_ocr_results(vlogger, video_id, filtered_brand_results)
+            await status_tracker.update_process_status("ocr", "in_progress", 80 + 6 * step_progress)
             vlogger.log_s3_operation("upload", len(json.dumps(filtered_brand_results)))
 
             # Step 6: Create and save brand table
             dual_log(vlogger, app_logger, 'info', f"Creating and saving brand table for video: {video_id}")
-            brand_stats = await vlogger.log_performance(s3_operations.create_and_save_brand_table)(vlogger, s3_client, video_id, brand_appearances, fps)
+            brand_stats = await s3_operations.create_and_save_brand_table(vlogger, video_id, brand_appearances, fps)
             vlogger.logger.info(f"Created brand table with {len(brand_stats)} entries for video: {video_id}")
+            await status_tracker.update_process_status("ocr", "in_progress", 100)
 
             dual_log(vlogger, app_logger, 'info', f"Completed post-processing OCR for video: {video_id}")
             return brand_stats
         except Exception as e:
             dual_log(vlogger, app_logger, 'error', f"Error in post_process_ocr for video {video_id}: {str(e)}", exc_info=True)
-            await status_tracker.update_process_status("ocr", "error", 80)  # Maintain progress but mark as error
+            await status_tracker.update_process_status("ocr", "error", 80)
             await status_tracker.set_error(f"Error in OCR post-processing: {str(e)}")
             raise
 

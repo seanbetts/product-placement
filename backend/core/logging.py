@@ -3,16 +3,14 @@ import time
 import psutil
 import os
 import tempfile
-import asyncio
-import boto3
 import atexit
-from botocore.exceptions import ClientError
+import asyncio
 from functools import wraps
 from contextlib import contextmanager
 from core.config import settings
+from core.aws import get_s3_client_sync
 from utils.decorators import retry
-
-s3_client = boto3.client('s3')
+from botocore.exceptions import ClientError
 
 # Global tracker for active loggers
 active_loggers = {}
@@ -55,16 +53,13 @@ class VideoLogger:
 
     def log_performance(self, func):
         @wraps(func)
-        async def wrapper(*args, **kwargs):
+        async def async_wrapper(*args, **kwargs):
             start_time = time.time()
             start_memory = psutil.virtual_memory().used
             start_cpu = psutil.cpu_percent()
 
             try:
-                if asyncio.iscoroutinefunction(func):
-                    result = await func(*args, **kwargs)
-                else:
-                    result = func(*args, **kwargs)
+                result = await func(*args, **kwargs)
                 return result
             except Exception as e:
                 self.logger.exception(f"Error in {func.__name__}: {str(e)}")
@@ -85,7 +80,39 @@ class VideoLogger:
                 
                 self._check_and_upload_log()
 
-        return wrapper
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            start_time = time.time()
+            start_memory = psutil.virtual_memory().used
+            start_cpu = psutil.cpu_percent()
+
+            try:
+                result = func(*args, **kwargs)
+                return result
+            except Exception as e:
+                self.logger.exception(f"Error in {func.__name__}: {str(e)}")
+                raise
+            finally:
+                end_time = time.time()
+                end_memory = psutil.virtual_memory().used
+                end_cpu = psutil.cpu_percent()
+
+                duration = end_time - start_time
+                memory_used = end_memory - start_memory
+                cpu_used = end_cpu - start_cpu
+
+                self.logger.info(f"Function {func.__name__} performance:"
+                                f"\n\tTime: {duration:.2f} seconds"
+                                f"\n\tMemory: {memory_used / (1024 * 1024):.2f} MB"
+                                f"\n\tCPU: {cpu_used:.2f}%")
+                
+                self._check_and_upload_log()
+
+        # Return the appropriate wrapper based on whether the function is async
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        else:
+            return sync_wrapper
 
     def log_s3_operation(self, operation_type, size):
         self.s3_operations[operation_type] += 1
@@ -104,6 +131,8 @@ class VideoLogger:
     @retry(exceptions=(ClientError,), tries=3, delay=1, backoff=2)
     def _upload_log_to_s3(self):
         try:
+            s3_client = get_s3_client_sync(use_acceleration=True)
+
             if not os.path.exists(self.log_file):
                 self.logger.warning(f"Log file does not exist: {self.log_file}")
                 return

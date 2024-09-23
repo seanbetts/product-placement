@@ -10,7 +10,6 @@ from typing import AsyncGenerator
 from matplotlib import font_manager
 from typing import Tuple, Dict, List, AsyncGenerator
 from PIL import Image
-from functools import wraps
 from collections import Counter
 from thefuzz import fuzz
 from wordcloud import WordCloud
@@ -21,26 +20,24 @@ from core.logging import AppLogger
 # Create a global instance of AppLogger
 app_logger = AppLogger()
 
-# Create a global instance of s3_client
-s3_client = get_s3_client()
-
 ## Gets the resolution of a video
 ########################################################
 async def get_video_resolution(vlogger, video_id: str) -> Tuple[int, int]:
     @vlogger.log_performance
     async def _get_video_resolution():
         try:
+            s3_client = await get_s3_client()
+
             # Construct the path to the first frame
             first_frame_path = f'{video_id}/frames/000000.jpg'
             vlogger.logger.info(f"Attempting to retrieve first frame for video: {video_id}")
             
             # Download the frame data
-            response = await asyncio.to_thread(
-                s3_client.get_object,
+            response = await s3_client.get_object(
                 Bucket=settings.PROCESSING_BUCKET,
                 Key=first_frame_path
             )
-            frame_data = response['Body'].read()
+            frame_data = await response['Body'].read()
             vlogger.log_s3_operation("download", len(frame_data))
             
             # Open the image using PIL
@@ -70,11 +67,13 @@ async def update_video_name(video_id: str, new_name: str):
 
     try:
         # Update status.json
+
+        s3_client = await get_s3_client()
+
         status_key = f'{video_id}/status.json'
         app_logger.log_info(f"Updating status.json for video {video_id}")
         
-        response = await asyncio.to_thread (
-            s3_client.get_object,
+        response = await s3_client.get_object(
             Bucket=settings.PROCESSING_BUCKET, 
             Key=status_key
         )
@@ -84,8 +83,7 @@ async def update_video_name(video_id: str, new_name: str):
         status_data['name'] = new_name
         
         updated_status_data = json.dumps(status_data)
-        await asyncio.to_thread (
-            s3_client.put_object,
+        await s3_client.put_object(
             Bucket=settings.PROCESSING_BUCKET, 
             Key=status_key,
             Body=updated_status_data, 
@@ -96,8 +94,7 @@ async def update_video_name(video_id: str, new_name: str):
         stats_key = f'{video_id}/processing_stats.json'
         app_logger.log_info(f"Updating processing_stats.json for video {video_id}")
         
-        response = await asyncio.to_thread (
-            s3_client.get_object,
+        response = await s3_client.get_object(
             Bucket=settings.PROCESSING_BUCKET, 
             Key=stats_key
         )
@@ -107,8 +104,7 @@ async def update_video_name(video_id: str, new_name: str):
         stats_data['name'] = new_name
         
         updated_stats_data = json.dumps(stats_data)
-        await asyncio.to_thread (
-            s3_client.put_object,
+        await s3_client.put_object(
             Bucket=settings.PROCESSING_BUCKET, 
             Key=stats_key,
             Body=updated_stats_data, 
@@ -198,7 +194,7 @@ async def convert_relative_bbox(vlogger, bbox: Dict, video_resolution: Tuple[int
 
 ## Create wordcloud
 ########################################################
-async def create_word_cloud(vlogger, s3_client, video_id: str, cleaned_results: List[Dict]):
+async def create_word_cloud(vlogger, video_id: str, cleaned_results: List[Dict]):
     """
     Create a styled word cloud from the processed OCR results, using individual text annotations
     and a default system font. Only includes words with confidence above the minimum threshold
@@ -206,6 +202,8 @@ async def create_word_cloud(vlogger, s3_client, video_id: str, cleaned_results: 
     """
     @vlogger.log_performance
     async def _create_word_cloud():
+        s3_client = await get_s3_client()
+
         # Create an enchant dictionary for English
         d = enchant.Dict("en_US")
         

@@ -28,7 +28,7 @@ async def upload_video_endpoint(
             
             try:
                 vlogger.logger.debug(f"Uploading chunk {chunk_number}/{total_chunks} for video ID: {video_id or 'new video'}")
-                result = await vlogger.log_performance(s3_operations.upload_video)(
+                result = await s3_operations.upload_video(
                     vlogger,
                     background_tasks,
                     file,

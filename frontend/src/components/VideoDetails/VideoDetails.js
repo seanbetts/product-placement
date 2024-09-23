@@ -426,7 +426,7 @@ const VideoDetails = () => {
           ID: {videoId}
         </Typography>
       )}
-
+      <Divider sx={{ my: 4 }} />
       <Grid container sx={{ mt: 2, mb: 4 }}>
         <Grid item xs={12} md={5.5} sx={{ pr: isLargeScreen ? 2 : 0, pb: isLargeScreen ? 0 : 2 }}>
           {renderVideoPlaceholder}

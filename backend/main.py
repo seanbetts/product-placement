@@ -5,6 +5,7 @@ from core.config import settings
 from core.logging import AppLogger
 from core.middleware import add_middleware
 import uvicorn
+from core import aws
 
 # Create a global instance of AppLogger
 app_logger = AppLogger()
@@ -27,6 +28,7 @@ async def on_startup():
 @app.on_event("shutdown")
 async def on_shutdown():
     app_logger.log_info("FastAPI application shutdown initiated")
+    await aws.close_s3_client()  # Close the S3 client
 
 # Run the application
 if __name__ == "__main__":

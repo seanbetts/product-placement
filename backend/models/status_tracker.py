@@ -59,11 +59,10 @@ class StatusTracker:
 
     async def update_s3_status(self):
         try: 
-            s3_client = get_s3_client()
+            s3_client = await get_s3_client()
             current_status = self.get_status()
             status_key = f'{self.video_id}/status.json'
-            await asyncio.to_thread(
-                s3_client.put_object,
+            await s3_client.put_object(
                 Bucket=settings.PROCESSING_BUCKET,
                 Key=status_key,
                 Body=json.dumps(current_status),

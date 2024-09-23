@@ -16,10 +16,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Create a global instance of AppLogger
 app_logger = AppLogger()
 
-
-# Create a global instance of s3_client
-s3_client = get_s3_client()
-
 TEMP_DIR = settings.TEMP_DIR
 SMOOTHING_WINDOW = settings.SMOOTHING_WINDOW
 
@@ -31,10 +27,11 @@ async def process_video_frames(vlogger, video_id: str):
         dual_log(vlogger, app_logger, 'info', f"Starting post-processing for video {video_id}")
         
         try:
+            s3_client = await get_s3_client()
+
             # Load OCR results
             vlogger.logger.info(f"Loading OCR results for video {video_id}")
-            ocr_results_obj = await vlogger.log_performance(asyncio.to_thread)(
-                s3_client.get_object,
+            ocr_results_obj = await s3_client.get_object(
                 Bucket=settings.PROCESSING_BUCKET,
                 Key=f'{video_id}/ocr/brands_ocr.json'
             )
@@ -50,7 +47,7 @@ async def process_video_frames(vlogger, video_id: str):
                 # Process frames in parallel
                 vlogger.logger.info(f"Starting parallel processing of frames for video {video_id}")
                 with ThreadPoolExecutor(max_workers=settings.MAX_WORKERS) as executor:
-                    futures = [executor.submit(process_single_frame, vlogger, video_id, frame_data, s3_client, processed_frames_dir)
+                    futures = [executor.submit(process_single_frame, vlogger, video_id, frame_data, processed_frames_dir)
                                for frame_data in ocr_results]
                     total_frames = len(futures)
                     processed_frames = 0
@@ -79,9 +76,11 @@ async def process_video_frames(vlogger, video_id: str):
 ## xxx
 ########################################################
 @retry(exceptions=(Exception,), tries=3, delay=1, backoff=2)
-async def process_single_frame(vlogger, video_id: str, frame_data: dict, s3_client, processed_frames_dir: str):
+async def process_single_frame(vlogger, video_id: str, frame_data: dict, processed_frames_dir: str):
     @vlogger.log_performance
     async def _process_single_frame():
+        s3_client = await get_s3_client()
+
         try:
             frame_number = int(frame_data['frame_number'])
         except (KeyError, ValueError) as e:
@@ -92,8 +91,7 @@ async def process_single_frame(vlogger, video_id: str, frame_data: dict, s3_clie
         
         try:
             vlogger.logger.debug(f"Downloading frame {frame_number} for video {video_id}")
-            frame_obj = await vlogger.log_performance(asyncio.to_thread)(
-                s3_client.get_object,
+            frame_obj = await s3_client.get_object(
                 Bucket=settings.PROCESSING_BUCKET,
                 Key=original_frame_key
             )
@@ -228,12 +226,13 @@ async def reconstruct_video(vlogger, video_id: str, temp_dir: str):
         final_output_path = os.path.join(temp_dir, f"{video_id}_final.mp4")
         audio_path = os.path.join(temp_dir, f"{video_id}_audio.mp3")
 
+        s3_client = await get_s3_client()
+
         try:
             # Fetch processing stats
             try:
                 vlogger.logger.debug(f"Fetching processing stats for video {video_id}")
-                stats_obj = await vlogger.log_performance(asyncio.to_thread)(
-                    s3_client.get_object,
+                stats_obj = await s3_client.get_object(
                     Bucket=settings.PROCESSING_BUCKET,
                     Key=f'{video_id}/processing_stats.json'
                 )

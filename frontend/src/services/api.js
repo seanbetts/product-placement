@@ -288,6 +288,19 @@ const api = {
   // New function to invalidate all caches
   invalidateAllCaches: () => {
     localStorage.clear();
+  },
+
+  deleteVideo: async (videoId) => {
+    try {
+      const response = await axiosInstance.delete(`${API_BASE_URL}/${videoId}/video`);
+      
+      // Invalidate all caches related to this video
+      api.invalidateVideoCache(videoId);
+      
+      return response.data;
+    } catch (error) {
+      throw handleApiError(error);
+    }
   }
 };
 

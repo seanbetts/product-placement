@@ -126,7 +126,7 @@ async def detect_brands_and_interpolate(vlogger, cleaned_results: List[Dict], fp
                         vlogger.logger.debug(f"Brand score {detection.get('brand_score')} below threshold {params['low_confidence_threshold']}")
                         continue
 
-                    text_diff_score = await asyncio.to_thread(fuzz.ratio, detection.get('original_text', '').lower(), detection['brand_match'].lower())
+                    text_diff_score = fuzz.ratio(detection.get('original_text', '').lower(), detection['brand_match'].lower())
                     if text_diff_score < params["text_difference_threshold"]:
                         vlogger.logger.debug(f"Text difference score {text_diff_score} below threshold {params['text_difference_threshold']}")
                         continue

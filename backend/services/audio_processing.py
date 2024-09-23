@@ -12,9 +12,6 @@ from botocore.exceptions import ClientError
 # Create a global instance of AppLogger
 app_logger = AppLogger()
 
-# Create a global instance of s3_client
-s3_client = get_s3_client()
-
 ## Transcribes the video audio
 ########################################################
 import asyncio
@@ -22,18 +19,19 @@ import time
 import boto3
 from botocore.exceptions import ClientError
 
-async def transcribe_audio(vlogger, video_id: str, s3_client, video_length: float, status_tracker: StatusTracker):
+async def transcribe_audio(vlogger, video_id: str, video_length: float, status_tracker: StatusTracker):
     @vlogger.log_performance
     async def _transcribe_audio():
         vlogger.logger.info(f"Transcribing audio for video: {video_id}")
         audio_key = f'{video_id}/audio.mp3'
         transcript_key = f"{video_id}/transcripts/audio_transcript_{video_id}.json"
 
+        s3_client = await get_s3_client()
+
         try:
             # Check if the audio file exists
             try:
-                await vlogger.log_performance(asyncio.to_thread)(
-                    s3_client.head_object,
+                await s3_client.head_object(
                     Bucket=settings.PROCESSING_BUCKET,
                     Key=audio_key
                 )
@@ -97,8 +95,7 @@ async def transcribe_audio(vlogger, video_id: str, s3_client, video_length: floa
                 max_retries = 10
                 for i in range(max_retries):
                     try:
-                        await vlogger.log_performance(asyncio.to_thread)(
-                            s3_client.head_object,
+                        await s3_client.head_object(
                             Bucket=settings.PROCESSING_BUCKET,
                             Key=transcript_key
                         )
@@ -111,7 +108,7 @@ async def transcribe_audio(vlogger, video_id: str, s3_client, video_length: floa
                             raise FileNotFoundError(f"Transcript file not found for video {video_id} after {max_retries} retries")
 
                 # Process the response and create transcripts
-                plain_transcript, json_transcript, word_count, overall_confidence = await process_transcription_response(vlogger, s3_client, video_id)
+                plain_transcript, json_transcript, word_count, overall_confidence = await process_transcription_response(vlogger, video_id)
 
                 vlogger.logger.info(f"Transcripts processed and uploaded for video: {video_id}")
 
@@ -143,13 +140,15 @@ async def transcribe_audio(vlogger, video_id: str, s3_client, video_length: floa
 
 ## Processes the transcription
 ########################################################
-async def process_transcription_response(vlogger, s3_client, video_id: str):
+async def process_transcription_response(vlogger, video_id: str):
     @vlogger.log_performance
     async def _process_transcription_response():
         plain_transcript = ""
         json_transcript = []
         word_count = 0
         total_confidence = 0
+
+        s3_client = await get_s3_client()
 
         try:
             # Find the transcript JSON file
@@ -160,7 +159,7 @@ async def process_transcription_response(vlogger, s3_client, video_id: str):
                     Bucket=settings.PROCESSING_BUCKET, 
                     Key=transcript_key
                 )
-                transcript_content = response['Body'].read()
+                transcript_content = await response['Body'].read()
                 vlogger.log_s3_operation("download", len(transcript_content))
                 transcript_data = json.loads(transcript_content.decode('utf-8'))
                 vlogger.logger.info(f"Successfully retrieved transcript file for video {video_id}")
@@ -250,13 +249,15 @@ async def get_transcript(video_id: str):
     transcript_key = f'{video_id}/transcripts/transcript.json'
     
     # app_logger.log_info(f"Attempting to retrieve transcript for video: {video_id}")
+
+    s3_client = await get_s3_client()
     
     try:
-        response = s3_client.get_object(
+        response = await s3_client.get_object(
             Bucket=settings.PROCESSING_BUCKET, 
             Key=transcript_key
         )
-        transcript_data = response['Body'].read()
+        transcript_data = await response['Body'].read()
         
         transcript = json.loads(transcript_data.decode('utf-8'))
         # app_logger.log_info(f"Successfully retrieved transcript for video: {video_id}")

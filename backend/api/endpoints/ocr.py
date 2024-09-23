@@ -24,7 +24,7 @@ async def reprocess_ocr(video_id: str):
 
             try:
                 vlogger.logger.debug(f"Fetching processing stats for video: {video_id}")
-                s3_client = get_s3_client()
+                s3_client = await get_s3_client()
                 stats_obj = s3_client.get_object(Bucket=settings.PROCESSING_BUCKET, Key=f'{video_id}/processing_stats.json')
                 stats = json.loads(stats_obj['Body'].read().decode('utf-8'))
                 fps = stats['video']['video_fps']

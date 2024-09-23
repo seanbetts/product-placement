@@ -13,9 +13,6 @@ from botocore.exceptions import ClientError
 # Create a global instance of AppLogger
 app_logger = AppLogger()
 
-# Create a global instance of s3_client
-s3_client = get_s3_client()
-
 ## Get processing status
 ########################################################
 async def get_processing_status(vlogger, video_id: str) -> Dict[str, Any]:
@@ -23,15 +20,16 @@ async def get_processing_status(vlogger, video_id: str) -> Dict[str, Any]:
     async def _get_processing_status():
         vlogger.logger.info(f"Received status request for video ID: {video_id}")
         status_key = f'{video_id}/status.json'
+
+        s3_client = await get_s3_client()
         
         try:
             vlogger.logger.info(f"Attempting to retrieve status for video ID: {video_id}")
-            response = await vlogger.log_performance(asyncio.to_thread)(
-                s3_client.get_object,
+            response = await s3_client.get_object(
                 Bucket=settings.PROCESSING_BUCKET,
                 Key=status_key
             )
-            data = response['Body'].read()
+            data = await response['Body'].read()
             vlogger.log_s3_operation("download", len(data))
             status_data = json.loads(data.decode('utf-8'))
             vlogger.logger.info(f"Status retrieved for video ID {video_id}: {status_data}")
@@ -55,7 +53,7 @@ async def get_processing_status(vlogger, video_id: str) -> Dict[str, Any]:
 
 ## Update processing status
 ########################################################
-async def periodic_status_update(vlogger, video_id: str, status_tracker: StatusTracker, s3_client):
+async def periodic_status_update(vlogger, video_id: str, status_tracker: StatusTracker):
     @vlogger.log_performance
     async def _update_status():
         try:
@@ -89,16 +87,17 @@ async def mark_video_as_completed(vlogger, video_id: str):
     @vlogger.log_performance
     async def _mark_video_as_completed():
         stats_key = f'{video_id}/processing_stats.json'
+
+        s3_client = await get_s3_client()
         
         try:
             # Get the current processing stats
             vlogger.logger.info(f"Retrieving processing stats for video {video_id}")
-            response = await vlogger.log_performance(asyncio.to_thread)(
-                s3_client.get_object,
+            response = await s3_client.get_object(
                 Bucket=settings.PROCESSING_BUCKET,
                 Key=stats_key
             )
-            data = response['Body'].read()
+            data = await response['Body'].read()
             vlogger.log_s3_operation("download", len(data))
             stats_data = json.loads(data.decode('utf-8'))
 
@@ -135,15 +134,16 @@ async def mark_video_as_completed(vlogger, video_id: str):
 async def get_processing_stats(video_id: str):
     # app_logger.log_info(f"Received request for processing stats of video: {video_id}")
     stats_key = f'{video_id}/processing_stats.json'
+
+    s3_client = await get_s3_client()
     
     try:
         # app_logger.log_info(f"Attempting to retrieve processing stats for video ID: {video_id}")
-        response = await asyncio.to_thread (
-            s3_client.get_object,
+        response = await s3_client.get_object(
             Bucket=settings.PROCESSING_BUCKET, 
             Key=stats_key
         )
-        data = response['Body'].read()
+        data = await response['Body'].read()
         stats = json.loads(data.decode('utf-8'))
         # app_logger.log_info(f"Successfully retrieved processing stats for video ID: {video_id}")
         return stats
@@ -162,16 +162,17 @@ async def get_processing_stats(video_id: str):
 ########################################################
 async def get_processed_videos():
     completed_videos_key = '_completed_videos.json'
+
+    s3_client = await get_s3_client()
     
     try:
         # Get the list of completed video IDs
         # app_logger.log_info("Retrieving list of completed video IDs")
-        response = await asyncio.to_thread(
-            s3_client.get_object,
+        response = await s3_client.get_object(
             Bucket=settings.PROCESSING_BUCKET,
             Key=completed_videos_key
         )
-        data = await asyncio.to_thread(response['Body'].read)
+        data = await response['Body'].read()
         completed_video_ids = json.loads(data)
         # app_logger.log_info(f"Retrieved {len(completed_video_ids)} completed video IDs")
 
@@ -181,12 +182,11 @@ async def get_processed_videos():
                 # Get the processing_stats.json for this video
                 # app_logger.log_info(f"Retrieving processing stats for video ID: {video_id}")
                 stats_key = f'{video_id}/processing_stats.json'
-                stats_response = await asyncio.to_thread(
-                    s3_client.get_object,
+                stats_response = await s3_client.get_object(
                     Bucket=settings.PROCESSING_BUCKET,
                     Key=stats_key
                 )
-                stats_data = await asyncio.to_thread(stats_response['Body'].read)
+                stats_data = await stats_response['Body'].read()
                 stats_data = json.loads(stats_data)
                 processed_videos.append({
                     'video_id': video_id,
