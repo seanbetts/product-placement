@@ -1,10 +1,6 @@
-import os
 import time
 import cv2
-import tempfile
 import asyncio
-import concurrent.futures
-from concurrent.futures import ThreadPoolExecutor
 from typing import List
 from io import BytesIO
 from fastapi import HTTPException
@@ -15,6 +11,7 @@ from services import s3_operations
 from models.status_tracker import StatusTracker
 from core.aws import get_s3_client
 from functools import lru_cache
+from bisect import insort
 
 # Create a global instance of AppLogger
 app_logger = AppLogger()
@@ -168,35 +165,35 @@ async def get_first_video_frame(video_id: str):
 ########################################################
 async def get_all_video_frames(video_id: str) -> List[dict]:
     frames_prefix = f'{video_id}/frames/'
-
     s3_client = await get_s3_client()
-    
+    frames = []
+    total_frames_processed = 0
+    frames_returned = 0
+
     try:
         paginator = s3_client.get_paginator('list_objects_v2')
-        
-        # paginate() is not async, but you can iterate over it in an async loop if needed
         async for page in paginator.paginate(Bucket=settings.PROCESSING_BUCKET, Prefix=frames_prefix):
-            frames = []
-        
             for obj in page.get('Contents', []):
+                total_frames_processed += 1
                 try:
                     frame_number = int(obj['Key'].split('/')[-1].split('.')[0])
                     if frame_number % 50 == 0:
-                        # Generate a pre-signed URL for the frame
                         signed_url = await s3_client.generate_presigned_url(
                             'get_object',
                             Params={'Bucket': settings.PROCESSING_BUCKET, 'Key': obj['Key']},
                             ExpiresIn=3600
                         )
-                        frames.append({
+                        frame_info = {
                             "number": frame_number,
                             "url": signed_url
-                        })
+                        }
+                        insort(frames, frame_info, key=lambda x: x["number"])
+                        frames_returned += 1
                 except Exception as e:
-                    app_logger.log_error(f"Error generating signed URL for object {obj['Key']}: {str(e)}")
-        
-        sorted_frames = sorted(frames, key=lambda x: x["number"])
-        return sorted_frames
+                    app_logger.log_error(f"Error processing frame {obj['Key']}: {str(e)}")
+
+        app_logger.log_info(f"Processed {total_frames_processed} frames, returning {frames_returned} frames for video {video_id}")
+        return frames
 
     except Exception as e:
         app_logger.log_error(f"Error processing frames for video {video_id}: {str(e)}", exc_info=True)

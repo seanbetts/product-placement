@@ -247,12 +247,12 @@ const VideoDetails = () => {
           <Grid item xs={12} md={3}>
             <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
               <Typography variant="h6" gutterBottom>Video Stats</Typography>
-              <Typography><strong>Length:</strong> {video_length}</Typography>
-              <Typography><strong>Total Frames:</strong> {videoStats?.total_frames?.toLocaleString() ?? 'N/A'}</Typography>
-              <Typography><strong>Extracted Frames:</strong> {videoStats?.extracted_frames?.toLocaleString() ?? 'N/A'}</Typography>
-              <Typography><strong>Video FPS:</strong> {videoStats?.video_fps ? parseFloat(videoStats?.video_fps).toFixed(0) : 'N/A'}</Typography>
-              <Typography><strong>Processing Time:</strong> {videoStats?.video_processing_time ? parseFloat(videoStats?.video_processing_time).toFixed(0) : 'N/A'} seconds</Typography>
-              <Typography><strong>Processing Speed:</strong> {videoStats?.video_processing_speed ? parseFloat(videoStats?.video_processing_speed).toFixed(0) : 'N/A'}% of real-time</Typography>
+              <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Video Length:</Box>{' '}{video_length}</Typography>
+              <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Total Frames:</Box>{' '}{videoStats?.total_frames?.toLocaleString() ?? 'N/A'}</Typography>
+              <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Extracted Frames:</Box>{' '}{videoStats?.extracted_frames?.toLocaleString() ?? 'N/A'}</Typography>
+              <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Video FPS:</Box>{' '}{videoStats?.video_fps ? parseFloat(videoStats?.video_fps).toFixed(0) : 'N/A'}</Typography>
+              <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Processing Time:</Box>{' '}{videoStats?.video_processing_time ? parseFloat(videoStats?.video_processing_time).toFixed(0) : 'N/A'} seconds</Typography>
+              <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Processing Speed:</Box>{' '}{videoStats?.video_processing_speed ? parseFloat(videoStats?.video_processing_speed).toFixed(0) : 'N/A'}% of real-time</Typography>
               <Box sx={{ flexGrow: 1 }} />
               <Button 
                 variant="contained" 
@@ -266,9 +266,9 @@ const VideoDetails = () => {
           <Grid item xs={12} md={3}>
             <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
               <Typography variant="h6" gutterBottom>Audio Stats</Typography>
-              <Typography><strong>Length:</strong> {audio?.audio_length ? parseFloat(audio?.audio_length).toFixed(1) : 'N/A'} seconds</Typography>
-              <Typography><strong>Processing Time:</strong> {audio?.audio_processing_time ? parseFloat(audio?.audio_processing_time).toFixed(0) : 'N/A'} seconds</Typography>
-              <Typography><strong>Processing Speed:</strong> {audio?.audio_processing_speed ? parseFloat(audio?.audio_processing_speed).toFixed(0) : 'N/A'}% of real-time</Typography>
+              <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Audio Length:</Box>{' '}{audio?.audio_length ? parseFloat(audio?.audio_length).toFixed(1) : 'N/A'} seconds</Typography>
+              <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Processing Time:</Box>{' '}{audio?.audio_processing_time ? parseFloat(audio?.audio_processing_time).toFixed(0) : 'N/A'} seconds</Typography>
+              <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Processing Speed:</Box>{' '}{audio?.audio_processing_speed ? parseFloat(audio?.audio_processing_speed).toFixed(0) : 'N/A'}% of real-time</Typography>
               <Box sx={{ flexGrow: 1 }} />
               <Button 
                 variant="contained" 
@@ -282,10 +282,10 @@ const VideoDetails = () => {
           <Grid item xs={12} md={3}>
             <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
               <Typography variant="h6" gutterBottom>Transcript Stats</Typography>
-              <Typography><strong>Word Count:</strong> {transcription?.word_count?.toLocaleString() ?? 'N/A'}</Typography>
-              <Typography><strong>Processing Time:</strong> {transcription?.transcription_processing_time ? parseFloat(transcription?.transcription_processing_time).toFixed(1) : 'N/A'} seconds</Typography>
-              <Typography><strong>Confidence:</strong> {transcription?.confidence ?? 'N/A'}</Typography>
-              <Typography><strong>Transcription Speed:</strong> {transcription?.transcription_speed ? parseFloat(transcription?.transcription_speed).toFixed(0) : 'N/A'}% of real-time</Typography>
+              <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Word Count:</Box>{' '}{transcription?.word_count?.toLocaleString() ?? 'N/A'}</Typography>
+              <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Processing Time:</Box>{' '}{transcription?.transcription_time ? parseFloat(transcription?.transcription_time).toFixed(0) : 'N/A'} seconds</Typography>
+              <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Confidence:</Box>{' '} {transcription?.overall_confidence  ? parseFloat(transcription?.overall_confidence).toFixed(1) : 'N/A'}%</Typography>
+              <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Transcription Speed:</Box>{' '}{transcription?.transcription_speed ? parseFloat(transcription?.transcription_speed).toFixed(0) : 'N/A'}% of real-time</Typography>
               <Box sx={{ flexGrow: 1 }} />
               <Button 
                 variant="contained" 
@@ -301,10 +301,10 @@ const VideoDetails = () => {
               <Typography variant="h6" gutterBottom>Text Detection Stats</Typography>
               {ocr?.ocr_processing_time ? (
                 <>
-                  <Typography><strong>Frames Processed:</strong> {ocr?.frames_processed?.toLocaleString() ?? 'N/A'}</Typography>
-                  <Typography><strong>Processing Time:</strong> {ocr?.ocr_processing_time  ? parseFloat(ocr?.ocr_processing_time).toFixed(1) : 'N/A'} seconds</Typography>
-                  <Typography><strong>Frames with Text:</strong> {ocr?.frames_with_text?.toLocaleString() ?? 'N/A'}</Typography>
-                  <Typography><strong>Words Detected:</strong> {ocr?.total_words_detected?.toLocaleString() ?? 'N/A'}</Typography>
+                  <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Frames Processed:</Box>{' '}{ocr?.frames_processed?.toLocaleString() ?? 'N/A'}</Typography>
+                  <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Processing Time:</Box>{' '}{ocr?.ocr_processing_time  ? parseFloat(ocr?.ocr_processing_time).toFixed(0) : 'N/A'} seconds</Typography>
+                  <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Frames with Text:</Box>{' '}{ocr?.frames_with_text?.toLocaleString() ?? 'N/A'}</Typography>
+                  <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Words Detected:</Box>{' '}{ocr?.total_words_detected?.toLocaleString() ?? 'N/A'}</Typography>
                 </>
               ) : (
                 <Typography>Text Detection data not available</Typography>
@@ -322,10 +322,10 @@ const VideoDetails = () => {
         </Grid>
         
         <Typography variant="h6" gutterBottom>Total Processing Stats</Typography>
-        <Typography><strong>Start Time:</strong> {formatDate(total_processing_start_time)}</Typography>
-        <Typography><strong>End Time:</strong> {formatDate(total_processing_end_time)}</Typography>
-        <Typography><strong>Total Processing Time:</strong> {total_processing_time ? parseFloat(total_processing_time).toFixed(0) : 'N/A'} seconds</Typography>
-        <Typography><strong>Total Processing Speed:</strong> {total_processing_speed ? parseFloat(total_processing_speed).toFixed(0) : 'N/A'}% of real-time</Typography>
+        <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Start Time:</Box>{' '}{formatDate(total_processing_start_time)}</Typography>
+        <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>End Time:</Box>{' '}{formatDate(total_processing_end_time)}</Typography>
+        <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Total Processing Time:</Box>{' '}{total_processing_time ? parseFloat(total_processing_time).toFixed(0) : 'N/A'} seconds</Typography>
+        <Typography><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Total Processing Speed:</Box>{' '}{total_processing_speed ? parseFloat(total_processing_speed).toFixed(0) : 'N/A'}% of real-time</Typography>
       </>
     );
   }, [video, formatDate, handleDownload]);

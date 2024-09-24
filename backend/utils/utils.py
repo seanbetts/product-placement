@@ -77,7 +77,7 @@ async def update_video_name(video_id: str, new_name: str):
             Bucket=settings.PROCESSING_BUCKET, 
             Key=status_key
         )
-        status_data = response['Body'].read()
+        status_data = await response['Body'].read()
         
         status_data = json.loads(status_data.decode('utf-8'))
         status_data['name'] = new_name
@@ -98,7 +98,7 @@ async def update_video_name(video_id: str, new_name: str):
             Bucket=settings.PROCESSING_BUCKET, 
             Key=stats_key
         )
-        stats_data = response['Body'].read()
+        stats_data = await response['Body'].read()
         
         stats_data = json.loads(stats_data.decode('utf-8'))
         stats_data['name'] = new_name
