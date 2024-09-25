@@ -70,6 +70,30 @@ async def cancel_video_upload(video_id: str):
         return await _cancel_video_upload()
 ########################################################
 
+## DETECT OBJECTS (POST)
+## Detects objects in a video
+########################################################
+@router.post("/detect-objects/{video_id}")
+async def annotate_video_endpoint(video_id: str):
+    with video_logger("api-endpoints", is_api_log=True) as vlogger:
+        @vlogger.log_performance
+        async def _annotate_video_endpoint():
+            vlogger.logger.info(f"Received request to detect objects in video {video_id}")
+            status_tracker = StatusTracker(video_id)
+
+            try:
+                vlogger.logger.debug(f"Starting detecting objects in video: {video_id}")
+                await vlogger.log_performance(video_post_processing.annotate_video)(vlogger, video_id, status_tracker)
+                vlogger.logger.info(f"Object detection completed in video {video_id}")
+                return {"message": f"Object detection completed in video {video_id}"}
+
+            except Exception as e:
+                vlogger.logger.error(f"Error detecting objects in video {video_id}: {str(e)}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Error running object detection: {str(e)}")
+
+        return await _annotate_video_endpoint()
+########################################################
+
 ## ANNOTATE VIDEOS (POST)
 ## Annotates videos with brand, logos, and object detection
 ########################################################
