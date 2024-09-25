@@ -192,7 +192,7 @@ async def get_all_video_frames(video_id: str) -> List[dict]:
                 except Exception as e:
                     app_logger.log_error(f"Error processing frame {obj['Key']}: {str(e)}")
 
-        app_logger.log_info(f"Processed {total_frames_processed} frames, returning {frames_returned} frames for video {video_id}")
+        # app_logger.log_info(f"Processed {total_frames_processed} frames, returning {frames_returned} frames for video {video_id}")
         return frames
 
     except Exception as e:

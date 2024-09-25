@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback, useTransition } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { 
   Typography, 
@@ -20,6 +20,7 @@ import {
 import EditIcon from '@mui/icons-material/Edit';
 import SaveIcon from '@mui/icons-material/Save';
 import CancelIcon from '@mui/icons-material/Cancel';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import {
   fetchVideoDetails,
   fetchVideoFrames,
@@ -46,6 +47,7 @@ const VideoFrames = React.lazy(() => import('./VideoFrames'));
 
 const VideoDetails = () => {
   const theme = useTheme();
+  const navigate = useNavigate();
   const isLargeScreen = useMediaQuery(theme.breakpoints.up('md'));
   // eslint-disable-next-line
   const [isPending, startTransition] = useTransition();
@@ -93,6 +95,10 @@ const VideoDetails = () => {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  const handleBackClick = () => {
+    navigate('/history');
+  };
 
   const handleNameEdit = useCallback(() => {
     dispatch(setEditingName(video?.name || `${videoId}`));
@@ -212,15 +218,9 @@ const VideoDetails = () => {
 
     return (
       <Box>
-        <Typography variant="body1">
-          <strong>Uploaded:</strong> {formatDate(total_processing_start_time)}
-        </Typography>
-        <Typography variant="body1">
-          <strong>Video Length:</strong> {video_length}
-        </Typography>
-        <Typography variant="body1">
-          <strong>Frames Processed:</strong> {videoStats?.total_frames?.toLocaleString() ?? 'N/A'}
-        </Typography>
+        <Typography variant="body1"><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Uploaded:</Box>{' '}{formatDate(total_processing_start_time)}</Typography>
+        <Typography variant="body1"><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Video Length:</Box>{' '}{video_length}</Typography>
+        <Typography variant="body1"><Box component="span" sx={{ color: 'primary.main', fontWeight: 'bold' }}>Frames Processed:</Box>{' '}{videoStats?.total_frames?.toLocaleString() ?? 'N/A'}</Typography>
       </Box>
     );
   }, [video, formatDate]);
@@ -353,7 +353,14 @@ const VideoDetails = () => {
 
   return (
     <Box sx={{ mt: 4 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 0 }}>
+        <IconButton 
+          onClick={handleBackClick} 
+          sx={{ mr: 1 }}
+          aria-label="back to history"
+        >
+          <ArrowBackIcon />
+        </IconButton>
         <Typography variant="h4" component="span" sx={{ whiteSpace: 'nowrap', mr: 1 }}>
           Video Details:
         </Typography>
@@ -422,11 +429,16 @@ const VideoDetails = () => {
       </Box>
       
       {!isEditingName && video.name && (
-        <Typography variant="subtitle1" color="text.secondary" gutterBottom>
-          ID: {videoId}
+        <Typography 
+          variant="subtitle1" 
+          color="text.secondary" 
+          gutterBottom
+          sx={{ ml: '50px' }}  // This should match the width of the IconButton + its right margin
+        >
+          <strong>ID: </strong>{videoId}
         </Typography>
       )}
-      <Divider sx={{ my: 4 }} />
+      <Divider sx={{ mt: 2, mb: 4 }} />
       <Grid container sx={{ mt: 2, mb: 4 }}>
         <Grid item xs={12} md={5.5} sx={{ pr: isLargeScreen ? 2 : 0, pb: isLargeScreen ? 0 : 2 }}>
           {renderVideoPlaceholder}

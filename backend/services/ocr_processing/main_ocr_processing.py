@@ -48,7 +48,7 @@ async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 
             vlogger.logger.info(f"Completed S3 listing for video: {video_id}. Total frames: {len(frame_objects)}")
 
             total_frames = len(frame_objects)
-            vlogger.logger.info(f"Total frames to process for video {video_id}: {total_frames}")
+            dual_log(vlogger, app_logger, 'info', f"Total frames to process for video {video_id}: {total_frames}")
 
             ocr_results = []
             raw_ocr_results = []

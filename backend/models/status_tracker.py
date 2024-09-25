@@ -17,13 +17,15 @@ class StatusTracker:
             "audio_extraction": {"status": "pending", "progress": 0},
             "transcription": {"status": "pending", "progress": 0},
             "ocr": {"status": "pending", "progress": 0},
+            "annotation": {"status": "pending", "progress": 0},
             "error": None
         }
         self.process_events = {
             "video_processing": asyncio.Event(),
             "audio_extraction": asyncio.Event(),
             "transcription": asyncio.Event(),
-            "ocr": asyncio.Event()
+            "ocr": asyncio.Event(),
+            "annotation": asyncio.Event()
         }
 
     async def update_process_status(self, process: str, status: str, progress: float = None):

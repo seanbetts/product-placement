@@ -5,13 +5,14 @@ import os
 import tempfile
 import subprocess
 import asyncio
+from asyncio import Semaphore
 from PIL import Image, ImageDraw, ImageFont
 from typing import List, Dict, Tuple
 from core.config import settings
 from core.aws import get_s3_client
+from models.status_tracker import StatusTracker
 from utils.decorators import retry
 from core.logging import AppLogger, dual_log
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Create a global instance of AppLogger
 app_logger = AppLogger()
@@ -21,117 +22,156 @@ SMOOTHING_WINDOW = settings.SMOOTHING_WINDOW
 
 ## Process video frames for annotation
 ########################################################
-async def process_video_frames(vlogger, video_id: str):
+async def annotate_video(vlogger, video_id: str, status_tracker: StatusTracker):
     @vlogger.log_performance
-    async def _process_video_frames():
-        dual_log(vlogger, app_logger, 'info', f"Starting post-processing for video {video_id}")
-        
-        try:
-            s3_client = await get_s3_client()
+    async def _annotate_video():
+        max_retries = 3
+        max_concurrent_tasks = settings.MAX_WORKERS
 
-            # Load OCR results
-            vlogger.logger.info(f"Loading OCR results for video {video_id}")
-            ocr_results_obj = await s3_client.get_object(
-                Bucket=settings.PROCESSING_BUCKET,
-                Key=f'{video_id}/ocr/brands_ocr.json'
-            )
-            ocr_results_data = await ocr_results_obj['Body'].read()
-            vlogger.log_s3_operation("download", len(ocr_results_data))
-            ocr_results = json.loads(ocr_results_data.decode('utf-8'))
-            vlogger.logger.info(f"Loaded OCR results for {len(ocr_results)} frames")
-
-            with tempfile.TemporaryDirectory() as temp_dir:
-                processed_frames_dir = os.path.join(temp_dir, "processed_frames")
-                os.makedirs(processed_frames_dir, exist_ok=True)
+        for attempt in range(max_retries):
+            try:
+                await status_tracker.update_process_status("annotation", "processing", 0)
                 
-                # Process frames in parallel
-                vlogger.logger.info(f"Starting parallel processing of frames for video {video_id}")
-                with ThreadPoolExecutor(max_workers=settings.MAX_WORKERS) as executor:
-                    futures = [executor.submit(process_single_frame, vlogger, video_id, frame_data, processed_frames_dir)
-                               for frame_data in ocr_results]
-                    total_frames = len(futures)
+                s3_client = await get_s3_client()
+                vlogger.logger.info(f"Loading OCR results for video {video_id}")
+                ocr_results_obj = await s3_client.get_object(
+                    Bucket=settings.PROCESSING_BUCKET,
+                    Key=f'{video_id}/ocr/brands_ocr.json'
+                )
+                ocr_results_data = await ocr_results_obj['Body'].read()
+                vlogger.log_s3_operation("download", len(ocr_results_data))
+                ocr_results = json.loads(ocr_results_data.decode('utf-8'))
+                vlogger.logger.info(f"Loaded OCR results for {len(ocr_results)} frames")
+
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    processed_frames_dir = os.path.join(temp_dir, "processed_frames")
+                    os.makedirs(processed_frames_dir, exist_ok=True)
+
+                    dual_log(vlogger, app_logger, 'info', f"Starting parallel processing of frames for video {video_id}")
+                    
+                    total_frames = len(ocr_results)
                     processed_frames = 0
-                    for i, future in enumerate(as_completed(futures), 1):
+                    failed_frames = 0
+
+                    sem = Semaphore(max_concurrent_tasks)
+
+                    async def process_frame_with_semaphore(frame_data):
+                        async with sem:
+                            try:
+                                return await process_single_frame(vlogger, video_id, frame_data, processed_frames_dir)
+                            except Exception as e:
+                                vlogger.logger.error(f"Error in process_frame_with_semaphore: {str(e)}", exc_info=True)
+                                return False
+
+                    tasks = [process_frame_with_semaphore(frame_data) for frame_data in ocr_results]
+
+                    for i, task in enumerate(asyncio.as_completed(tasks), 1):
                         try:
-                            future.result()
-                            processed_frames += 1
-                            if processed_frames % 100 == 0 or processed_frames == total_frames:
-                                vlogger.logger.info(f"Processed {processed_frames}/{total_frames} frames for video {video_id}")
+                            result = await task
+                            if result:
+                                processed_frames += 1
+                            else:
+                                failed_frames += 1
                         except Exception as e:
                             vlogger.logger.error(f"Error processing frame {i}/{total_frames} for video {video_id}: {str(e)}", exc_info=True)
+                            failed_frames += 1
 
-                # Reconstruct video from processed frames
-                dual_log(vlogger, app_logger, 'info', f"Starting video reconstruction for video {video_id}")
-                await reconstruct_video(vlogger, video_id, temp_dir)
+                        if i % 100 == 0 or i == total_frames:
+                            vlogger.logger.info(f"Processed {i}/{total_frames} frames for video {video_id}. "
+                                                f"Successful: {processed_frames}, Failed: {failed_frames}")
+                            progress = (i / total_frames) * 100
+                            await status_tracker.update_process_status("annotation", "processing", progress)
 
-        except Exception as e:
-            dual_log(vlogger, app_logger, 'error', f"Error in process_video_frames for video {video_id}: {str(e)}", exc_info=True)
-            raise
-        finally:
-            dual_log(vlogger, app_logger, 'error', f"Completed video post-processing for video {video_id}")
+                    vlogger.logger.info(f"Completed frame processing for video {video_id}. "
+                                        f"Successfully processed: {processed_frames}, Failed: {failed_frames}")
 
-    await _process_video_frames()
+                    if processed_frames == 0:
+                        raise RuntimeError(f"No frames were successfully processed for video {video_id}")
+
+                    frame_files = sorted(os.listdir(processed_frames_dir))
+                    vlogger.logger.info(f"Found {len(frame_files)} processed frames in {processed_frames_dir}")
+
+                    if not frame_files:
+                        raise RuntimeError(f"No processed frames found in {processed_frames_dir}")
+
+                    dual_log(vlogger, app_logger, 'info', f"Starting video reconstruction for video {video_id}")
+                    await reconstruct_video(vlogger, video_id, temp_dir)
+
+                await status_tracker.update_process_status("annotation", "complete", 100)
+                break
+
+            except Exception as e:
+                dual_log(vlogger, app_logger, 'error', f"Error in annotate_video for video {video_id} (attempt {attempt + 1}/{max_retries}): {str(e)}", exc_info=True)
+                if attempt == max_retries - 1:
+                    await status_tracker.set_error(f"Error in video annotation: {str(e)}")
+                    raise
+                else:
+                    vlogger.logger.info(f"Retrying video annotation for {video_id}")
+
+        dual_log(vlogger, app_logger, 'info', f"Completed video post-processing for video {video_id}")
+
+    await _annotate_video()
 ########################################################
 
-## xxx
+## Process each individual frame
 ########################################################
 @retry(exceptions=(Exception,), tries=3, delay=1, backoff=2)
 async def process_single_frame(vlogger, video_id: str, frame_data: dict, processed_frames_dir: str):
-    @vlogger.log_performance
-    async def _process_single_frame():
-        s3_client = await get_s3_client()
-
-        try:
-            frame_number = int(frame_data['frame_number'])
-        except (KeyError, ValueError) as e:
-            vlogger.logger.error(f"Invalid frame number in OCR results for video {video_id}: {str(e)}")
-            return
+    frame_number = None
+    try:
+        frame_number = int(frame_data['frame_number'])
+        vlogger.logger.debug(f"Processing frame {frame_number} for video {video_id}")
 
         original_frame_key = f"{video_id}/frames/{frame_number:06d}.jpg"
         
-        try:
-            vlogger.logger.debug(f"Downloading frame {frame_number} for video {video_id}")
-            frame_obj = await s3_client.get_object(
-                Bucket=settings.PROCESSING_BUCKET,
-                Key=original_frame_key
-            )
-            frame_data = await frame_obj['Body'].read()
-            vlogger.log_s3_operation("download", len(frame_data))
-            
-            frame_array = np.frombuffer(frame_data, np.uint8)
-            frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
-        except Exception as e:
-            vlogger.logger.error(f"Error downloading frame {frame_number} for video {video_id}: {str(e)}", exc_info=True)
-            raise
+        s3_client = await get_s3_client()
+        vlogger.logger.debug(f"Downloading frame {frame_number} for video {video_id}")
+        frame_obj = await s3_client.get_object(
+            Bucket=settings.PROCESSING_BUCKET,
+            Key=original_frame_key
+        )
+        frame_data = await frame_obj['Body'].read()
+        vlogger.log_s3_operation("download", len(frame_data))
+        
+        vlogger.logger.debug(f"Decoding frame {frame_number} for video {video_id}")
+        frame_array = np.frombuffer(frame_data, np.uint8)
+        frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError(f"Failed to decode frame {frame_number}")
+        vlogger.logger.debug(f"Successfully downloaded and decoded frame {frame_number}")
 
-        # Always annotate the frame, even if there are no detected brands
         vlogger.logger.debug(f"Annotating frame {frame_number} for video {video_id}")
         frame = annotate_frame(
+            vlogger,
             frame,
             frame_data.get('detected_brands', []),
             show_confidence=settings.SHOW_CONFIDENCE,
             text_bg_opacity=settings.TEXT_BG_OPACITY
         )
+        vlogger.logger.debug(f"Successfully annotated frame {frame_number}")
 
         processed_frame_path = os.path.join(processed_frames_dir, f"processed_frame_{frame_number:06d}.jpg")
+        vlogger.logger.debug(f"Saving processed frame {frame_number} to {processed_frame_path}")
         cv2.imwrite(processed_frame_path, frame)
+        if not os.path.exists(processed_frame_path):
+            raise IOError(f"Failed to save processed frame {frame_number}")
+        vlogger.logger.debug(f"Successfully saved processed frame {frame_number} to {processed_frame_path}")
 
-        try:
-            vlogger.logger.debug(f"Uploading processed frame {frame_number} for video {video_id}")
-            with open(processed_frame_path, 'rb') as f:
-                await vlogger.log_performance(s3_client.put_object)(
-                    Bucket=settings.PROCESSING_BUCKET,
-                    Key=f"{video_id}/processed_frames/processed_frame_{frame_number:06d}.jpg",
-                    Body=f
-                )
-            vlogger.log_s3_operation("upload", os.path.getsize(processed_frame_path))
-        except Exception as e:
-            vlogger.logger.error(f"Error uploading processed frame {frame_number} for video {video_id}: {str(e)}", exc_info=True)
-            raise
+        vlogger.logger.debug(f"Uploading processed frame {frame_number} for video {video_id}")
+        with open(processed_frame_path, 'rb') as f:
+            await s3_client.put_object(
+                Bucket=settings.PROCESSING_BUCKET,
+                Key=f"{video_id}/processed_frames/processed_frame_{frame_number:06d}.jpg",
+                Body=f
+            )
+        vlogger.log_s3_operation("upload", os.path.getsize(processed_frame_path))
+        vlogger.logger.debug(f"Successfully uploaded processed frame {frame_number}")
 
         vlogger.logger.debug(f"Completed processing frame {frame_number} for video {video_id}")
-
-    await _process_single_frame()
+        return True
+    except Exception as e:
+        vlogger.logger.error(f"Error processing frame {frame_number} for video {video_id}: {str(e)}", exc_info=True)
+        return False
 ########################################################
 
 ## Annotate individual video frames
@@ -246,7 +286,19 @@ async def reconstruct_video(vlogger, video_id: str, temp_dir: str):
                 original_fps = 30  # Fallback to 30 fps if we can't get the original
                 vlogger.logger.warning(f"Using fallback frame rate of {original_fps} fps")
 
+            # Check if processed frames exist
+            frame_files = sorted(os.listdir(processed_frames_dir))
+            if not frame_files:
+                raise RuntimeError(f"No processed frames found in {processed_frames_dir}")
+
+            vlogger.logger.info(f"Found {len(frame_files)} processed frames for video {video_id}")
+
             frame_pattern = os.path.join(processed_frames_dir, 'processed_frame_%06d.jpg')
+
+            # Verify that at least one frame matching the pattern exists
+            if not any(os.path.exists(frame_pattern % i) for i in range(1, 6)):
+                raise RuntimeError(f"No frames matching pattern {frame_pattern} found")
+
             ffmpeg_command = [
                 'ffmpeg',
                 '-framerate', str(original_fps),
@@ -261,14 +313,20 @@ async def reconstruct_video(vlogger, video_id: str, temp_dir: str):
 
             # Run FFmpeg command and capture output
             vlogger.logger.info(f"Running FFmpeg command to create video for {video_id}")
-            result = await asyncio.subprocess.create_subprocess_exec(
+            vlogger.logger.debug(f"FFmpeg command: {' '.join(ffmpeg_command)}")
+            process = await asyncio.create_subprocess_exec(
                 *ffmpeg_command, 
                 stdout=asyncio.subprocess.PIPE, 
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await result.communicate()
-            if result.returncode != 0:
-                raise subprocess.CalledProcessError(result.returncode, ffmpeg_command, stderr)
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode != 0:
+                error_message = stderr.decode() if stderr else "Unknown error"
+                vlogger.logger.error(f"FFmpeg command failed for {video_id}. Error: {error_message}")
+                vlogger.logger.debug(f"FFmpeg command: {' '.join(ffmpeg_command)}")
+                raise RuntimeError(f"FFmpeg command failed: {error_message}")
+            
             vlogger.logger.debug(f"FFmpeg output: {stdout.decode()}")
 
             vlogger.logger.info(f"Downloading audio file for video {video_id}")
@@ -311,8 +369,8 @@ async def reconstruct_video(vlogger, video_id: str, temp_dir: str):
 
             dual_log(vlogger, app_logger, 'info', f"Successfully processed and uploaded video {video_id}")
 
-        except subprocess.CalledProcessError as e:
-            dual_log(vlogger, app_logger, 'error', f"FFmpeg error for {video_id}: {e.stderr.decode()}", exc_info=True)
+        except RuntimeError as e:
+            dual_log(vlogger, app_logger, 'error', f"FFmpeg error for {video_id}: {str(e)}", exc_info=True)
             raise
         except Exception as e:
             dual_log(vlogger, app_logger, 'error', f"Error in reconstruct_video for {video_id}: {str(e)}", exc_info=True)

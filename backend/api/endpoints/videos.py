@@ -2,6 +2,7 @@ from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Background
 from fastapi.responses import JSONResponse
 from typing import Optional
 from core.logging import video_logger, AppLogger, dual_log
+from models.status_tracker import StatusTracker
 from services import s3_operations
 from services import video_post_processing
 
@@ -69,7 +70,7 @@ async def cancel_video_upload(video_id: str):
         return await _cancel_video_upload()
 ########################################################
 
-## POST-PROCESS VIDEOS (POST)
+## ANNOTATE VIDEOS (POST)
 ## Annotates videos with brand, logos, and object detection
 ########################################################
 @router.post("/annotate_video/{video_id}")
@@ -77,17 +78,18 @@ async def annotate_video_endpoint(video_id: str):
     with video_logger("api-endpoints", is_api_log=True) as vlogger:
         @vlogger.log_performance
         async def _annotate_video_endpoint():
-            vlogger.logger.info(f"Received request to run post-processing on video {video_id}")
+            vlogger.logger.info(f"Received request to annotate video {video_id}")
+            status_tracker = StatusTracker(video_id)
 
             try:
-                vlogger.logger.debug(f"Starting post-processing for video: {video_id}")
-                await vlogger.log_performance(video_post_processing.process_video_frames)(vlogger, video_id)
-                vlogger.logger.info(f"Video post-processing completed for video {video_id}")
-                return {"message": f"Video post-processing completed for video_id: {video_id}"}
+                vlogger.logger.debug(f"Starting annotation for video: {video_id}")
+                await vlogger.log_performance(video_post_processing.annotate_video)(vlogger, video_id, status_tracker)
+                vlogger.logger.info(f"Video annotationg completed for video {video_id}")
+                return {"message": f"Video annotation completed for video_id: {video_id}"}
 
             except Exception as e:
-                vlogger.logger.error(f"Error processing video {video_id}: {str(e)}", exc_info=True)
-                raise HTTPException(status_code=500, detail=f"Error running video post-processing: {str(e)}")
+                vlogger.logger.error(f"Error annotating video {video_id}: {str(e)}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Error running video annotation: {str(e)}")
 
         return await _annotate_video_endpoint()
 ########################################################

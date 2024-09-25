@@ -32,7 +32,8 @@ const VideoUpload = () => {
     video: { status: 'pending', progress: 0 },
     audio: { status: 'pending', progress: 0 },
     transcription: { status: 'pending', progress: 0 },
-    ocr: { status: 'pending', progress: 0 }
+    ocr: { status: 'pending', progress: 0 },
+    annotation: { status: 'pending', progress: 0 }
   });
   const [videoDimensions, setVideoDimensions] = useState(null);
   const navigate = useNavigate();
@@ -203,7 +204,7 @@ const handleCancel = async () => {
     try {
       const response = await api.getVideoStatus(videoId);
       
-      console.log('Polling response:', response); // Add this line for debugging
+      console.log('Polling response:', response);
 
       setProcessingProgress(prevProgress => ({
         ...prevProgress,
@@ -211,23 +212,22 @@ const handleCancel = async () => {
         video_processing: { status: response.video_processing?.status || 'pending', progress: response.video_processing?.progress || 0 },
         audio_extraction: { status: response.audio_extraction?.status || 'pending', progress: response.audio_extraction?.progress || 0 },
         transcription: { status: response.transcription?.status || 'pending', progress: response.transcription?.progress || 0 },
-        ocr: { status: response.ocr?.status || 'pending', progress: response.ocr?.progress || 0 }
+        ocr: { status: response.ocr?.status || 'pending', progress: response.ocr?.progress || 0 },
+        annotation: { status: response.annotation?.status || 'pending', progress: response.annotation?.progress || 0 }  // Add this line
       }));
-  
+
       setProcessingStatus({
         status: response.status,
         progress: response.progress || 0
       });
-  
+
       if (response.status === 'complete') {
         fetchProcessingStats(videoId);
       } else {
-        // Continue polling
         setTimeout(() => pollProcessingStatus(videoId), 1000);
       }
     } catch (error) {
       console.error('Error polling video status:', error);
-      // Continue polling even if there's an error
       setTimeout(() => pollProcessingStatus(videoId), 2000);
     }
   };
@@ -530,6 +530,7 @@ const handleCancel = async () => {
       {renderProgressBar('Extracting Audio...', processingProgress.audio_extraction?.status, processingProgress.audio_extraction?.progress)}
       {renderProgressBar('Transcribing Audio...', processingProgress.transcription?.status, processingProgress.transcription?.progress)}
       {renderProgressBar('Detecting Brands...', processingProgress.ocr?.status, processingProgress.ocr?.progress)}
+      {renderProgressBar('Annotating Video...', processingProgress.annotation?.status, processingProgress.annotation?.progress)}
     </Box>
   );
 

@@ -9,7 +9,7 @@ from core.logging import video_logger, AppLogger, dual_log
 from core.config import settings
 from core.aws import get_s3_client, multipart_upload
 from models.status_tracker import StatusTracker
-from services import audio_processing, frames_processing, status_processing
+from services import audio_processing, frames_processing, status_processing, video_post_processing
 from services.ocr_processing import main_ocr_processing
 from utils import utils
 import boto3
@@ -107,10 +107,15 @@ async def run_video_processing(vlogger, video_id: str):
                     await status_tracker.update_s3_status()
                     return
 
-                # Step 4: Post-process OCR results
-                dual_log(vlogger, app_logger, 'info', f"Starting post-processing of OCR results for video: {video_id}")
+                # Step 4: Brand detection
+                dual_log(vlogger, app_logger, 'info', f"Starting brand detection for video: {video_id}")
                 brand_results = await main_ocr_processing.post_process_ocr(vlogger, video_id, video_stats['video_fps'], video_resolution, status_tracker)
                 await status_tracker.update_process_status("ocr", "complete", 100)
+
+                # Step 5: Video annotation
+                dual_log(vlogger, app_logger, 'info', f"Starting annotation for video: {video_id}")
+                await video_post_processing.annotate_video(vlogger, video_id, status_tracker)
+                await status_tracker.update_process_status("annotation", "complete", 100)
 
                 # Wait for all processes to complete
                 try:
