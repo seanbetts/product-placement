@@ -161,8 +161,9 @@ async def detect_brands_and_interpolate(vlogger, cleaned_results: List[Dict], fp
                     "detected_brands": detected_brands
                 })
 
-            vlogger.logger.info("Starting second pass: Interpolate brands")
+            
             # Second pass: Interpolate brands
+            vlogger.logger.info("Starting second pass: Interpolate brands")
             final_brand_appearances = defaultdict(lambda: defaultdict(list))
             for brand, frame_appearances in brand_appearances.items():
                 vlogger.logger.info(f"Processing brand: {brand}")

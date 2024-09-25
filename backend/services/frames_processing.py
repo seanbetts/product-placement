@@ -1,3 +1,4 @@
+import os
 import time
 import cv2
 import asyncio
@@ -9,6 +10,8 @@ from core.config import settings
 from core.logging import AppLogger
 from services import s3_operations
 from models.status_tracker import StatusTracker
+from models.video_details import VideoDetails
+from utils.utils import get_video_resolution
 from core.aws import get_s3_client
 from functools import lru_cache
 from bisect import insort
@@ -26,15 +29,33 @@ async def get_cached_frame(frame_key):
 
 ## Process video frames
 ########################################################
-async def process_video_frames(vlogger, video_path: str, video_id: str, status_tracker: StatusTracker):
+async def process_video_frames(vlogger, video_path: str, video_id: str, status_tracker: StatusTracker, video_details: VideoDetails):
     @vlogger.log_performance
     async def _process_video_frames():
         try:
             start_time = time.time()
             cap = cv2.VideoCapture(video_path)
+
+            # Set file size
+            file_size = os.path.getsize(video_path)
+            video_details.set_detail("file_size", file_size)
+
+            # Set video resolution
+            video_resolution = get_video_resolution(vlogger, video_id)
+            video_details.set_detail("video_resolution", video_resolution)
+            
+            # Set FPS
             fps = cap.get(cv2.CAP_PROP_FPS)
+            video_details.set_detail("frames_per_second", fps)
+
+            # Set number of frames
             frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            video_details.set_detail("number_of_frames", frame_count)
+
+            # Set video length
             duration = frame_count / fps
+            video_details.set_detail("video_length", duration)
+            
             vlogger.logger.info(f"Video details - FPS: {fps}, Total frames: {frame_count}, Duration: {duration:.2f} seconds")
             
             frame_number = 0

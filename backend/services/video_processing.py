@@ -9,6 +9,7 @@ from core.logging import video_logger, AppLogger, dual_log
 from core.config import settings
 from core.aws import get_s3_client, multipart_upload
 from models.status_tracker import StatusTracker
+from models.video_details import VideoDetails
 from services import audio_processing, frames_processing, status_processing, video_post_processing
 from services.ocr_processing import main_ocr_processing
 from utils import utils
@@ -25,6 +26,7 @@ async def run_video_processing(vlogger, video_id: str):
         @vlogger.log_performance
         async def process():
             dual_log(vlogger, app_logger, 'info', f"Starting to process video: {video_id}")
+            video_details = await VideoDetails.create(video_id)
             video_key = f'{video_id}/original.mp4'
 
             s3_client = await get_s3_client()
@@ -47,8 +49,8 @@ async def run_video_processing(vlogger, video_id: str):
                 dual_log(vlogger, app_logger, 'info', f"Starting video and audio processing for video: {video_id}")
                 await status_tracker.update_process_status("video_processing", "in_progress", 0)
                 await status_tracker.update_process_status("audio_extraction", "in_progress", 0)
-                video_task = asyncio.create_task(frames_processing.process_video_frames(vlogger, temp_video_path, video_id, status_tracker))
-                audio_task = asyncio.create_task(extract_audio_from_video(vlogger, temp_video_path, video_id, status_tracker))
+                video_task = asyncio.create_task(frames_processing.process_video_frames(vlogger, temp_video_path, video_id, status_tracker, video_details))
+                audio_task = asyncio.create_task(extract_audio_from_video(vlogger, temp_video_path, video_id, status_tracker, video_details))
 
                 # Wait for audio task to complete
                 audio_stats = await audio_task
@@ -61,7 +63,7 @@ async def run_video_processing(vlogger, video_id: str):
                 # Step 2: Start transcription immediately after audio extraction
                 dual_log(vlogger, app_logger, 'info', f"Starting transcription for video: {video_id}")
                 await status_tracker.update_process_status("transcription", "in_progress", 0)
-                transcription_task = asyncio.create_task(audio_processing.transcribe_audio(vlogger, video_id, float(audio_stats['audio_length'].split()[0]), status_tracker))
+                transcription_task = asyncio.create_task(audio_processing.transcribe_audio(vlogger, video_id, status_tracker, video_details))
 
                 # Wait for video task to complete
                 video_stats = await video_task
@@ -73,9 +75,8 @@ async def run_video_processing(vlogger, video_id: str):
 
                 # Step 3: Start OCR processing after video frames are available
                 dual_log(vlogger, app_logger, 'info', f"Starting OCR processing for video: {video_id}")
-                video_resolution = await utils.get_video_resolution(vlogger, video_id)
                 await status_tracker.update_process_status("ocr", "in_progress", 0)
-                ocr_task = asyncio.create_task(main_ocr_processing.process_ocr(vlogger, video_id, video_resolution, status_tracker))
+                ocr_task = asyncio.create_task(main_ocr_processing.process_ocr(vlogger, video_id, status_tracker, video_details))
 
                 # Wait for transcription and OCR tasks to complete, but handle them separately
                 transcription_stats = None
@@ -109,7 +110,7 @@ async def run_video_processing(vlogger, video_id: str):
 
                 # Step 4: Brand detection
                 dual_log(vlogger, app_logger, 'info', f"Starting brand detection for video: {video_id}")
-                brand_results = await main_ocr_processing.post_process_ocr(vlogger, video_id, video_stats['video_fps'], video_resolution, status_tracker)
+                brand_results = await main_ocr_processing.post_process_ocr(vlogger, video_id, status_tracker, video_details)
                 await status_tracker.update_process_status("ocr", "complete", 100)
 
                 # Step 5: Video annotation
@@ -175,7 +176,7 @@ async def run_video_processing(vlogger, video_id: str):
 
 ## Extracts audio from video
 ########################################################
-async def extract_audio_from_video(vlogger, video_path: str, video_id: str, status_tracker: StatusTracker):
+async def extract_audio_from_video(vlogger, video_path: str, video_id: str, status_tracker: StatusTracker, video_details: VideoDetails):
     @vlogger.log_performance
     async def _extract_audio():
         dual_log(vlogger, app_logger, 'info', f"Extracting audio for video: {video_id}")
@@ -185,7 +186,7 @@ async def extract_audio_from_video(vlogger, video_path: str, video_id: str, stat
 
         try:
             # Estimate total time based on video file size
-            video_size = os.path.getsize(video_path)
+            video_size = video_details.get_detail("file_size")
             estimated_total_time = max(1, video_size / 1000000)  # Rough estimate: 1 second per MB, minimum 1 second
 
             progress_queue = asyncio.Queue()
@@ -253,12 +254,11 @@ async def extract_audio_from_video(vlogger, video_path: str, video_id: str, stat
             await run_ffmpeg()
 
             # Upload audio file to S3 using multipart upload
-            file_size = os.path.getsize(audio_path)
             s3_key = f'{video_id}/audio.mp3'
             
             try:
-                await multipart_upload(audio_path, settings.PROCESSING_BUCKET, s3_key, file_size)
-                vlogger.log_s3_operation("upload", file_size)
+                await multipart_upload(audio_path, settings.PROCESSING_BUCKET, s3_key, video_size)
+                vlogger.log_s3_operation("upload", video_size)
                 dual_log(vlogger, app_logger, 'info', f"Audio extracted and uploaded for video: {video_id}")
             except Exception as e:
                 dual_log(vlogger, app_logger, 'error', f"Error uploading audio to S3 for video {video_id}: {str(e)}")

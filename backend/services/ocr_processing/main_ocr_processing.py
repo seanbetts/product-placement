@@ -9,6 +9,7 @@ from core.config import settings
 from core.logging import AppLogger, dual_log
 from core.aws import get_s3_client
 from models.status_tracker import StatusTracker
+from models.video_details import VideoDetails
 from utils import utils
 from utils.decorators import retry
 from services import s3_operations
@@ -25,13 +26,15 @@ thread_pool = ThreadPoolExecutor()
 
 ## Runs OCR processing for an uploaded video
 ########################################################
-async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 'StatusTracker') -> Dict:
+async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 'StatusTracker', video_details: VideoDetails) -> Dict:
     @vlogger.log_performance
     async def _process_ocr():
         vlogger.logger.info(f"Detecting text in video: {video_id}")
         ocr_start_time = time.time()
 
         s3_client = await get_s3_client()
+
+        video_resolution = video_details.get_detail("video_resolution")
 
         try:
              # Asynchronous S3 listing
@@ -217,13 +220,16 @@ async def process_single_frame_ocr(vlogger, video_id: str, frame_number: int, vi
 
 ## Post processing on raw OCR data
 ########################################################
-async def post_process_ocr(vlogger, video_id: str, fps: float, video_resolution: Tuple[int, int], status_tracker: StatusTracker):
+async def post_process_ocr(vlogger, video_id: str, status_tracker: StatusTracker, video_details: VideoDetails):
     @vlogger.log_performance
     async def _post_process_ocr():
         try:
             # Assume post-processing is 20% of the total OCR process
             total_steps = 7
             step_progress = 20 / total_steps
+
+            video_resolution = video_details.get_detail('video_resolution')
+            fps = video_details.get_detail('frames_per_second')
 
             await status_tracker.update_process_status("ocr", "in_progress", 80)  # Start at 80%
 

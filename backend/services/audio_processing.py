@@ -6,6 +6,7 @@ from core.config import settings
 from core.logging import AppLogger
 from core.aws import get_s3_client
 from models.status_tracker import StatusTracker
+from models.video_details import VideoDetails
 import boto3
 from botocore.exceptions import ClientError
 
@@ -19,12 +20,13 @@ import time
 import boto3
 from botocore.exceptions import ClientError
 
-async def transcribe_audio(vlogger, video_id: str, video_length: float, status_tracker: StatusTracker):
+async def transcribe_audio(vlogger, video_id: str, status_tracker: StatusTracker, video_details: VideoDetails):
     @vlogger.log_performance
     async def _transcribe_audio():
         vlogger.logger.info(f"Transcribing audio for video: {video_id}")
         audio_key = f'{video_id}/audio.mp3'
         transcript_key = f"{video_id}/transcripts/audio_transcript_{video_id}.json"
+        video_length = video_details.get_detail("video_length")
 
         s3_client = await get_s3_client()
 
