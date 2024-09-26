@@ -3,17 +3,20 @@ import time
 import psutil
 import os
 import tempfile
-import atexit
 import asyncio
-from functools import wraps
-from contextlib import contextmanager
+import atexit
+import inspect
+import functools
+from contextlib import asynccontextmanager
 from core.config import settings
-from core.aws import get_s3_client_sync
-from utils.decorators import retry
-from botocore.exceptions import ClientError
+from core.aws import get_s3_client
 
 # Global tracker for active loggers
 active_loggers = {}
+
+def run_async(coro):
+    loop = asyncio.get_event_loop()
+    return loop.run_until_complete(coro)
 
 # VideoLogger class for monitoring performance of video uploads and processing
 class VideoLogger:
@@ -30,6 +33,8 @@ class VideoLogger:
             "total_download_size": 0
         }
         self.last_upload_time = time.time()
+        self.upload_queue = asyncio.Queue()
+        self.upload_task = None
 
     def _get_logger(self):
         logger = logging.getLogger(f"VideoProcessor.{self.video_id}")
@@ -52,7 +57,7 @@ class VideoLogger:
         self.logger.addHandler(console_handler)
 
     def log_performance(self, func):
-        @wraps(func)
+        @functools.wraps(func)
         async def async_wrapper(*args, **kwargs):
             start_time = time.time()
             start_memory = psutil.virtual_memory().used
@@ -78,9 +83,9 @@ class VideoLogger:
                                 f"\n\tMemory: {memory_used / (1024 * 1024):.2f} MB"
                                 f"\n\tCPU: {cpu_used:.2f}%")
                 
-                self._check_and_upload_log()
+                await self._queue_log_upload()
 
-        @wraps(func)
+        @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
             start_time = time.time()
             start_memory = psutil.virtual_memory().used
@@ -106,56 +111,69 @@ class VideoLogger:
                                 f"\n\tMemory: {memory_used / (1024 * 1024):.2f} MB"
                                 f"\n\tCPU: {cpu_used:.2f}%")
                 
-                self._check_and_upload_log()
+                asyncio.create_task(self._queue_log_upload())
 
         # Return the appropriate wrapper based on whether the function is async
-        if asyncio.iscoroutinefunction(func):
+        if inspect.iscoroutinefunction(func):
             return async_wrapper
         else:
             return sync_wrapper
+        
+    async def _queue_log_upload(self):
+        await self.upload_queue.put(time.time())
+        if self.upload_task is None or self.upload_task.done():
+            self.upload_task = asyncio.create_task(self._process_upload_queue())
 
-    def log_s3_operation(self, operation_type, size):
+    async def _process_upload_queue(self):
+        while True:
+            current_time = await self.upload_queue.get()
+            if current_time - self.last_upload_time > 300:  # Upload every 5 minutes
+                await self._upload_log_to_s3()
+                self.last_upload_time = current_time
+            self.upload_queue.task_done()
+            if self.upload_queue.empty():
+                break
+
+    async def log_s3_operation(self, operation_type, size):
         self.s3_operations[operation_type] += 1
         self.s3_operations[f"total_{operation_type}_size"] += size
         self.logger.info(f"S3 {operation_type}: Count: {self.s3_operations[operation_type]}, "
                          f"Total Size: {self.s3_operations[f'total_{operation_type}_size'] / (1024 * 1024):.2f} MB")
         
-        self._check_and_upload_log()
+        await self._check_and_upload_log()
 
-    def _check_and_upload_log(self):
+    async def _check_and_upload_log(self):
         current_time = time.time()
         if current_time - self.last_upload_time > 300:  # Upload every 5 minutes
-            self._upload_log_to_s3()
+            await self._upload_log_to_s3()
             self.last_upload_time = current_time
 
-    @retry(exceptions=(ClientError,), tries=3, delay=1, backoff=2)
-    def _upload_log_to_s3(self):
+    async def _upload_log_to_s3(self):
+        if not os.path.exists(self.log_file):
+            self.logger.warning(f"Log file does not exist: {self.log_file}")
+            return
+        
+        if self.is_api_log:
+            s3_key = f"_logs/{os.path.basename(self.log_file)}"
+        else:
+            s3_key = f"{self.video_id}/{os.path.basename(self.log_file)}"
+
         try:
-            s3_client = get_s3_client_sync(use_acceleration=True)
-
-            if not os.path.exists(self.log_file):
-                self.logger.warning(f"Log file does not exist: {self.log_file}")
-                return
-            
-            if self.is_api_log:
-                s3_key = f"_logs/{os.path.basename(self.log_file)}"
-            else:
-                s3_key = f"{self.video_id}/{os.path.basename(self.log_file)}"
-
-            s3_client.upload_file(
-                self.log_file, 
-                settings.PROCESSING_BUCKET, 
-                s3_key
-            )
-            self.logger.info(f"Performance log uploaded to S3")
+            async with get_s3_client() as s3_client:
+                await s3_client.upload_file(
+                    Filename=self.log_file, 
+                    Bucket=settings.PROCESSING_BUCKET, 
+                    Key=s3_key
+                )
+            self.logger.info(f"Performance log uploaded to S3 at {s3_key}")
         except Exception as e:
             self.logger.error(f"Error uploading performance log to S3: {str(e)}")
 
-    def finalize(self):
+    async def finalize(self):
         self.logger.info(f"Finalizing logging")
         self.logger.info(f"Final S3 operation counts: {self.s3_operations}")
         try:
-            self._upload_log_to_s3()
+            await self._upload_log_to_s3()
         except Exception as e:
             self.logger.error(f"Failed to upload log to S3: {str(e)}")
         finally:
@@ -163,8 +181,8 @@ class VideoLogger:
                 os.remove(self.log_file)
                 self.logger.info(f"Local log file removed")
 
-@contextmanager
-def video_logger(logger_name, is_api_log=False):
+@asynccontextmanager
+async def video_logger(logger_name, is_api_log=False):
     if logger_name in active_loggers:
         logger = active_loggers[logger_name]
     else:
@@ -173,19 +191,36 @@ def video_logger(logger_name, is_api_log=False):
     try:
         yield logger
     finally:
-        logger.finalize()
+        await logger.finalize()
         active_loggers.pop(logger_name, None)
 
-def finalize_all_loggers():
+async def finalize_all_loggers():
     for video_id, logger in list(active_loggers.items()):
         try:
-            logger.finalize()
+            await logger.finalize()
         except Exception as e:
             print(f"Error finalizing logger for video {video_id}: {str(e)}")
         active_loggers.pop(video_id, None)
 
-# Register the finalization function to run at exit
-atexit.register(finalize_all_loggers)
+def sync_finalize_all_loggers():
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    if loop.is_running():
+        # Schedule the coroutine to run soon
+        asyncio.create_task(finalize_all_loggers())
+    else:
+        loop.run_until_complete(finalize_all_loggers())
+
+@atexit.register
+def at_exit_finalize():
+    try:
+        run_async(finalize_all_loggers())
+    except Exception as e:
+        print(f"Error during log finalization at exit: {str(e)}")
 
 # Add this new function for dual logging
 def dual_log(vlogger, app_logger, level, message, **kwargs):
@@ -203,20 +238,23 @@ class AppLogger:
 
     def _setup_logging(self):
         logger = logging.getLogger("app-log")
+        logger.setLevel(logging.INFO)
 
-        if not logger.hasHandlers():
-            logging.basicConfig(
-                level=logging.INFO,
-                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                filename=self.log_file,
-                filemode='w'
-            )
+        # Prevent adding multiple handlers if already added
+        if not logger.handlers:
+            # File Handler
+            file_handler = logging.FileHandler(self.log_file, mode='a')
+            file_handler.setLevel(logging.INFO)
+            file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            file_handler.setFormatter(file_formatter)
+            logger.addHandler(file_handler)
 
-            console = logging.StreamHandler()
-            console.setLevel(logging.INFO)
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            console.setFormatter(formatter)
-            logger.addHandler(console)
+            # Console Handler
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.INFO)
+            console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            console_handler.setFormatter(console_formatter)
+            logger.addHandler(console_handler)
 
         return logger
 

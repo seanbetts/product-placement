@@ -2,14 +2,14 @@ import uuid
 import os
 import json
 import tempfile
-from typing import Optional, List, Dict, Set
+from typing import Optional, List, Dict, Set, Any
 from io import BytesIO
 from fastapi import UploadFile, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from core.config import settings
-from core.aws import get_s3_client, get_s3_client_sync
+from core.aws import get_s3_client
 from core.state import set_upload_active, is_upload_active, remove_upload
-from core.logging import AppLogger
+from core.logging import AppLogger, dual_log
 from utils.decorators import retry
 from services import video_processing
 from botocore.exceptions import ClientError
@@ -42,7 +42,6 @@ async def upload_video(
     vlogger.logger.info("Starting video chunk upload", extra=log_context)
     set_upload_active(video_id)
     s3_key = f'{video_id}/original.mp4'
-    s3_client = get_s3_client_sync()
 
     @vlogger.log_performance
     async def perform_upload():
@@ -55,7 +54,8 @@ async def upload_video(
                 temp_filename = temp_file.name
                 if chunk_number > 1:
                     vlogger.logger.debug("Downloading existing file for appending", extra=log_context)
-                    s3_client.download_file (settings.PROCESSING_BUCKET, s3_key, temp_filename)
+                    async with get_s3_client() as s3_client:
+                        s3_client.download_file (settings.PROCESSING_BUCKET, s3_key, temp_filename)
                     vlogger.log_s3_operation("download", os.path.getsize(temp_filename))
                 
                 with open(temp_filename, 'ab') as f:
@@ -65,7 +65,8 @@ async def upload_video(
                 raise Exception("Upload cancelled")
 
             vlogger.logger.debug("Uploading chunk to S3", extra=log_context)
-            s3_client.upload_file(temp_filename, settings.PROCESSING_BUCKET, s3_key)
+            async with get_s3_client() as s3_client:
+                s3_client.upload_file(temp_filename, settings.PROCESSING_BUCKET, s3_key)
             vlogger.log_s3_operation("upload", os.path.getsize(temp_filename))
             os.unlink(temp_filename)
 
@@ -96,15 +97,14 @@ async def cancel_video_upload(vlogger, video_id: str):
     async def _cancel_video_upload():
         vlogger.logger.info(f"Attempting to cancel upload for video_id: {video_id}")
 
-        s3_client = await get_s3_client()
-
         if is_upload_active(video_id):
             set_upload_active(video_id, False)
             s3_key = f'{video_id}/original.mp4'
 
             try:
                 vlogger.logger.debug(f"Checking if object exists in S3 for video_id: {video_id}")
-                await vlogger.log_performance(s3_client.head_object)(Bucket=settings.PROCESSING_BUCKET, Key=s3_key)
+                async with get_s3_client() as s3_client:
+                    await vlogger.log_performance(s3_client.head_object)(Bucket=settings.PROCESSING_BUCKET, Key=s3_key)
 
                 vlogger.logger.info(f"Deleting object from S3 for video_id: {video_id}")
                 await vlogger.log_performance(s3_client.delete_object)(Bucket=settings.PROCESSING_BUCKET, Key=s3_key)
@@ -135,7 +135,6 @@ async def upload_processed_results(vlogger, processed_dir, video_id, chunk_index
     async def _upload_processed_results():
         vlogger.logger.info(f"Starting upload of processed results for video_id: {video_id}, chunk_index: {chunk_index}")
         try:
-            s3_client = await get_s3_client()
             total_files = sum([len(files) for r, d, files in os.walk(processed_dir)])
             uploaded_files = 0
             total_bytes_uploaded = 0
@@ -148,9 +147,10 @@ async def upload_processed_results(vlogger, processed_dir, video_id, chunk_index
                     file_size = os.path.getsize(local_path)
                     vlogger.logger.debug(f"Uploading file: {file}, size: {file_size} bytes")
                     
-                    await vlogger.log_performance(s3_client.upload_file)(
-                        local_path, settings.PROCESSING_BUCKET, s3_key
-                    )
+                    async with get_s3_client() as s3_client:
+                        await vlogger.log_performance(s3_client.upload_file)(
+                            local_path, settings.PROCESSING_BUCKET, s3_key
+                        )
                     
                     vlogger.log_s3_operation("upload", file_size)
                     total_bytes_uploaded += file_size
@@ -173,18 +173,18 @@ async def upload_processed_results(vlogger, processed_dir, video_id, chunk_index
 ## Uploads a single video frame to s3
 ########################################################
 @retry(exceptions=(ClientError,), tries=3, delay=1, backoff=2)
-async def upload_frame_to_s3(vlogger, bucket, key, body):
+async def upload_frame_to_s3(vlogger, key, body):
     @vlogger.log_performance
     async def _upload_frame_to_s3():
         try:
-            s3_client = await get_s3_client()
             vlogger.logger.debug(f"Uploading frame to S3: {key}")
-            await s3_client.put_object(
-                Bucket=bucket,
-                Key=key,
-                Body=body,
-                ContentType='image/jpeg'
-            )
+            async with get_s3_client() as s3_client:
+                await s3_client.put_object(
+                    Bucket=settings.PROCESSING_BUCKET,
+                    Key=key,
+                    Body=body,
+                    ContentType='image/jpeg'
+                )
             vlogger.log_s3_operation("upload", len(body))
             vlogger.logger.info(f"Successfully uploaded frame to S3: {key}")
             return True
@@ -201,10 +201,10 @@ async def upload_frames_batch(vlogger, bucket, frames):
     successful_uploads = 0
     total_size = 0
     try:
-        s3_client = await get_s3_client()
         for key, body in frames:
             vlogger.logger.debug(f"Uploading frame to S3: {key}")
-            await s3_client.put_object(Bucket=bucket, Key=key, Body=body, ContentType='image/jpeg')
+            async with get_s3_client() as s3_client:
+                await s3_client.put_object(Bucket=bucket, Key=key, Body=body, ContentType='image/jpeg')
             total_size += len(body)
             successful_uploads += 1
         
@@ -221,8 +221,6 @@ async def upload_frames_batch(vlogger, bucket, frames):
 ########################################################
 async def download_file_from_s3(video_id: str, file_type: str):
     # app_logger.log_info(f"Received download request for {file_type} of video: {video_id}")
-
-    s3_client = await get_s3_client()
 
     if file_type == "video":
         key = f'{video_id}/original.mp4'
@@ -244,12 +242,13 @@ async def download_file_from_s3(video_id: str, file_type: str):
         # app_logger.log_info(f"Checking if {file_type} exists in S3 for video: {video_id}")
 
         # app_logger.log_info(f"Generating pre-signed URL for {file_type} of video: {video_id}")
-        url = await s3_client.generate_presigned_url (
-            'get_object',
-            Params={'Bucket': settings.PROCESSING_BUCKET, 'Key': key},
-            ExpiresIn=3600,
-            HttpMethod='GET'
-        )
+        async with get_s3_client() as s3_client:
+            url = await s3_client.generate_presigned_url (
+                'get_object',
+                Params={'Bucket': settings.PROCESSING_BUCKET, 'Key': key},
+                ExpiresIn=3600,
+                HttpMethod='GET'
+            )
 
         # app_logger.log_info(f"Successfully generated download URL for {file_type} of video: {video_id}")
         return RedirectResponse(url=url)
@@ -270,16 +269,15 @@ async def load_ocr_results(vlogger, video_id: str) -> List[Dict]:
     async def _load_ocr_results():
         vlogger.logger.info(f"Loading OCR results for video: {video_id}")
 
-        s3_client = await get_s3_client()
-
         key = f'{video_id}/ocr/raw_ocr.json'
         try:
             vlogger.logger.debug(f"Attempting to retrieve OCR results from S3 for video: {video_id}")
             
-            response = await s3_client.get_object(
-                Bucket=settings.PROCESSING_BUCKET,
-                Key=key
-            )
+            async with get_s3_client() as s3_client:
+                response = await s3_client.get_object(
+                    Bucket=settings.PROCESSING_BUCKET,
+                    Key=key
+                )
             
             # Read the data in chunks asynchronously
             data = await response['Body'].read()
@@ -305,14 +303,56 @@ async def load_ocr_results(vlogger, video_id: str) -> List[Dict]:
     return await _load_ocr_results()
 ########################################################
 
+## Save data to S3
+########################################################
+async def save_data_to_s3(vlogger, video_id: str, filename: str, data: Any):
+    @vlogger.log_performance
+    async def _save_data_to_s3():
+        vlogger.logger.info(f"Saving {filename} data to S3 for video: {video_id}")
+
+        if filename == "processed_ocr" | "brands_ocr":
+            directory = 'ocr'
+        elif filename == "raw_object_detection_results":
+            directory = 'object_detection'
+        else:
+            directory = 'error'
+            # dual_log(vlogger, app_logger, 'error', f"Invalid filename for video: {video_id}")
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
+        key = f'{video_id}/{directory}/{filename}.json'
+
+        try:
+            processed_data = json.dumps(data, indent=2)
+            data_size = len(processed_data)
+
+            vlogger.logger.debug(f"Attempting to save {filename} data to S3 for video: {video_id}")
+            async with get_s3_client() as s3_client:
+                await s3_client.put_object(
+                    Bucket=settings.PROCESSING_BUCKET,
+                    Key=key,
+                    Body=processed_data,
+                    ContentType='application/json'
+                )
+            
+            vlogger.log_s3_operation("upload", data_size)
+            dual_log(vlogger, app_logger, 'error', f"Successfully saved {filename} data to S3 for video: {video_id}. Size: {data_size} bytes")
+
+        except ClientError as e:
+            dual_log(vlogger, app_logger, 'error', f"Error saving {filename} data to S3 for video {video_id}: {str(e)}", exc_info=True)
+            raise
+        except Exception as e:
+            dual_log(vlogger, app_logger, 'error', f"Unexpected error saving {filename} data to S3 for video {video_id}: {str(e)}", exc_info=True)
+            raise
+
+    return await _save_data_to_s3()
+########################################################
+
 ## Save processed OCR results for video
 ########################################################
 async def save_processed_ocr_results(vlogger, video_id: str, cleaned_results: List[Dict]):
     @vlogger.log_performance
     async def _save_processed_ocr_results():
         vlogger.logger.info(f"Saving processed OCR results for video: {video_id}")
-
-        s3_client = await get_s3_client()
 
         key = f'{video_id}/ocr/processed_ocr.json'
 
@@ -321,12 +361,13 @@ async def save_processed_ocr_results(vlogger, video_id: str, cleaned_results: Li
             data_size = len(processed_data)
 
             vlogger.logger.debug(f"Attempting to save processed OCR results to S3 for video: {video_id}")
-            await s3_client.put_object(
-                Bucket=settings.PROCESSING_BUCKET,
-                Key=key,
-                Body=processed_data,
-                ContentType='application/json'
-            )
+            async with get_s3_client() as s3_client:
+                await s3_client.put_object(
+                    Bucket=settings.PROCESSING_BUCKET,
+                    Key=key,
+                    Body=processed_data,
+                    ContentType='application/json'
+                )
             
             vlogger.log_s3_operation("upload", data_size)
             vlogger.logger.info(f"Successfully saved processed OCR results for video: {video_id}. Size: {data_size} bytes")
@@ -348,8 +389,6 @@ async def save_brands_ocr_results(vlogger, video_id: str, brand_results: List[Di
     async def _save_brands_ocr_results():
         vlogger.logger.info(f"Saving brands OCR results for video: {video_id}")
 
-        s3_client = await get_s3_client()
-
         key = f'{video_id}/ocr/brands_ocr.json'
 
         try:
@@ -357,12 +396,13 @@ async def save_brands_ocr_results(vlogger, video_id: str, brand_results: List[Di
             data_size = len(brand_data)
 
             vlogger.logger.debug(f"Attempting to save brands OCR results to S3 for video: {video_id}")
-            await s3_client.put_object(
-                Bucket=settings.PROCESSING_BUCKET,
-                Key=key,
-                Body=brand_data,
-                ContentType='application/json'
-            )
+            async with get_s3_client() as s3_client:
+                await s3_client.put_object(
+                    Bucket=settings.PROCESSING_BUCKET,
+                    Key=key,
+                    Body=brand_data,
+                    ContentType='application/json'
+                )
             
             vlogger.log_s3_operation("upload", data_size)
             vlogger.logger.info(f"Successfully saved brands OCR results for video: {video_id}. Size: {data_size} bytes")
@@ -383,8 +423,6 @@ async def create_and_save_brand_table(vlogger, video_id: str, brand_appearances:
     @vlogger.log_performance
     async def _create_and_save_brand_table():
         vlogger.logger.info(f"Creating and saving brand table for video: {video_id}")
-
-        s3_client = await get_s3_client()
 
         brand_stats = {}
         min_frames = int(fps)  # Minimum number of frames (1 second)
@@ -409,12 +447,13 @@ async def create_and_save_brand_table(vlogger, video_id: str, brand_appearances:
             data_size = len(brand_table_data)
             vlogger.logger.debug(f"Attempting to save brand table to S3 for video: {video_id}")
 
-            await s3_client.put_object(
-                Bucket=settings.PROCESSING_BUCKET,
-                Key=f'{video_id}/ocr/brands_table.json',
-                Body=brand_table_data,
-                ContentType='application/json'
-            )
+            async with get_s3_client() as s3_client:
+                await s3_client.put_object(
+                    Bucket=settings.PROCESSING_BUCKET,
+                    Key=f'{video_id}/ocr/brands_table.json',
+                    Body=brand_table_data,
+                    ContentType='application/json'
+                )
 
             vlogger.log_s3_operation("upload", data_size)
             vlogger.logger.info(f"Successfully saved brand table for video: {video_id}. Size: {data_size} bytes")
@@ -438,12 +477,11 @@ async def get_word_cloud(video_id: str):
     try:
         # app_logger.log_info(f"Attempting to retrieve word cloud from S3 for video: {video_id}")
 
-        s3_client = await get_s3_client()
-
-        response = await s3_client.get_object(
-            Bucket=settings.PROCESSING_BUCKET, 
-            Key=wordcloud_key
-        )
+        async with get_s3_client() as s3_client:
+            response = await s3_client.get_object(
+                Bucket=settings.PROCESSING_BUCKET, 
+                Key=wordcloud_key
+            )
         image_data = await response['Body'].read()
         image_size = len(image_data)
         # app_logger.log_info(f"Successfully retrieved word cloud for video {video_id}. Size: {image_size} bytes")
@@ -467,13 +505,12 @@ async def get_brands_ocr_table(video_id: str):
 
     try:
         # app_logger.log_info(f"Attempting to retrieve brand OCR table from S3 for video: {video_id}")
-
-        s3_client = await get_s3_client()
-
-        response = await s3_client.get_object(
-            Bucket=settings.PROCESSING_BUCKET, 
-            Key=ocr_key
-        )
+        
+        async with get_s3_client() as s3_client:
+            response = await s3_client.get_object(
+                Bucket=settings.PROCESSING_BUCKET, 
+                Key=ocr_key
+            )
         data = await response['Body'].read()
         data_size = len(data)
 
@@ -508,12 +545,11 @@ async def get_ocr_results(video_id: str):
     try:
         # app_logger.log_info(f"Attempting to retrieve OCR results from S3 for video: {video_id}")
 
-        s3_client = await get_s3_client()
-
-        response = await s3_client.get_object(
-            Bucket=settings.PROCESSING_BUCKET, 
-            Key=ocr_key
-        )
+        async with get_s3_client() as s3_client:
+            response = await s3_client.get_object(
+                Bucket=settings.PROCESSING_BUCKET, 
+                Key=ocr_key
+            )
         data = await response['Body'].read()
         data_size = len(data)
 
@@ -548,12 +584,11 @@ async def get_processed_ocr_results(video_id: str):
     try:
         # app_logger.log_info(f"Attempting to retrieve processed OCR results from S3 for video: {video_id}")
 
-        s3_client = await get_s3_client()
-
-        response = s3_client.get_object(
-            Bucket=settings.PROCESSING_BUCKET, 
-            Key=ocr_key
-        )
+        async with get_s3_client() as s3_client:
+            response = s3_client.get_object(
+                Bucket=settings.PROCESSING_BUCKET, 
+                Key=ocr_key
+            )
         data = await response['Body'].read()
         data_size = len(data)
 
@@ -588,12 +623,11 @@ async def get_brands_ocr_results(video_id: str):
     try:
         # app_logger.log_info(f"Attempting to retrieve brand OCR results from S3 for video: {video_id}")
 
-        s3_client = await get_s3_client()
-
-        response = s3_client.get_object(
-            Bucket=settings.PROCESSING_BUCKET, 
-            Key=ocr_key
-        )
+        async with get_s3_client() as s3_client:
+            response = s3_client.get_object(
+                Bucket=settings.PROCESSING_BUCKET, 
+                Key=ocr_key
+            )
         data = await response['Body'].read()
         data_size = len(data)
 

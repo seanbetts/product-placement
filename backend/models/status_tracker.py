@@ -61,15 +61,15 @@ class StatusTracker:
 
     async def update_s3_status(self):
         try: 
-            s3_client = await get_s3_client()
             current_status = self.get_status()
             status_key = f'{self.video_id}/status.json'
-            await s3_client.put_object(
-                Bucket=settings.PROCESSING_BUCKET,
-                Key=status_key,
-                Body=json.dumps(current_status),
-                ContentType='application/json'
-            )
+            async with get_s3_client() as s3_client:
+                await s3_client.put_object(
+                    Bucket=settings.PROCESSING_BUCKET,
+                    Key=status_key,
+                    Body=json.dumps(current_status),
+                    ContentType='application/json'
+                )
         except Exception as e:
             print(f"Error updating status in S3: {str(e)}")
 

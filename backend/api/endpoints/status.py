@@ -12,7 +12,7 @@ router = APIRouter()
 ########################################################
 @router.get("/{video_id}/video/status")
 async def get_processing_status(video_id: str):
-    with video_logger("api-endpoints", is_api_log=True) as vlogger:
+    async with video_logger("api-endpoints", is_api_log=True) as vlogger:
         @vlogger.log_performance
         async def _get_processing_status():
             vlogger.logger.info(f"Received request for processing status of video {video_id}")

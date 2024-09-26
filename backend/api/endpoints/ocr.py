@@ -17,15 +17,16 @@ router = APIRouter()
 ########################################################
 @router.post("/{video_id}/ocr/reprocess-ocr")
 async def reprocess_ocr(video_id: str):
-    with video_logger("api-endpoints", is_api_log=True) as vlogger:
+    async with video_logger("api-endpoints", is_api_log=True) as vlogger:
         @vlogger.log_performance
         async def _reprocess_ocr():
             vlogger.logger.info(f"Received request to reprocess OCR for video: {video_id}")
 
             try:
                 vlogger.logger.debug(f"Fetching processing stats for video: {video_id}")
-                s3_client = await get_s3_client()
-                stats_obj = s3_client.get_object(Bucket=settings.PROCESSING_BUCKET, Key=f'{video_id}/processing_stats.json')
+    
+                async with get_s3_client() as s3_client:
+                    stats_obj = s3_client.get_object(Bucket=settings.PROCESSING_BUCKET, Key=f'{video_id}/processing_stats.json')
                 stats = json.loads(stats_obj['Body'].read().decode('utf-8'))
                 fps = stats['video']['video_fps']
 

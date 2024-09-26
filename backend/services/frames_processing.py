@@ -22,8 +22,8 @@ app_logger = AppLogger()
 # Create a cache for frame data
 @lru_cache(maxsize=100)
 async def get_cached_frame(frame_key):
-    s3_client = await get_s3_client()
-    response = await s3_client.get_object(Bucket=settings.PROCESSING_BUCKET, Key=frame_key)
+    async with get_s3_client() as s3_client:
+        response = await s3_client.get_object(Bucket=settings.PROCESSING_BUCKET, Key=frame_key)
     data = await response['Body'].read()
     return data
 
@@ -130,14 +130,13 @@ async def process_batch(vlogger, batch, video_id, semaphore):
     async def _process_batch():
         async with semaphore:
             try:
-                s3_client = await get_s3_client()
                 vlogger.logger.info(f"Starting to process batch for video {video_id} with {len(batch)} frames")
                 successful_uploads = 0
 
                 upload_tasks = []
                 for frame_bytes, frame_filename in batch:
                     s3_key = f'{video_id}/frames/{frame_filename}'
-                    upload_tasks.append(s3_operations.upload_frame_to_s3(vlogger, settings.PROCESSING_BUCKET, s3_key, frame_bytes))
+                    upload_tasks.append(s3_operations.upload_frame_to_s3(vlogger, s3_key, frame_bytes))
 
                 results = await asyncio.gather(*upload_tasks)
                 successful_uploads = sum(results)
@@ -163,18 +162,17 @@ async def get_first_video_frame(video_id: str):
     # Use cached frame if available
     first_frame_path = f'{video_id}/frames/000000.jpg'
 
-    s3_client = await get_s3_client()
-
     try:
         frame_data = await get_cached_frame(first_frame_path)
         return StreamingResponse(BytesIO(frame_data), media_type="image/jpeg")
     except Exception:
         # If not in cache, fetch from S3
         try:
-            response = await s3_client.get_object(
-                Bucket=settings.PROCESSING_BUCKET,
-                Key=first_frame_path
-            )
+            async with get_s3_client() as s3_client:
+                response = await s3_client.get_object(
+                    Bucket=settings.PROCESSING_BUCKET,
+                    Key=first_frame_path
+                )
             frame_data = await response['Body'].read()
             return StreamingResponse(BytesIO(frame_data), media_type="image/jpeg")
         except Exception as e:
@@ -186,13 +184,13 @@ async def get_first_video_frame(video_id: str):
 ########################################################
 async def get_all_video_frames(video_id: str) -> List[dict]:
     frames_prefix = f'{video_id}/frames/'
-    s3_client = await get_s3_client()
     frames = []
     total_frames_processed = 0
     frames_returned = 0
 
     try:
-        paginator = s3_client.get_paginator('list_objects_v2')
+        async with get_s3_client() as s3_client:
+            paginator = s3_client.get_paginator('list_objects_v2')
         async for page in paginator.paginate(Bucket=settings.PROCESSING_BUCKET, Prefix=frames_prefix):
             for obj in page.get('Contents', []):
                 total_frames_processed += 1

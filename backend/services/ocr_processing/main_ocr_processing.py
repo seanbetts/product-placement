@@ -32,15 +32,14 @@ async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 
         vlogger.logger.info(f"Detecting text in video: {video_id}")
         ocr_start_time = time.time()
 
-        s3_client = await get_s3_client()
-
         video_resolution = video_details.get_detail("video_resolution")
 
         try:
              # Asynchronous S3 listing
             async def list_objects_async(prefix):
                 all_objects = []
-                paginator = s3_client.get_paginator('list_objects_v2')
+                async with get_s3_client() as s3_client:
+                    paginator = s3_client.get_paginator('list_objects_v2')
                 async for page in paginator.paginate(Bucket=settings.PROCESSING_BUCKET, Prefix=prefix):
                     all_objects.extend(page.get('Contents', []))
                     vlogger.logger.info(f"Retrieved {len(all_objects)} objects so far for video: {video_id}")
@@ -112,7 +111,8 @@ async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 
                 return len(raw_ocr_json)
 
             try:
-                uploaded_size = await upload_raw_ocr_results(s3_client, video_id, raw_ocr_results)
+                async with get_s3_client() as s3_client:
+                    uploaded_size = await upload_raw_ocr_results(s3_client, video_id, raw_ocr_results)
                 vlogger.log_s3_operation("upload", uploaded_size)
                 dual_log(vlogger, app_logger, 'info', f"Saved raw OCR results for video: {video_id}")
             except Exception as e:
@@ -149,14 +149,13 @@ async def process_single_frame_ocr(vlogger, video_id: str, frame_number: int, vi
     @vlogger.log_performance
     async def _process_single_frame_ocr():
         try:
-            s3_client = await get_s3_client()
-
             # Get the frame from S3
             vlogger.logger.debug(f"Retrieving frame {frame_number} for video {video_id}")
-            response = await s3_client.get_object(
-                Bucket=settings.PROCESSING_BUCKET,
-                Key=f'{video_id}/frames/{frame_number:06d}.jpg'
-            )
+            async with get_s3_client() as s3_client:
+                response = await s3_client.get_object(
+                    Bucket=settings.PROCESSING_BUCKET,
+                    Key=f'{video_id}/frames/{frame_number:06d}.jpg'
+                )
             image_content = await response['Body'].read()
             vlogger.log_s3_operation("download", len(image_content))
 

@@ -23,12 +23,24 @@ app.include_router(router)
 @app.on_event("startup")
 async def on_startup():
     app_logger.log_info("FastAPI application startup initiated")
+    try:
+        await aws.initialize_s3_client()
+        app_logger.log_info("S3 client initialized successfully")
+    except Exception as e:
+        app_logger.log_error(f"Error initializing S3 client: {str(e)}")
+        # You might want to raise an exception here to prevent the app from starting
+        # if the S3 client can't be initialized
+        raise
 
 # Event handler for application shutdown
 @app.on_event("shutdown")
 async def on_shutdown():
     app_logger.log_info("FastAPI application shutdown initiated")
-    await aws.close_s3_client()  # Close the S3 client
+    try:
+        await aws.shutdown()
+        app_logger.log_info("S3 client shut down successfully")
+    except Exception as e:
+        app_logger.log_error(f"Error shutting down S3 client: {str(e)}")
 
 # Run the application
 if __name__ == "__main__":

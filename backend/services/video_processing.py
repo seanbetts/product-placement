@@ -12,7 +12,6 @@ from models.status_tracker import StatusTracker
 from models.video_details import VideoDetails
 from services import audio_processing, frames_processing, status_processing, video_post_processing
 from services.ocr_processing import main_ocr_processing
-from utils import utils
 import boto3
 from botocore.exceptions import ClientError
 
@@ -29,13 +28,12 @@ async def run_video_processing(vlogger, video_id: str):
             video_details = await VideoDetails.create(video_id)
             video_key = f'{video_id}/original.mp4'
 
-            s3_client = await get_s3_client()
-
             status_tracker = StatusTracker(video_id)
             await status_tracker.update_s3_status()
 
             with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_video:
-                await s3_client.download_file(settings.PROCESSING_BUCKET, video_key, temp_video.name)
+                async with get_s3_client() as s3_client:
+                    await s3_client.download_file(settings.PROCESSING_BUCKET, video_key, temp_video.name)
                 vlogger.log_s3_operation("download", os.path.getsize(temp_video.name))
                 temp_video_path = temp_video.name
 
@@ -381,13 +379,12 @@ async def update_completed_videos_list(vlogger, video_id: str):
             # Try to get the existing list
             vlogger.logger.info(f"Attempting to retrieve existing completed videos list")
 
-            s3_client = await get_s3_client()
-
             try:
-                response = await s3_client.get_object(
-                    Bucket=settings.PROCESSING_BUCKET,
-                    Key=completed_videos_key
-                )
+                async with get_s3_client() as s3_client:
+                    response = await s3_client.get_object(
+                        Bucket=settings.PROCESSING_BUCKET,
+                        Key=completed_videos_key
+                    )
                 data = await response['Body'].read()
                 vlogger.log_s3_operation("download", len(data))
                 completed_videos = json.loads(data.decode('utf-8'))
@@ -434,13 +431,12 @@ async def remove_from_completed_videos(video_id: str):
         # Try to get the existing list
         app_logger.log_info(f"Attempting to retrieve existing completed videos list")
 
-        s3_client = await get_s3_client()
-
         try:
-            response = await s3_client.get_object(
-                Bucket=settings.PROCESSING_BUCKET, 
-                Key=completed_videos_key
-            )
+            async with get_s3_client() as s3_client:
+                response = await s3_client.get_object(
+                    Bucket=settings.PROCESSING_BUCKET, 
+                    Key=completed_videos_key
+                )
             data = await response['Body'].read()
             completed_videos = json.loads(data.decode('utf-8'))
             app_logger.log_info(f"Retrieved existing list with {len(completed_videos)} videos")

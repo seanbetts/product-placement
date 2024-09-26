@@ -17,6 +17,7 @@ boto3
 botocore
 aioboto3
 aiobotocore
+aiofiles
 amazon-transcribe
 pydantic
 pydantic_settings

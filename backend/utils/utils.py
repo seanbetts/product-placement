@@ -26,17 +26,16 @@ async def get_video_resolution(vlogger, video_id: str) -> Tuple[int, int]:
     @vlogger.log_performance
     async def _get_video_resolution():
         try:
-            s3_client = await get_s3_client()
-
             # Construct the path to the first frame
             first_frame_path = f'{video_id}/frames/000000.jpg'
             vlogger.logger.info(f"Attempting to retrieve first frame for video: {video_id}")
             
             # Download the frame data
-            response = await s3_client.get_object(
-                Bucket=settings.PROCESSING_BUCKET,
-                Key=first_frame_path
-            )
+            async with get_s3_client() as s3_client:
+                response = await s3_client.get_object(
+                    Bucket=settings.PROCESSING_BUCKET,
+                    Key=first_frame_path
+                )
             frame_data = await response['Body'].read()
             vlogger.log_s3_operation("download", len(frame_data))
             
@@ -66,17 +65,14 @@ async def update_video_name(video_id: str, new_name: str):
     app_logger.log_info(f"Attempting to update name for video {video_id} to '{new_name}'")
 
     try:
-        # Update status.json
-
-        s3_client = await get_s3_client()
-
         status_key = f'{video_id}/status.json'
         app_logger.log_info(f"Updating status.json for video {video_id}")
         
-        response = await s3_client.get_object(
-            Bucket=settings.PROCESSING_BUCKET, 
-            Key=status_key
-        )
+        async with get_s3_client() as s3_client:
+            response = await s3_client.get_object(
+                Bucket=settings.PROCESSING_BUCKET, 
+                Key=status_key
+            )
         status_data = await response['Body'].read()
         
         status_data = json.loads(status_data.decode('utf-8'))
@@ -202,8 +198,6 @@ async def create_word_cloud(vlogger, video_id: str, cleaned_results: List[Dict])
     """
     @vlogger.log_performance
     async def _create_word_cloud():
-        s3_client = await get_s3_client()
-
         # Create an enchant dictionary for English
         d = enchant.Dict("en_US")
         
@@ -292,13 +286,15 @@ async def create_word_cloud(vlogger, video_id: str, cleaned_results: List[Dict])
             img_buffer.seek(0)
 
             vlogger.logger.info(f"Uploading word cloud to S3 for video: {video_id}")
+            
             # Upload to S3
-            await vlogger.log_performance(s3_client.put_object)(
-                Bucket=settings.PROCESSING_BUCKET,
-                Key=f'{video_id}/ocr/wordcloud.jpg',
-                Body=img_buffer.getvalue(),
-                ContentType='image/jpeg'
-            )
+            async with get_s3_client() as s3_client:
+                await vlogger.log_performance(s3_client.put_object)(
+                    Bucket=settings.PROCESSING_BUCKET,
+                    Key=f'{video_id}/ocr/wordcloud.jpg',
+                    Body=img_buffer.getvalue(),
+                    ContentType='image/jpeg'
+                )
             vlogger.log_s3_operation("upload", img_buffer.getbuffer().nbytes)
             vlogger.logger.info(f"Word cloud created and saved for video: {video_id}")
         except Exception as e:
