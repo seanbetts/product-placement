@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 from typing import List, Dict, Tuple
 from core.config import settings
 from core.aws import get_s3_client
+from core.s3_upload import save_data_to_s3
 from models.status_tracker import StatusTracker
 from core.logging import AppLogger, dual_log
 
@@ -101,7 +102,7 @@ async def annotate_video(vlogger, video_id: str, status_tracker: StatusTracker):
             await status_tracker.set_error(f"Error in video annotation: {str(e)}")
             raise
 
-        dual_log(vlogger, app_logger, 'info', f"Completed video post-processing for video {video_id}")
+        dual_log(vlogger, app_logger, 'info', f"Completed annotation for video {video_id}")
 
     await _annotate_video()
 ########################################################
@@ -134,7 +135,7 @@ async def process_single_frame(vlogger, video_id: str, frame_data: dict, process
         vlogger.logger.debug(f"Successfully downloaded and decoded frame {frame_number}")
 
         vlogger.logger.debug(f"Annotating frame {frame_number} for video {video_id}")
-        frame = annotate_frame(
+        frame = await annotate_frame(
             vlogger,
             frame,
             frame_data.get('detected_brands', []),
@@ -144,13 +145,13 @@ async def process_single_frame(vlogger, video_id: str, frame_data: dict, process
         vlogger.logger.debug(f"Successfully annotated frame {frame_number}")
 
         processed_frame_path = os.path.join(processed_frames_dir, f"processed_frame_{frame_number:06d}.jpg")
-        vlogger.logger.debug(f"Saving processed frame {frame_number} to {processed_frame_path}")
+        vlogger.logger.debug(f"Saving annotated frame {frame_number} to {processed_frame_path}")
         cv2.imwrite(processed_frame_path, frame)
         if not os.path.exists(processed_frame_path):
-            raise IOError(f"Failed to save processed frame {frame_number}")
+            raise IOError(f"Failed to save annotated frame {frame_number}")
         vlogger.logger.debug(f"Successfully saved processed frame {frame_number} to {processed_frame_path}")
 
-        vlogger.logger.debug(f"Uploading processed frame {frame_number} for video {video_id}")
+        vlogger.logger.debug(f"Uploading annotated frame {frame_number} for video {video_id}")
         with open(processed_frame_path, 'rb') as f:
             await s3_client.put_object(
                 Bucket=settings.PROCESSING_BUCKET,
@@ -158,18 +159,18 @@ async def process_single_frame(vlogger, video_id: str, frame_data: dict, process
                 Body=f
             )
         await vlogger.log_s3_operation("upload", os.path.getsize(processed_frame_path))
-        vlogger.logger.debug(f"Successfully uploaded processed frame {frame_number}")
+        vlogger.logger.debug(f"Successfully uploaded annotated frame {frame_number}")
 
-        vlogger.logger.debug(f"Completed processing frame {frame_number} for video {video_id}")
+        vlogger.logger.debug(f"Completed annotating frame {frame_number} for video {video_id}")
         return True
     except Exception as e:
-        vlogger.logger.error(f"Error processing frame {frame_number} for video {video_id}: {str(e)}", exc_info=True)
+        vlogger.logger.error(f"Error annotating frame {frame_number} for video {video_id}: {str(e)}", exc_info=True)
         return False
 ########################################################
 
 ## Annotate individual video frames
 ########################################################
-def annotate_frame(
+async def annotate_frame(
     vlogger,
     frame: np.ndarray,
     detected_brands: List[Dict],
@@ -177,75 +178,100 @@ def annotate_frame(
     text_bg_opacity: float = 0.7,
 ) -> np.ndarray:
     @vlogger.log_performance
-    def _annotate_frame():
+    async def _annotate_frame():
         if not isinstance(frame, np.ndarray):
             vlogger.logger.error("Frame must be a numpy array")
             raise ValueError("Frame must be a numpy array")
-
-        vlogger.logger.debug(f"Annotating frame with {len(detected_brands)} detected brands")
-
-        # Convert OpenCV BGR to RGB
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(frame_rgb)
-        draw = ImageDraw.Draw(pil_image)
-
-        # Load a nicer font (you may need to adjust the path)
-        font_size = 20
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
-            vlogger.logger.debug("Loaded DejaVuSans-Bold font")
-        except IOError:
-            vlogger.logger.warning("Failed to load DejaVuSans-Bold font, using default")
-            font = ImageFont.load_default()
-
-        for brand in detected_brands:
-            if 'bounding_box' not in brand or 'vertices' not in brand['bounding_box']:
-                vlogger.logger.warning(f"Skipping brand without bounding box: {brand}")
-                continue  # Skip brands without bounding boxes
-
-            vertices = brand['bounding_box']['vertices']
-            text = str(brand.get('text', '')).upper()  # Capitalize the brand name
-            confidence = float(brand.get('confidence', 0.0))
-
-            pts = np.array([(int(v['x']), int(v['y'])) for v in vertices], np.int32)
-            x_min, y_min = pts.min(axis=0)
-            x_max, y_max = pts.max(axis=0)
-
-            color = get_color_by_confidence(confidence)
-
-            # Draw bounding box
-            draw.rectangle([x_min, y_min, x_max, y_max], outline=color, width=2)
-
-            # Prepare label
-            label = f"{text}" + (f" ({confidence:.2f})" if show_confidence else "")
-            label_size = draw.textbbox((0, 0), label, font=font)
-            label_width = label_size[2] - label_size[0]
-            label_height = label_size[3] - label_size[1]
-
-            # Position label box
-            label_x = x_min
-            label_y = y_min - label_height if y_min > label_height else y_max
-
-            # Draw label background
-            label_bg = Image.new('RGBA', pil_image.size, (0, 0, 0, 0))
-            label_bg_draw = ImageDraw.Draw(label_bg)
-            label_bg_draw.rectangle((label_x, label_y, label_x + label_width, label_y + label_height),
-                                    fill=(color[0], color[1], color[2], int(255 * text_bg_opacity)))
-            pil_image = Image.alpha_composite(pil_image.convert('RGBA'), label_bg)
+        
+        # vlogger.logger.debug(f"Input frame shape: {frame.shape}, dtype: {frame.dtype}")
+        
+        if len(detected_brands) > 0:
+            # dual_log(vlogger, app_logger, 'info', f"Annotating frame with {len(detected_brands)} detected brands")
+            
+            # Convert OpenCV BGR to RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # dual_log(vlogger, app_logger, 'info', f"Converted frame to RGB. Shape: {frame_rgb.shape}, dtype: {frame_rgb.dtype}")
+            
+            pil_image = Image.fromarray(frame_rgb)
+            # dual_log(vlogger, app_logger, 'info', f"Created PIL Image. Size: {pil_image.size}, mode: {pil_image.mode}")
+            
             draw = ImageDraw.Draw(pil_image)
+            
+            # Load a nicer font (you may need to adjust the path)
+            font_size = 20
+            try:
+                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+                vlogger.logger.debug("Loaded DejaVuSans-Bold font")
+            except IOError:
+                vlogger.logger.warning("Failed to load DejaVuSans-Bold font, using default")
+                font = ImageFont.load_default()
+            
+            for brand in detected_brands:
+                try:
+                    if 'bounding_box' not in brand or 'vertices' not in brand['bounding_box']:
+                        vlogger.logger.warning(f"Skipping brand without bounding box: {brand}")
+                        continue  # Skip brands without bounding boxes
+                    
+                    vertices = brand['bounding_box']['vertices']
+                    text = str(brand.get('text', '')).upper()  # Capitalize the brand name
+                    confidence = float(brand.get('confidence', 0.0))
+                    
+                    vlogger.logger.debug(f"Processing brand: {text}, confidence: {confidence}")
 
-            # Draw text
-            text_x = label_x + (label_width - label_size[2]) // 2
-            text_y = label_y + (label_height - label_size[3]) // 2
-            draw.text((text_x, text_y), label, font=font, fill=(255, 255, 255))
+                    pts = np.array([(int(v['x']), int(v['y'])) for v in vertices], np.int32)
+                    x_min, y_min = pts.min(axis=0)
+                    x_max, y_max = pts.max(axis=0)
+                    
+                    try:
+                        color = await get_color_by_confidence(vlogger, confidence)
+                        # dual_log(vlogger, app_logger, 'info', f"Color returned by get_color_by_confidence: {color}")
+                    except Exception as color_error:
+                        dual_log(vlogger, app_logger, 'error', f"Error in get_color_by_confidence: {str(color_error)}")
+                        color = (255, 0, 0)  # Default to red if there's an error
+                    
+                    # Draw bounding box
+                    draw.rectangle([x_min, y_min, x_max, y_max], outline=color, width=2)
+                    vlogger.logger.debug(f"Drew bounding box at ({x_min}, {y_min}, {x_max}, {y_max})")
 
-            vlogger.logger.debug(f"Annotated brand: {text} at position ({x_min}, {y_min}, {x_max}, {y_max})")
+                    # Prepare label
+                    label = f"{text}" + (f" ({confidence:.2f})" if show_confidence else "")
+                    label_size = draw.textbbox((0, 0), label, font=font)
+                    label_width = label_size[2] - label_size[0]
+                    label_height = label_size[3] - label_size[1]
 
-        vlogger.logger.debug("Frame annotation completed")
-        # Convert back to OpenCV format
-        return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+                    # Position label box
+                    label_x = x_min
+                    label_y = y_min - label_height if y_min > label_height else y_max
 
-    return _annotate_frame()
+                    # Draw label background
+                    label_bg = Image.new('RGBA', pil_image.size, (0, 0, 0, 0))
+                    label_bg_draw = ImageDraw.Draw(label_bg)
+                    label_bg_draw.rectangle((label_x, label_y, label_x + label_width, label_y + label_height),
+                                            fill=(color[0], color[1], color[2], int(255 * text_bg_opacity)))
+                    pil_image = Image.alpha_composite(pil_image.convert('RGBA'), label_bg)
+                    draw = ImageDraw.Draw(pil_image)
+
+                    # Draw text
+                    text_x = label_x + (label_width - label_size[2]) // 2
+                    text_y = label_y + (label_height - label_size[3]) // 2
+                    draw.text((text_x, text_y), label, font=font, fill=(255, 255, 255))
+
+                    # dual_log(vlogger, app_logger, 'info', f"Annotated brand: {text} at position ({x_min}, {y_min}, {x_max}, {y_max})")
+                except Exception as e:
+                    dual_log(vlogger, app_logger, 'info', f"Error annotating brand {brand}: {str(e)}")
+
+            vlogger.logger.debug("Frame annotation completed")
+
+            # Convert back to OpenCV format
+            annotated_frame = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+            # dual_log(vlogger, app_logger, 'info', f"Converted annotated frame back to BGR. Shape: {annotated_frame.shape}, dtype: {annotated_frame.dtype}")
+
+            return annotated_frame
+        else:
+            vlogger.logger.debug("No brands detected, returning original frame")
+            return frame
+
+    return await _annotate_frame()
 ########################################################
 
 ## Reconstruct video with annotations
@@ -349,29 +375,18 @@ async def reconstruct_video(vlogger, video_id: str, temp_dir: str):
                 raise subprocess.CalledProcessError(result.returncode, combine_command, stderr)
             vlogger.logger.debug(f"FFmpeg combine output: {stdout.decode()}")
 
-            dual_log(vlogger, app_logger, 'info', f"Uploading processed video for {video_id}")
+            dual_log(vlogger, app_logger, 'info', f"Uploading annotated video {video_id}")
             
-            async with get_s3_client() as s3_client:
-                # Create a task for the upload operation
-                upload_task = asyncio.create_task(
-                    s3_client.upload_file(
-                        final_output_path, 
-                        settings.PROCESSING_BUCKET, 
-                        f"{video_id}/processed_video.mp4"
-                    )
-                )
-                
-                # Wait for the upload task to complete
-                try:
-                    await asyncio.wait_for(upload_task, timeout=300)  # 5 minutes timeout
-                    await vlogger.log_s3_operation("upload", os.path.getsize(final_output_path))
-                    dual_log(vlogger, app_logger, 'info', f"Successfully uploaded processed video for {video_id}")
-                except asyncio.TimeoutError:
-                    dual_log(vlogger, app_logger, 'error', f"Upload timeout for video {video_id}")
-                    raise
-                except Exception as upload_error:
-                    dual_log(vlogger, app_logger, 'error', f"Upload failed for video {video_id}: {str(upload_error)}")
-                    raise
+            # Wait for the upload task to complete
+            try:
+                await save_data_to_s3(vlogger, video_id, 'processed_video.mp4', final_output_path)
+                await vlogger.log_s3_operation("upload", os.path.getsize(final_output_path))
+            except asyncio.TimeoutError:
+                dual_log(vlogger, app_logger, 'error', f"Upload timeout for video {video_id}")
+                raise
+            except Exception as upload_error:
+                dual_log(vlogger, app_logger, 'error', f"Upload failed for video {video_id}: {str(upload_error)}")
+                raise
 
             dual_log(vlogger, app_logger, 'info', f"Successfully processed and uploaded video {video_id}")
 
@@ -396,29 +411,40 @@ async def reconstruct_video(vlogger, video_id: str, temp_dir: str):
 
 ## Get colour by confidence
 ########################################################
-def get_color_by_confidence(vlogger, confidence: float) -> Tuple[int, int, int]:
+async def get_color_by_confidence(vlogger, confidence: float) -> Tuple[int, int, int]:
     @vlogger.log_performance
-    def _get_color_by_confidence():
-        # Ensure confidence is between 0 and 1
-        confidence = max(0, min(1, confidence))
+    async def _get_color_by_confidence(conf: float):
+        vlogger.logger.debug(f"Entered _get_color_by_confidence with confidence: {conf}")
         
-        vlogger.logger.debug(f"Calculating color for confidence: {confidence}")
+        # Check if confidence is a valid float
+        if not isinstance(conf, float):
+            dual_log(vlogger, app_logger, 'info', f"Invalid confidence type: {type(conf)}")
+            raise ValueError(f"Confidence must be a float, got {type(conf)}")
+
+        # Ensure confidence is between 0 and 1
+        original_confidence = conf
+        conf = max(0, min(1, conf / 100 if conf > 1 else conf))
+        vlogger.logger.debug(f"Adjusted confidence from {original_confidence} to {conf}")
 
         # Define color ranges
-        if confidence < 0.5:
+        if conf < 0.5:
             # Red (255, 0, 0) to Yellow (255, 255, 0)
             r = 255
-            g = int(255 * (confidence * 2))
+            g = int(255 * (conf * 2))
             b = 0
             vlogger.logger.debug(f"Confidence < 0.5, using red to yellow range. Color: ({r}, {g}, {b})")
         else:
             # Yellow (255, 255, 0) to Green (0, 255, 0)
-            r = int(255 * ((1 - confidence) * 2))
+            r = int(255 * ((1 - conf) * 2))
             g = 255
             b = 0
             vlogger.logger.debug(f"Confidence >= 0.5, using yellow to green range. Color: ({r}, {g}, {b})")
-
+        
         return (r, g, b)
 
-    return _get_color_by_confidence()
+    try:
+        return await _get_color_by_confidence(confidence)
+    except Exception as e:
+        dual_log(vlogger, app_logger, 'info', f"Error in get_color_by_confidence: {str(e)}", exc_info=True)
+        raise
 ########################################################

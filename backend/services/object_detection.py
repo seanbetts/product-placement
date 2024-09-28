@@ -62,7 +62,7 @@ async def detect_objects(vlogger, video_id: str, status_tracker: StatusTracker):
                     dual_log(vlogger, app_logger, 'info', f"Error processing frame {frame_number:06d}.jpg for video {video_id}: {str(e)}")
             
             # Save combined raw results to S3
-            await s3_operations.save_data_to_s3(vlogger, video_id, 'raw_object_detection_results', raw_results)
+            await s3_operations.save_data_to_s3(vlogger, video_id, 'raw_object_detection_results.json', raw_results)
             
             dual_log(vlogger, app_logger, 'info', f"Object detection completed for video {video_id}")
             return raw_results

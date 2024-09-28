@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from typing import Optional
 from core.logging import video_logger, AppLogger, dual_log
 from models.status_tracker import StatusTracker
-from services import s3_operations, video_post_processing, object_detection
+from services import s3_operations, video_annotation, object_detection
 
 # Create a global instance of AppLogger
 app_logger = AppLogger()
@@ -105,7 +105,7 @@ async def annotate_video_endpoint(video_id: str):
             status_tracker = StatusTracker(video_id)
             try:
                 vlogger.logger.debug(f"Starting annotation for video: {video_id}")
-                await video_post_processing.annotate_video(vlogger, video_id, status_tracker)
+                await video_annotation.annotate_video(vlogger, video_id, status_tracker)
                 vlogger.logger.info(f"Video annotation completed for video {video_id}")
                 return {"message": f"Video annotation completed for video_id: {video_id}"}
             except Exception as e:

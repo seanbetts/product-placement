@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
 
 # Ensure /tmp has correct permissions
 RUN mkdir -p /tmp && chmod 777 /tmp
+RUN mkdir -p /temp && chmod 777 /temp
 
 # Install Python dependencies
 COPY requirements.txt .

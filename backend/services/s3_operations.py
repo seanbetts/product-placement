@@ -303,50 +303,6 @@ async def load_ocr_results(vlogger, video_id: str) -> List[Dict]:
     return await _load_ocr_results()
 ########################################################
 
-## Save data to S3
-########################################################
-async def save_data_to_s3(vlogger, video_id: str, filename: str, data: Any):
-    @vlogger.log_performance
-    async def _save_data_to_s3():
-        vlogger.logger.info(f"Saving {filename} data to S3 for video: {video_id}")
-
-        if filename == "processed_ocr" | "brands_ocr":
-            directory = 'ocr'
-        elif filename == "raw_object_detection_results":
-            directory = 'object_detection'
-        else:
-            directory = 'error'
-            # dual_log(vlogger, app_logger, 'error', f"Invalid filename for video: {video_id}")
-            raise HTTPException(status_code=400, detail="Invalid filename")
-
-        key = f'{video_id}/{directory}/{filename}.json'
-
-        try:
-            processed_data = json.dumps(data, indent=2)
-            data_size = len(processed_data)
-
-            vlogger.logger.debug(f"Attempting to save {filename} data to S3 for video: {video_id}")
-            async with get_s3_client() as s3_client:
-                await s3_client.put_object(
-                    Bucket=settings.PROCESSING_BUCKET,
-                    Key=key,
-                    Body=processed_data,
-                    ContentType='application/json'
-                )
-            
-            vlogger.log_s3_operation("upload", data_size)
-            dual_log(vlogger, app_logger, 'error', f"Successfully saved {filename} data to S3 for video: {video_id}. Size: {data_size} bytes")
-
-        except ClientError as e:
-            dual_log(vlogger, app_logger, 'error', f"Error saving {filename} data to S3 for video {video_id}: {str(e)}", exc_info=True)
-            raise
-        except Exception as e:
-            dual_log(vlogger, app_logger, 'error', f"Unexpected error saving {filename} data to S3 for video {video_id}: {str(e)}", exc_info=True)
-            raise
-
-    return await _save_data_to_s3()
-########################################################
-
 ## Save processed OCR results for video
 ########################################################
 async def save_processed_ocr_results(vlogger, video_id: str, cleaned_results: List[Dict]):

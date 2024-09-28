@@ -10,7 +10,7 @@ from core.config import settings
 from core.aws import get_s3_client, multipart_upload
 from models.status_tracker import StatusTracker
 from models.video_details import VideoDetails
-from services import audio_processing, frames_processing, status_processing, video_post_processing
+from services import audio_processing, frames_processing, status_processing, video_annotation
 from services.ocr_processing import main_ocr_processing
 import boto3
 from botocore.exceptions import ClientError
@@ -113,7 +113,7 @@ async def run_video_processing(vlogger, video_id: str):
 
                 # Step 5: Video annotation
                 dual_log(vlogger, app_logger, 'info', f"Starting annotation for video: {video_id}")
-                await video_post_processing.annotate_video(vlogger, video_id, status_tracker)
+                await video_annotation.annotate_video(vlogger, video_id, status_tracker)
                 await status_tracker.update_process_status("annotation", "complete", 100)
 
                 # Wait for all processes to complete

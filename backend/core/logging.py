@@ -15,8 +15,16 @@ from core.aws import get_s3_client
 active_loggers = {}
 
 def run_async(coro):
-    loop = asyncio.get_event_loop()
-    return loop.run_until_complete(coro)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    if loop.is_running():
+        return asyncio.run_coroutine_threadsafe(coro, loop).result()
+    else:
+        return loop.run_until_complete(coro)
 
 # VideoLogger class for monitoring performance of video uploads and processing
 class VideoLogger:
@@ -126,13 +134,16 @@ class VideoLogger:
 
     async def _process_upload_queue(self):
         while True:
-            current_time = await self.upload_queue.get()
-            if current_time - self.last_upload_time > 300:  # Upload every 5 minutes
-                await self._upload_log_to_s3()
-                self.last_upload_time = current_time
-            self.upload_queue.task_done()
-            if self.upload_queue.empty():
-                break
+            try:
+                current_time = await self.upload_queue.get()
+                if current_time - self.last_upload_time > 300:  # Upload every 5 minutes
+                    await self._upload_log_to_s3()
+                    self.last_upload_time = current_time
+                await self.upload_queue.task_done()
+                if self.upload_queue.empty():
+                    break
+            except Exception as e:
+                self.logger.error(f"Error processing upload queue: {str(e)}")
 
     async def log_s3_operation(self, operation_type, size):
         self.s3_operations[operation_type] += 1
@@ -168,11 +179,17 @@ class VideoLogger:
             self.logger.info(f"Performance log uploaded to S3 at {s3_key}")
         except Exception as e:
             self.logger.error(f"Error uploading performance log to S3: {str(e)}")
+            # Re-raise the exception to be handled by the caller
+            raise
 
     async def finalize(self):
         self.logger.info(f"Finalizing logging")
         self.logger.info(f"Final S3 operation counts: {self.s3_operations}")
         try:
+            # Ensure all pending uploads are processed
+            if self.upload_task:
+                await self.upload_task
+            # Perform final upload
             await self._upload_log_to_s3()
         except Exception as e:
             self.logger.error(f"Failed to upload log to S3: {str(e)}")
@@ -180,6 +197,9 @@ class VideoLogger:
             if os.path.exists(self.log_file):
                 os.remove(self.log_file)
                 self.logger.info(f"Local log file removed")
+
+    def sync_finalize(self):
+        run_async(self.finalize())
 
 @asynccontextmanager
 async def video_logger(logger_name, is_api_log=False):
@@ -203,32 +223,14 @@ async def finalize_all_loggers():
         active_loggers.pop(video_id, None)
 
 def sync_finalize_all_loggers():
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    if loop.is_running():
-        # Schedule the coroutine to run soon
-        asyncio.create_task(finalize_all_loggers())
-    else:
-        loop.run_until_complete(finalize_all_loggers())
+    run_async(finalize_all_loggers())
 
 @atexit.register
 def at_exit_finalize():
     try:
-        run_async(finalize_all_loggers())
+        sync_finalize_all_loggers()
     except Exception as e:
         print(f"Error during log finalization at exit: {str(e)}")
-
-# Add this new function for dual logging
-def dual_log(vlogger, app_logger, level, message, **kwargs):
-    log_func = getattr(vlogger.logger, level)
-    log_func(message, **kwargs)
-    
-    app_log_func = getattr(app_logger, f"log_{level}")
-    app_log_func(message, **kwargs)
 
 # AppLogger class for general application logging
 class AppLogger:
@@ -263,6 +265,14 @@ class AppLogger:
 
     def log_error(self, message, **kwargs):
         self.logger.error(message, **kwargs)
+
+# Function for dual logging
+def dual_log(vlogger, app_logger, level, message, **kwargs):
+    log_func = getattr(vlogger.logger, level)
+    log_func(message, **kwargs)
+    
+    app_log_func = getattr(app_logger, f"log_{level}")
+    app_log_func(message, **kwargs)
 
 # Export both loggers
 __all__ = ['video_logger', 'AppLogger', 'dual_log']
