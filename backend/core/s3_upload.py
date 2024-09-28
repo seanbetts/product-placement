@@ -16,7 +16,7 @@ app_logger = AppLogger()
 async def save_data_to_s3(vlogger, video_id: str, filename: str, data: Union[Any, str]):
     @vlogger.log_performance
     async def _save_data_to_s3():
-        vlogger.logger.info(f"Saving {filename} to S3 for video: {video_id}")
+        # vlogger.logger.debug(f"Saving {filename} to S3 for video: {video_id}")
         FILE_DIRECTORIES = {
             "processed_ocr.json": "ocr",
             "brands_ocr.json": "ocr",
@@ -48,13 +48,13 @@ async def save_data_to_s3(vlogger, video_id: str, filename: str, data: Union[Any
                     data_size = len(data) if isinstance(data, (bytes, bytearray)) else 0
                     upload_func = upload_data
 
-            vlogger.logger.debug(f"Attempting to save {filename} to S3 for video: {video_id}")
+            # vlogger.logger.debug(f"Attempting to save {filename} to S3 for video: {video_id}")
             
             async with get_s3_client() as s3_client:
                 await upload_func(s3_client, settings.PROCESSING_BUCKET, key, data, content_type)
 
             await vlogger.log_s3_operation("upload", data_size)
-            dual_log(vlogger, app_logger, 'info', f"Successfully saved {filename} to S3 for video: {video_id}. Size: {data_size} bytes")
+            # vlogger.logger.debug("Successfully saved {filename} to S3 for video: {video_id}. Size: {data_size} bytes")
         
         except ClientError as e:
             dual_log(vlogger, app_logger, 'error', f"Error saving {filename} to S3 for video {video_id}: {str(e)}", exc_info=True)
@@ -64,10 +64,16 @@ async def save_data_to_s3(vlogger, video_id: str, filename: str, data: Union[Any
             raise
 
     return await _save_data_to_s3()
+########################################################
 
+## xxx
+########################################################
 async def upload_data(s3_client, bucket, key, data, content_type):
     await s3_client.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)
+########################################################
 
+## xxx
+########################################################
 async def upload_file(s3_client, bucket, key, file_path, content_type):
     try:
         file_size = os.path.getsize(file_path)
@@ -98,3 +104,4 @@ async def upload_file(s3_client, bucket, key, file_path, content_type):
         if 'mpu' in locals():
             await s3_client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=mpu['UploadId'])
         raise
+########################################################

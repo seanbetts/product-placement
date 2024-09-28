@@ -29,10 +29,10 @@ thread_pool = ThreadPoolExecutor()
 async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 'StatusTracker', video_details: VideoDetails) -> Dict:
     @vlogger.log_performance
     async def _process_ocr():
-        vlogger.logger.info(f"Detecting text in video: {video_id}")
+        dual_log(vlogger, app_logger, 'info', f"Detecting text in video: {video_id}")
         ocr_start_time = time.time()
 
-        video_resolution = video_details.get_detail("video_resolution")
+        video_resolution = await video_details.get_detail("video_resolution")
 
         try:
              # Asynchronous S3 listing
@@ -42,12 +42,12 @@ async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 
                     paginator = s3_client.get_paginator('list_objects_v2')
                 async for page in paginator.paginate(Bucket=settings.PROCESSING_BUCKET, Prefix=prefix):
                     all_objects.extend(page.get('Contents', []))
-                    vlogger.logger.info(f"Retrieved {len(all_objects)} objects so far for video: {video_id}")
+                    # vlogger.logger.debug(f"Retrieved {len(all_objects)} objects so far for video: {video_id}")
                 return all_objects
 
-            vlogger.logger.info(f"Starting S3 listing for video: {video_id}")
+            # vlogger.logger.debug(f"Starting S3 listing for video: {video_id}")
             frame_objects = await list_objects_async(f'{video_id}/frames/')
-            vlogger.logger.info(f"Completed S3 listing for video: {video_id}. Total frames: {len(frame_objects)}")
+            # vlogger.logger.debug(f"Completed S3 listing for video: {video_id}. Total frames: {len(frame_objects)}")
 
             total_frames = len(frame_objects)
             dual_log(vlogger, app_logger, 'info', f"Total frames to process for video {video_id}: {total_frames}")
@@ -92,7 +92,8 @@ async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 
 
                 # Log progress periodically
                 if processed_frames % 100 == 0 or processed_frames == total_frames:
-                    vlogger.logger.info(f"Processed {processed_frames}/{total_frames} frames for video {video_id}")
+                    # vlogger.logger.debug(f"Processed {processed_frames}/{total_frames} frames for video {video_id}")
+                    continue
 
             # Sort OCR results by frame number
             ocr_results.sort(key=lambda x: x['frame_number'])
@@ -113,7 +114,7 @@ async def process_ocr(vlogger, video_id: str, video_resolution, status_tracker: 
             try:
                 async with get_s3_client() as s3_client:
                     uploaded_size = await upload_raw_ocr_results(s3_client, video_id, raw_ocr_results)
-                vlogger.log_s3_operation("upload", uploaded_size)
+                await vlogger.log_s3_operation("upload", uploaded_size)
                 dual_log(vlogger, app_logger, 'info', f"Saved raw OCR results for video: {video_id}")
             except Exception as e:
                 dual_log(vlogger, app_logger, 'error', f"Error saving raw OCR results for video {video_id}: {str(e)}", exc_info=True)
@@ -150,17 +151,17 @@ async def process_single_frame_ocr(vlogger, video_id: str, frame_number: int, vi
     async def _process_single_frame_ocr():
         try:
             # Get the frame from S3
-            vlogger.logger.debug(f"Retrieving frame {frame_number} for video {video_id}")
+            # vlogger.logger.debug(f"Retrieving frame {frame_number} for video {video_id}")
             async with get_s3_client() as s3_client:
                 response = await s3_client.get_object(
                     Bucket=settings.PROCESSING_BUCKET,
                     Key=f'{video_id}/frames/{frame_number:06d}.jpg'
                 )
             image_content = await response['Body'].read()
-            vlogger.log_s3_operation("download", len(image_content))
+            await vlogger.log_s3_operation("download", len(image_content))
 
             # Perform OCR using Amazon Rekognition in a separate thread
-            vlogger.logger.debug(f"Performing OCR on frame {frame_number} for video {video_id}")
+            # vlogger.logger.debug(f"Performing OCR on frame {frame_number} for video {video_id}")
             loop = asyncio.get_running_loop()
             rekognition_response = await loop.run_in_executor(
                 thread_pool,
@@ -195,10 +196,10 @@ async def process_single_frame_ocr(vlogger, video_id: str, frame_number: int, vi
                     "frame_number": frame_number,
                     "rekognition_response": rekognition_response
                 }
-                vlogger.logger.debug(f"Processed OCR data for frame {frame_number} of video {video_id}")
+                # vlogger.logger.debug(f"Processed OCR data for frame {frame_number} of video {video_id}")
                 return processed_data, raw_data
             else:
-                vlogger.logger.info(f"No text found in frame {frame_number} of video {video_id}")
+                # vlogger.logger.info(f"No text found in frame {frame_number} of video {video_id}")
                 processed_data = {
                     "frame_number": frame_number,
                     "full_text": "",
@@ -227,60 +228,60 @@ async def post_process_ocr(vlogger, video_id: str, status_tracker: StatusTracker
             total_steps = 7
             step_progress = 20 / total_steps
 
-            video_resolution = video_details.get_detail('video_resolution')
-            fps = video_details.get_detail('frames_per_second')
+            video_resolution = await video_details.get_detail('video_resolution')
+            fps = await video_details.get_detail('frames_per_second')
 
             await status_tracker.update_process_status("ocr", "in_progress", 80)  # Start at 80%
 
             # Load OCR results
-            vlogger.logger.info(f"Loading OCR results for video: {video_id}")
+            dual_log(vlogger, app_logger, 'info', f"OCR Data Processing: Loading OCR results for video: {video_id}")
             ocr_results = await s3_operations.load_ocr_results(vlogger, video_id)
-            vlogger.logger.info(f"Loaded {len(ocr_results)} OCR results for video: {video_id}")
+            # vlogger.logger.debug(f"Loaded {len(ocr_results)} OCR results for video: {video_id}")
             await status_tracker.update_process_status("ocr", "in_progress", 80 + step_progress)
 
             # Step 1: Clean and consolidate OCR data
-            dual_log(vlogger, app_logger, 'info', f"Cleaning and consolidating OCR data for video: {video_id}")
+            dual_log(vlogger, app_logger, 'info', f"OCR Data Processing - Step 1.1: Cleaning and consolidating OCR data for video: {video_id}")
             cleaned_results = await ocr_cleaning.clean_and_consolidate_ocr_data(vlogger, ocr_results, video_resolution)
-            vlogger.logger.info(f"Cleaned and consolidated {len(cleaned_results)} frames for video: {video_id}")
-            dual_log(vlogger, app_logger, 'info', f"Saving processed OCR results for video: {video_id}")
+            dual_log(vlogger, app_logger, 'info', f"OCR Data Processing - Step 1.4: Cleaned and consolidated {len(cleaned_results)} frames for video: {video_id}")
+            dual_log(vlogger, app_logger, 'info', f"OCR Data Processing - Step 1.5: Saving processed OCR results for video: {video_id}")
             await s3_operations.save_processed_ocr_results(vlogger, video_id, cleaned_results)
-            vlogger.log_s3_operation("upload", len(json.dumps(cleaned_results)))
+            await vlogger.log_s3_operation("upload", len(json.dumps(cleaned_results)))
             await status_tracker.update_process_status("ocr", "in_progress", 80 + 2 * step_progress)
 
             # Step 2: Create word cloud
-            dual_log(vlogger, app_logger, 'info', f"Creating word cloud for video: {video_id}")
+            dual_log(vlogger, app_logger, 'info', f"OCR Data Processing - Step 2.1: Creating word cloud for video: {video_id}")
             await utils.create_word_cloud(vlogger, video_id, cleaned_results)
             await status_tracker.update_process_status("ocr", "in_progress", 80 + 3 * step_progress)
 
             # Step 3: Detect brands and interpolate
-            dual_log(vlogger, app_logger, 'info', f"Detecting brands and interpolating for video: {video_id}")
+            dual_log(vlogger, app_logger, 'info', f"OCR Data Processing - Step 3.1: Detecting brands and interpolating for video: {video_id}")
             brand_results, brand_appearances = await ocr_brand_matching.detect_brands_and_interpolate(vlogger, cleaned_results, fps, video_resolution)
-            vlogger.logger.info(f"Detected {len(brand_appearances)} unique brands for video: {video_id}")
+            dual_log(vlogger, app_logger, 'info', f"OCR Data Processing - Step 3.5: Detected {len(brand_appearances)} unique brands for video: {video_id}")
             await status_tracker.update_process_status("ocr", "in_progress", 80 + 4 * step_progress)
 
             # Step 4: Filter brand results
-            dual_log(vlogger, app_logger, 'info', f"Filtering brand results for video: {video_id}")
+            dual_log(vlogger, app_logger, 'info', f"OCR Data Processing - Step 4.1: Filtering brand results for video: {video_id}")
             filtered_brand_results = await ocr_cleaning.filter_brand_results(vlogger, brand_results, brand_appearances, fps)
             await status_tracker.update_process_status("ocr", "in_progress", 80 + 5 * step_progress)
 
             # Step 5: Save filtered brands OCR results
-            vlogger.logger.info(f"Saving filtered brand OCR results for video: {video_id}")
+            dual_log(vlogger, app_logger, 'info', f"OCR Data Processing - Step 5.1: Saving filtered brand OCR results for video: {video_id}")
             await s3_operations.save_brands_ocr_results(vlogger, video_id, filtered_brand_results)
             await status_tracker.update_process_status("ocr", "in_progress", 80 + 6 * step_progress)
-            vlogger.log_s3_operation("upload", len(json.dumps(filtered_brand_results)))
+            await vlogger.log_s3_operation("upload", len(json.dumps(filtered_brand_results)))
 
             # Step 6: Create and save brand table
-            dual_log(vlogger, app_logger, 'info', f"Creating and saving brand table for video: {video_id}")
+            dual_log(vlogger, app_logger, 'info', f"OCR Data Processing - Step 6.1: Creating and saving brand table for video: {video_id}")
             brand_stats = await s3_operations.create_and_save_brand_table(vlogger, video_id, brand_appearances, fps)
-            vlogger.logger.info(f"Created brand table with {len(brand_stats)} entries for video: {video_id}")
+            dual_log(vlogger, app_logger, 'info', f"OCR Data Processing - Step 6.2: Created brand table with {len(brand_stats)} entries for video: {video_id}")
             await status_tracker.update_process_status("ocr", "in_progress", 100)
 
-            dual_log(vlogger, app_logger, 'info', f"Completed post-processing OCR for video: {video_id}")
+            dual_log(vlogger, app_logger, 'info', f"OCR Data Processing: Completed post-processing OCR for video: {video_id}")
             return brand_stats
         except Exception as e:
-            dual_log(vlogger, app_logger, 'error', f"Error in post_process_ocr for video {video_id}: {str(e)}", exc_info=True)
+            dual_log(vlogger, app_logger, 'error', f"OCR Data Processing: Error in post_process_ocr for video {video_id}: {str(e)}", exc_info=True)
             await status_tracker.update_process_status("ocr", "error", 80)
-            await status_tracker.set_error(f"Error in OCR post-processing: {str(e)}")
+            await status_tracker.set_error(f"OCR Data Processing: Error in post-OCR processing: {str(e)}")
             raise
 
     return await _post_process_ocr()

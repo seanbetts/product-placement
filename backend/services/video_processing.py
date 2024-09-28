@@ -34,7 +34,7 @@ async def run_video_processing(vlogger, video_id: str):
             with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_video:
                 async with get_s3_client() as s3_client:
                     await s3_client.download_file(settings.PROCESSING_BUCKET, video_key, temp_video.name)
-                vlogger.log_s3_operation("download", os.path.getsize(temp_video.name))
+                await vlogger.log_s3_operation("download", os.path.getsize(temp_video.name))
                 temp_video_path = temp_video.name
 
             try:
@@ -44,7 +44,7 @@ async def run_video_processing(vlogger, video_id: str):
                 status_update_task = asyncio.create_task(status_processing.periodic_status_update(vlogger, video_id, status_tracker))
 
                 # Step 1: Run video frame processing and audio extraction in parallel
-                dual_log(vlogger, app_logger, 'info', f"Starting video and audio processing for video: {video_id}")
+                dual_log(vlogger, app_logger, 'info', f"Video Processing: Starting video and audio processing for video: {video_id}")
                 await status_tracker.update_process_status("video_processing", "in_progress", 0)
                 await status_tracker.update_process_status("audio_extraction", "in_progress", 0)
                 video_task = asyncio.create_task(frames_processing.process_video_frames(vlogger, temp_video_path, video_id, status_tracker, video_details))
@@ -54,12 +54,12 @@ async def run_video_processing(vlogger, video_id: str):
                 audio_stats = await audio_task
 
                 if status_tracker.status.get("error"):
-                    dual_log(vlogger, app_logger, 'error', f"Error encountered during audio processing: {status_tracker.status['error']}")
+                    dual_log(vlogger, app_logger, 'error', f"Video Processing: Error encountered during audio processing: {status_tracker.status['error']}")
                     await status_tracker.update_s3_status()
                     return
 
                 # Step 2: Start transcription immediately after audio extraction
-                dual_log(vlogger, app_logger, 'info', f"Starting transcription for video: {video_id}")
+                dual_log(vlogger, app_logger, 'info', f"Video Processing: Starting transcription for video: {video_id}")
                 await status_tracker.update_process_status("transcription", "in_progress", 0)
                 transcription_task = asyncio.create_task(audio_processing.transcribe_audio(vlogger, video_id, status_tracker, video_details))
 
@@ -67,12 +67,12 @@ async def run_video_processing(vlogger, video_id: str):
                 video_stats = await video_task
 
                 if status_tracker.status.get("error"):
-                    dual_log(vlogger, app_logger, 'error', f"Error encountered during video processing: {status_tracker.status['error']}")
+                    dual_log(vlogger, app_logger, 'error', f"Video Processing: Error encountered during video processing: {status_tracker.status['error']}")
                     await status_tracker.update_s3_status()
                     return
 
                 # Step 3: Start OCR processing after video frames are available
-                dual_log(vlogger, app_logger, 'info', f"Starting OCR processing for video: {video_id}")
+                dual_log(vlogger, app_logger, 'info', f"Video Processing: Starting OCR processing for video: {video_id}")
                 await status_tracker.update_process_status("ocr", "in_progress", 0)
                 ocr_task = asyncio.create_task(main_ocr_processing.process_ocr(vlogger, video_id, status_tracker, video_details))
 
@@ -88,31 +88,31 @@ async def run_video_processing(vlogger, video_id: str):
                             try:
                                 transcription_stats = task.result()
                                 await status_tracker.update_process_status("transcription", "complete", 100)
-                                dual_log(vlogger, app_logger, 'info', f"Transcription completed for video: {video_id}")
+                                dual_log(vlogger, app_logger, 'info', f"Video Processing: Transcription completed for video: {video_id}")
                             except Exception as e:
-                                dual_log(vlogger, app_logger, 'error', f"Error in transcription: {str(e)}")
-                                await status_tracker.set_error(f"Transcription error: {str(e)}")
+                                dual_log(vlogger, app_logger, 'error', f"Video Processing: Error in transcription: {str(e)}")
+                                await status_tracker.set_error(f"Video Processing: Transcription error: {str(e)}")
                         elif task == ocr_task:
                             try:
                                 ocr_stats = task.result()
                                 await status_tracker.update_process_status("ocr", "complete", 100)
-                                dual_log(vlogger, app_logger, 'info', f"OCR processing completed for video: {video_id}")
+                                dual_log(vlogger, app_logger, 'info', f"Video Processing: OCR processing completed for video: {video_id}")
                             except Exception as e:
                                 dual_log(vlogger, app_logger, 'error', f"Error in OCR processing: {str(e)}")
-                                await status_tracker.set_error(f"OCR processing error: {str(e)}")
+                                await status_tracker.set_error(f"Video Processing: OCR processing error: {str(e)}")
 
                 if status_tracker.status.get("error"):
-                    dual_log(vlogger, app_logger, 'error', f"Error encountered during processing: {status_tracker.status['error']}")
+                    dual_log(vlogger, app_logger, 'error', f"Video Processing: Error encountered during processing: {status_tracker.status['error']}")
                     await status_tracker.update_s3_status()
                     return
 
                 # Step 4: Brand detection
-                dual_log(vlogger, app_logger, 'info', f"Starting brand detection for video: {video_id}")
+                dual_log(vlogger, app_logger, 'info', f"Video Processing: Starting brand detection for video: {video_id}")
                 brand_results = await main_ocr_processing.post_process_ocr(vlogger, video_id, status_tracker, video_details)
                 await status_tracker.update_process_status("ocr", "complete", 100)
 
                 # Step 5: Video annotation
-                dual_log(vlogger, app_logger, 'info', f"Starting annotation for video: {video_id}")
+                dual_log(vlogger, app_logger, 'info', f"Video Processing: Starting annotation for video: {video_id}")
                 await video_annotation.annotate_video(vlogger, video_id, status_tracker)
                 await status_tracker.update_process_status("annotation", "complete", 100)
 
@@ -120,8 +120,8 @@ async def run_video_processing(vlogger, video_id: str):
                 try:
                     await asyncio.wait_for(status_tracker.wait_for_completion(), timeout=3600)  # 1 hour timeout
                 except asyncio.TimeoutError:
-                    await status_tracker.set_error("Processing timed out")
-                    dual_log(vlogger, app_logger, 'error', f"Processing timed out for video {video_id}")
+                    await status_tracker.set_error("Video Processing: Processing timed out")
+                    dual_log(vlogger, app_logger, 'error', f"Video Processing: Processing timed out for video {video_id}")
                     return
 
                 total_end_time = time.time()
@@ -149,7 +149,7 @@ async def run_video_processing(vlogger, video_id: str):
                     Body=stats_json,
                     ContentType='application/json'
                 )
-                vlogger.log_s3_operation("upload", len(stats_json))
+                await vlogger.log_s3_operation("upload", len(stats_json))
 
                 # Update final status
                 await status_tracker.update_process_status("progress", None, 100)
@@ -158,14 +158,14 @@ async def run_video_processing(vlogger, video_id: str):
                 # Mark video as completed
                 await status_processing.mark_video_as_completed(vlogger, video_id)
 
-                dual_log(vlogger, app_logger, 'info', f"Completed processing video: {video_id}")
-                dual_log(vlogger, app_logger, 'info', f"Total processing time: {total_processing_time:.2f} seconds")
+                dual_log(vlogger, app_logger, 'info', f"Video Processing: Completed processing video: {video_id}")
+                dual_log(vlogger, app_logger, 'info', f"Video Processing: Total processing time: {total_processing_time:.2f} seconds")
 
                 # Cancel the status update task
                 status_update_task.cancel()
 
             except Exception as e:
-                dual_log(vlogger, app_logger, 'error', f"Error processing video {video_id}: {str(e)}", exc_info=True)
+                dual_log(vlogger, app_logger, 'error', f"Video Processing: Error processing video {video_id}: {str(e)}", exc_info=True)
                 await status_tracker.set_error(str(e))
             finally:
                 os.unlink(temp_video_path)
@@ -177,14 +177,14 @@ async def run_video_processing(vlogger, video_id: str):
 async def extract_audio_from_video(vlogger, video_path: str, video_id: str, status_tracker: StatusTracker, video_details: VideoDetails):
     @vlogger.log_performance
     async def _extract_audio():
-        dual_log(vlogger, app_logger, 'info', f"Extracting audio for video: {video_id}")
+        dual_log(vlogger, app_logger, 'info', f"Video Processing: Extracting audio for video: {video_id}")
         audio_path = f"/tmp/{video_id}_audio.mp3"
         start_time = time.time()
         FFMPEG_TIMEOUT = settings.FFMPEG_TIMEOUT
 
         try:
             # Estimate total time based on video file size
-            video_size = video_details.get_detail("file_size")
+            video_size = await video_details.get_detail("file_size")
             estimated_total_time = max(1, video_size / 1000000)  # Rough estimate: 1 second per MB, minimum 1 second
 
             progress_queue = asyncio.Queue()
@@ -195,7 +195,7 @@ async def extract_audio_from_video(vlogger, video_path: str, video_id: str, stat
                     if progress is None:
                         break
                     await status_tracker.update_process_status("audio_extraction", "in_progress", progress)
-                    vlogger.logger.debug(f"Audio extraction progress for video {video_id}: {progress:.2f}%")
+                    # vlogger.logger.debug(f"Video Processing: Audio extraction progress for video {video_id}: {progress:.2f}%")
 
             progress_task = asyncio.create_task(update_progress())
 
@@ -229,7 +229,7 @@ async def extract_audio_from_video(vlogger, video_path: str, video_id: str, stat
                     except asyncio.TimeoutError:
                         pass  # This is expected when there's no output for a while
                     except Exception as e:
-                        vlogger.logger.error(f"Error reading FFmpeg output: {str(e)}")
+                        dual_log(vlogger, app_logger, 'error', f"Error reading FFmpeg output: {str(e)}")
 
                 output_task = asyncio.create_task(read_output())
 
@@ -256,7 +256,7 @@ async def extract_audio_from_video(vlogger, video_path: str, video_id: str, stat
             
             try:
                 await multipart_upload(audio_path, settings.PROCESSING_BUCKET, s3_key, video_size)
-                vlogger.log_s3_operation("upload", video_size)
+                await vlogger.log_s3_operation("upload", video_size)
                 dual_log(vlogger, app_logger, 'info', f"Audio extracted and uploaded for video: {video_id}")
             except Exception as e:
                 dual_log(vlogger, app_logger, 'error', f"Error uploading audio to S3 for video {video_id}: {str(e)}")
@@ -325,7 +325,7 @@ async def extract_audio_from_video(vlogger, video_path: str, video_id: str, stat
 ## Deletes a video
 ########################################################
 async def delete_video(video_id: str):
-    app_logger.log_info(f"Starting deletion process for video: {video_id}")
+    app_logger.log_info(f"Video Deleteion: Starting deletion process for video: {video_id}")
     
     try:
         bucket = settings.PROCESSING_BUCKET
@@ -344,7 +344,7 @@ async def delete_video(video_id: str):
                 obj.delete()
                 return True, size
             except Exception as e:
-                return False, f"Error deleting {obj.key}: {str(e)}"
+                return False, f"Video Deleteion: Error deleting {obj.key}: {str(e)}"
 
         for obj in bucket_resource.objects.filter(Prefix=prefix):
             success, result = await delete_object(obj)
@@ -355,16 +355,16 @@ async def delete_video(video_id: str):
                 delete_errors.append(result)
 
         if delete_errors:
-            app_logger.log_error(f"Partial deletion for video {video_id}. Errors: {', '.join(delete_errors)}")
-            raise Exception("Partial deletion occurred")
+            app_logger.log_error(f"Video Deleteion: Partial deletion for video {video_id}. Errors: {', '.join(delete_errors)}")
+            raise Exception("Video Deleteion: Partial deletion occurred")
 
-        app_logger.log_info(f"Successfully deleted all objects for video {video_id}")
-        app_logger.log_info(f"Deleted {deleted_objects_count} objects, total size: {total_size_deleted / (1024*1024):.2f} MB")
+        app_logger.log_info(f"Video Deleteion: Successfully deleted all objects for video {video_id}")
+        app_logger.log_info(f"Video Deleteion: Deleted {deleted_objects_count} objects, total size: {total_size_deleted / (1024*1024):.2f} MB")
 
         await remove_from_completed_videos(video_id)
 
     except Exception as e:
-        app_logger.log_error(f"Error deleting video {video_id}: {str(e)}", exc_info=True)
+        app_logger.log_error(f"Video Deleteion: Error deleting video {video_id}: {str(e)}", exc_info=True)
         raise
 ########################################################
 
@@ -386,7 +386,7 @@ async def update_completed_videos_list(vlogger, video_id: str):
                         Key=completed_videos_key
                     )
                 data = await response['Body'].read()
-                vlogger.log_s3_operation("download", len(data))
+                await vlogger.log_s3_operation("download", len(data))
                 completed_videos = json.loads(data.decode('utf-8'))
                 vlogger.logger.info(f"Retrieved existing list with {len(completed_videos)} videos")
             except ClientError as e:
@@ -412,7 +412,7 @@ async def update_completed_videos_list(vlogger, video_id: str):
                 Body=updated_list_json,
                 ContentType='application/json'
             )
-            vlogger.log_s3_operation("upload", len(updated_list_json))
+            await vlogger.log_s3_operation("upload", len(updated_list_json))
             vlogger.logger.info(f"Updated completed videos list uploaded to S3. Total videos: {len(completed_videos)}")
 
         except Exception as e:

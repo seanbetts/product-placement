@@ -29,7 +29,7 @@ async def get_processing_status(vlogger, video_id: str) -> Dict[str, Any]:
                     Key=status_key
                 )
             data = await response['Body'].read()
-            vlogger.log_s3_operation("download", len(data))
+            await vlogger.log_s3_operation("download", len(data))
             status_data = json.loads(data.decode('utf-8'))
             vlogger.logger.info(f"Status retrieved for video ID {video_id}: {status_data}")
             return status_data
@@ -59,7 +59,7 @@ async def periodic_status_update(vlogger, video_id: str, status_tracker: StatusT
             status_tracker.calculate_overall_progress()
             # Use the status_tracker's method directly, which is now async
             await status_tracker.update_s3_status()
-            vlogger.log_s3_operation("upload", len(json.dumps(status_tracker.status)))
+            await vlogger.log_s3_operation("upload", len(json.dumps(status_tracker.status)))
             vlogger.logger.info(f"Updated status for video {video_id}: {status_tracker.status}")
         except Exception as e:
             vlogger.logger.error(f"Error updating status for video {video_id}: {str(e)}", exc_info=True)
@@ -96,7 +96,7 @@ async def mark_video_as_completed(vlogger, video_id: str):
                     Key=stats_key
                 )
             data = await response['Body'].read()
-            vlogger.log_s3_operation("download", len(data))
+            await vlogger.log_s3_operation("download", len(data))
             stats_data = json.loads(data.decode('utf-8'))
 
             # Update the stats
@@ -112,7 +112,7 @@ async def mark_video_as_completed(vlogger, video_id: str):
                 Body=updated_stats_json,
                 ContentType='application/json'
             )
-            vlogger.log_s3_operation("upload", len(updated_stats_json))
+            await vlogger.log_s3_operation("upload", len(updated_stats_json))
 
             # Update the completed videos list
             vlogger.logger.info(f"Updating completed videos list for video {video_id}")

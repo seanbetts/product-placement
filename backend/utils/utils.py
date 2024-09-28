@@ -15,7 +15,7 @@ from thefuzz import fuzz
 from wordcloud import WordCloud
 from core.config import settings
 from core.aws import get_s3_client
-from core.logging import AppLogger
+from core.logging import AppLogger, dual_log
 
 # Create a global instance of AppLogger
 app_logger = AppLogger()
@@ -37,7 +37,7 @@ async def get_video_resolution(vlogger, video_id: str) -> Tuple[int, int]:
                     Key=first_frame_path
                 )
             frame_data = await response['Body'].read()
-            vlogger.log_s3_operation("download", len(frame_data))
+            await vlogger.log_s3_operation("download", len(frame_data))
             
             # Open the image using PIL
             with Image.open(io.BytesIO(frame_data)) as img:
@@ -208,7 +208,7 @@ async def create_word_cloud(vlogger, video_id: str, cleaned_results: List[Dict])
         excluded_not_word_count = 0
         brand_match_count = 0
 
-        vlogger.logger.info(f"Processing cleaned OCR results for word cloud creation for video: {video_id}")
+        vlogger.logger.debug(f"OCR Data Processing: Processing cleaned OCR results for word cloud creation for video: {video_id}")
         for frame in cleaned_results:
             for detection in frame['cleaned_detections']:
                 confidence = detection.get('confidence', 1.0)  # Default to 1.0 if confidence is not available
@@ -237,10 +237,10 @@ async def create_word_cloud(vlogger, video_id: str, cleaned_results: List[Dict])
             vlogger.logger.warning(f"No text found for word cloud creation for video: {video_id}")
             return
         
-        vlogger.logger.info(f"Excluded {excluded_confidence_count} words due to low confidence, "
-                            f"{excluded_length_count} words due to short length, and "
-                            f"{excluded_not_word_count} words not in dictionary. "
-                            f"Included {brand_match_count} brand matches for video: {video_id}")
+        # vlogger.logger.debug(f"Excluded {excluded_confidence_count} words due to low confidence, "
+        #                     f"{excluded_length_count} words due to short length, and "
+        #                     f"{excluded_not_word_count} words not in dictionary. "
+        #                     f"Included {brand_match_count} brand matches for video: {video_id}")
 
         # Count word frequencies
         word_freq = Counter(all_text)
@@ -257,12 +257,12 @@ async def create_word_cloud(vlogger, video_id: str, cleaned_results: List[Dict])
         ]
 
         # Find the first available preferred font
-        font_path = await find_font(vlogger, preferred_fonts)
+        font_path = await find_font(preferred_fonts)
         if not font_path:
             vlogger.logger.warning("No preferred font found. Using default.")
 
         try:
-            vlogger.logger.info(f"Generating word cloud for video: {video_id}")
+            # vlogger.logger.debug(f"Generating word cloud for video: {video_id}")
             # Generate word cloud
             wordcloud = WordCloud(width=600, height=600,
                                   background_color='white',
@@ -285,7 +285,7 @@ async def create_word_cloud(vlogger, video_id: str, cleaned_results: List[Dict])
             plt.savefig(img_buffer, format='jpg', dpi=300, bbox_inches='tight', pad_inches=0)
             img_buffer.seek(0)
 
-            vlogger.logger.info(f"Uploading word cloud to S3 for video: {video_id}")
+            # vlogger.logger.debug(f"Uploading word cloud to S3 for video: {video_id}")
             
             # Upload to S3
             async with get_s3_client() as s3_client:
@@ -295,10 +295,10 @@ async def create_word_cloud(vlogger, video_id: str, cleaned_results: List[Dict])
                     Body=img_buffer.getvalue(),
                     ContentType='image/jpeg'
                 )
-            vlogger.log_s3_operation("upload", img_buffer.getbuffer().nbytes)
-            vlogger.logger.info(f"Word cloud created and saved for video: {video_id}")
+            await vlogger.log_s3_operation("upload", img_buffer.getbuffer().nbytes)
+            # vlogger.logger.debug(f"Word cloud created and saved for video: {video_id}")
         except Exception as e:
-            vlogger.logger.error(f"Error creating or saving word cloud for video {video_id}: {str(e)}", exc_info=True)
+            dual_log(vlogger, app_logger, 'info', f"OCR Data Processing: Error creating or saving word cloud for video {video_id}: {str(e)}", exc_info=True)
             raise
         finally:
             plt.close()
@@ -308,7 +308,7 @@ async def create_word_cloud(vlogger, video_id: str, cleaned_results: List[Dict])
 
 ## Find font for wordcloud
 ########################################################
-async def find_font(vlogger, font_names: List[str]) -> str:
+async def find_font(font_names: List[str]) -> str:
     """
     Find the first available font from the given list of font names.
     Args:
@@ -317,17 +317,17 @@ async def find_font(vlogger, font_names: List[str]) -> str:
     Returns:
     str or None: Path to the first available font, or None if no fonts are found.
     """
-    vlogger.logger.info(f"Searching for fonts from list: {font_names}")
+    # app_logger.log_info(f"Searching for fonts from list: {font_names}")
     for font_name in font_names:
         try:
             # Use asyncio.to_thread for potentially blocking operations
             font_path = await asyncio.to_thread(font_manager.findfont, font_manager.FontProperties(family=font_name))
-            vlogger.logger.info(f"Found font: {font_name} at path: {font_path}")
+            # vlogger.logger.debug(f"Found font: {font_name} at path: {font_path}")
             return font_path
         except Exception as e:
-            vlogger.logger.debug(f"Font not found: {font_name}. Error: {str(e)}")
+            # vlogger.logger.debug(f"Font not found: {font_name}. Error: {str(e)}")
             continue
-    vlogger.logger.warning("No fonts found from the provided list.")
+    app_logger.log_warning("No fonts found from the provided list.")
     return None
 ########################################################
 

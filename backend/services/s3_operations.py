@@ -56,7 +56,7 @@ async def upload_video(
                     vlogger.logger.debug("Downloading existing file for appending", extra=log_context)
                     async with get_s3_client() as s3_client:
                         s3_client.download_file (settings.PROCESSING_BUCKET, s3_key, temp_filename)
-                    vlogger.log_s3_operation("download", os.path.getsize(temp_filename))
+                    await vlogger.log_s3_operation("download", os.path.getsize(temp_filename))
                 
                 with open(temp_filename, 'ab') as f:
                     f.write(chunk)
@@ -67,7 +67,7 @@ async def upload_video(
             vlogger.logger.debug("Uploading chunk to S3", extra=log_context)
             async with get_s3_client() as s3_client:
                 s3_client.upload_file(temp_filename, settings.PROCESSING_BUCKET, s3_key)
-            vlogger.log_s3_operation("upload", os.path.getsize(temp_filename))
+            await vlogger.log_s3_operation("upload", os.path.getsize(temp_filename))
             os.unlink(temp_filename)
 
             if chunk_number == total_chunks:
@@ -108,7 +108,7 @@ async def cancel_video_upload(vlogger, video_id: str):
 
                 vlogger.logger.info(f"Deleting object from S3 for video_id: {video_id}")
                 await vlogger.log_performance(s3_client.delete_object)(Bucket=settings.PROCESSING_BUCKET, Key=s3_key)
-                vlogger.log_s3_operation("delete", 0)  # Log the delete operation
+                await vlogger.log_s3_operation("delete", 0)  # Log the delete operation
 
                 vlogger.logger.info(f"Upload successfully cancelled for video_id: {video_id}")
                 return {"status": "cancelled", "video_id": video_id}
@@ -152,7 +152,7 @@ async def upload_processed_results(vlogger, processed_dir, video_id, chunk_index
                             local_path, settings.PROCESSING_BUCKET, s3_key
                         )
                     
-                    vlogger.log_s3_operation("upload", file_size)
+                    await vlogger.log_s3_operation("upload", file_size)
                     total_bytes_uploaded += file_size
                     uploaded_files += 1
                     
@@ -185,7 +185,7 @@ async def upload_frame_to_s3(vlogger, key, body):
                     Body=body,
                     ContentType='image/jpeg'
                 )
-            vlogger.log_s3_operation("upload", len(body))
+            await vlogger.log_s3_operation("upload", len(body))
             vlogger.logger.info(f"Successfully uploaded frame to S3: {key}")
             return True
         except Exception as e:
@@ -208,7 +208,7 @@ async def upload_frames_batch(vlogger, bucket, frames):
             total_size += len(body)
             successful_uploads += 1
         
-        vlogger.log_s3_operation("upload", total_size)
+        await vlogger.log_s3_operation("upload", total_size)
         vlogger.logger.info(f"Successfully uploaded {successful_uploads} frames in batch")
     except Exception as e:
         vlogger.logger.error(f"Failed to upload batch: {str(e)}", exc_info=True)
@@ -281,7 +281,7 @@ async def load_ocr_results(vlogger, video_id: str) -> List[Dict]:
             
             # Read the data in chunks asynchronously
             data = await response['Body'].read()
-            vlogger.log_s3_operation("download", len(data))
+            await vlogger.log_s3_operation("download", len(data))
             
             # Parse JSON synchronously
             try:
@@ -325,7 +325,7 @@ async def save_processed_ocr_results(vlogger, video_id: str, cleaned_results: Li
                     ContentType='application/json'
                 )
             
-            vlogger.log_s3_operation("upload", data_size)
+            await vlogger.log_s3_operation("upload", data_size)
             vlogger.logger.info(f"Successfully saved processed OCR results for video: {video_id}. Size: {data_size} bytes")
 
         except ClientError as e:
@@ -360,7 +360,7 @@ async def save_brands_ocr_results(vlogger, video_id: str, brand_results: List[Di
                     ContentType='application/json'
                 )
             
-            vlogger.log_s3_operation("upload", data_size)
+            await vlogger.log_s3_operation("upload", data_size)
             vlogger.logger.info(f"Successfully saved brands OCR results for video: {video_id}. Size: {data_size} bytes")
 
         except ClientError as e:
@@ -411,7 +411,7 @@ async def create_and_save_brand_table(vlogger, video_id: str, brand_appearances:
                     ContentType='application/json'
                 )
 
-            vlogger.log_s3_operation("upload", data_size)
+            await vlogger.log_s3_operation("upload", data_size)
             vlogger.logger.info(f"Successfully saved brand table for video: {video_id}. Size: {data_size} bytes")
             return brand_stats
         except ClientError as e:

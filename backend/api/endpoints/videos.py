@@ -27,7 +27,7 @@ async def upload_video_endpoint(
             dual_log(vlogger, app_logger, 'info', "Received request to upload video for processing")
             
             try:
-                vlogger.logger.debug(f"Uploading chunk {chunk_number}/{total_chunks} for video ID: {video_id or 'new video'}")
+                vlogger.logger.info(f"Uploading chunk {chunk_number}/{total_chunks} for video ID: {video_id or 'new video'}")
                 result = await s3_operations.upload_video(
                     vlogger,
                     background_tasks,
@@ -57,7 +57,7 @@ async def cancel_video_upload(video_id: str):
             vlogger.logger.info(f"Received request to cancel upload for video {video_id}")
 
             try:
-                vlogger.logger.debug(f"Attempting to cancel upload for video: {video_id}")
+                vlogger.logger.info(f"Attempting to cancel upload for video: {video_id}")
                 result = await vlogger.log_performance(s3_operations.cancel_upload_video)(vlogger, video_id)
                 vlogger.logger.info(f"Successfully cancelled upload for video {video_id}")
                 return {"status": "success", "message": f"Upload of video {video_id} cancelled"}
@@ -76,41 +76,42 @@ async def cancel_video_upload(video_id: str):
 async def detect_objects_endpoint(video_id: str):
     async with video_logger("api-endpoints", is_api_log=True) as vlogger:
         @vlogger.log_performance
-        async def _detect_objects_endpoint():
-            vlogger.logger.info(f"Received request to detect objects in video {video_id}")
-            status_tracker = StatusTracker(video_id)
+        async def _detect_objects_endpoint(v_id):
+            vlogger.logger.info(f"Received request to detect objects in video {v_id}")
+            status_tracker = StatusTracker(v_id)
 
             try:
-                vlogger.logger.debug(f"Starting detecting objects in video: {video_id}")
-                await vlogger.log_performance(object_detection.detect_objects)(vlogger, video_id, status_tracker)
-                vlogger.logger.info(f"Object detection completed in video {video_id}")
-                return {"message": f"Object detection completed in video {video_id}"}
+                vlogger.logger.info(f"Starting detecting objects in video: {v_id}")
+                await vlogger.log_performance(object_detection.detect_objects)(vlogger, v_id, status_tracker)
+                vlogger.logger.info(f"Object detection completed in video {v_id}")
+                return {"message": f"Object detection completed in video {v_id}"}
 
             except Exception as e:
-                vlogger.logger.error(f"Error detecting objects in video {video_id}: {str(e)}", exc_info=True)
+                dual_log(vlogger, app_logger, 'info', f"Error detecting objects in video {v_id}: {str(e)}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error running object detection: {str(e)}")
 
-        return await _detect_objects_endpoint()
+        return await _detect_objects_endpoint(video_id)
 ########################################################
 
 ## ANNOTATE VIDEOS (POST)
 ## Annotates videos with brand, logos, and object detection
 ########################################################
+
 @router.post("/annotate_video/{video_id}")
 async def annotate_video_endpoint(video_id: str):
     async with video_logger("api-endpoints", is_api_log=True) as vlogger:
         @vlogger.log_performance
-        async def _annotate_video_endpoint():
-            vlogger.logger.info(f"Received request to annotate video {video_id}")
-            status_tracker = StatusTracker(video_id)
+        async def _annotate_video_endpoint(v_id):
+            dual_log(vlogger, app_logger, 'info', f"Received request to annotate video {v_id}")
+            status_tracker = StatusTracker(v_id)
             try:
-                vlogger.logger.debug(f"Starting annotation for video: {video_id}")
-                await video_annotation.annotate_video(vlogger, video_id, status_tracker)
-                vlogger.logger.info(f"Video annotation completed for video {video_id}")
-                return {"message": f"Video annotation completed for video_id: {video_id}"}
+                vlogger.logger.info(f"Starting annotation for video: {v_id}")
+                await video_annotation.annotate_video(vlogger, v_id, status_tracker)
+                vlogger.logger.info(f"Video annotation completed for video {v_id}")
+                return {"message": f"Video annotation completed for video_id: {v_id}"}
             except Exception as e:
-                vlogger.logger.error(f"Error annotating video {video_id}: {str(e)}", exc_info=True)
+                dual_log(vlogger, app_logger, 'info', f"Error annotating video {v_id}: {str(e)}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error running video annotation: {str(e)}")
 
-        return await _annotate_video_endpoint()
+        return await _annotate_video_endpoint(video_id)
 ########################################################

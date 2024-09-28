@@ -26,7 +26,7 @@ async def transcribe_audio(vlogger, video_id: str, status_tracker: StatusTracker
         vlogger.logger.info(f"Transcribing audio for video: {video_id}")
         audio_key = f'{video_id}/audio.mp3'
         transcript_key = f"{video_id}/transcripts/audio_transcript_{video_id}.json"
-        video_length = video_details.get_detail("video_length")
+        video_length = await video_details.get_detail("video_length")
 
         try:
             # Check if the audio file exists
@@ -160,7 +160,7 @@ async def process_transcription_response(vlogger, video_id: str):
                         Key=transcript_key
                     )
                 transcript_content = await response['Body'].read()
-                vlogger.log_s3_operation("download", len(transcript_content))
+                await vlogger.log_s3_operation("download", len(transcript_content))
                 transcript_data = json.loads(transcript_content.decode('utf-8'))
                 vlogger.logger.info(f"Successfully retrieved transcript file for video {video_id}")
             except s3_client.exceptions.NoSuchKey:
@@ -211,7 +211,7 @@ async def process_transcription_response(vlogger, video_id: str):
                     Body=json_content,
                     ContentType='application/json'
                 )
-            vlogger.log_s3_operation("upload", len(json_content))
+            await vlogger.log_s3_operation("upload", len(json_content))
             vlogger.logger.info(f"Saved JSON transcript for video {video_id}")
 
             # Save transcript.txt
@@ -222,7 +222,7 @@ async def process_transcription_response(vlogger, video_id: str):
                     Body=plain_transcript,
                     ContentType='text/plain'
                 )
-            vlogger.log_s3_operation("upload", len(plain_transcript))
+            await vlogger.log_s3_operation("upload", len(plain_transcript))
             vlogger.logger.info(f"Saved plain text transcript for video {video_id}")
 
         except FileNotFoundError as e:
