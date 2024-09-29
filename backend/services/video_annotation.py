@@ -174,7 +174,7 @@ async def annotate_frame(
         logger.debug(f"Input frame shape: {frame.shape}, dtype: {frame.dtype}")
 
         # Find the first available preferred font
-        font_size = 20
+        font_size = 16
         font_path = await find_font(settings.PREFERRED_FONTS)
 
         if font_path:
