@@ -9,23 +9,37 @@ PROJECT_ROOT = Path(__file__).parent.parent.absolute()
 
 class Settings(BaseSettings):
     ## Project Settings
-    PROJECT_NAME: str = "Product Placement Backend"
-    PORT: int = 8080  # Port for FastAPI endpoint
+    PROJECT_NAME: str = "Product Placement Backend"         # App name
+    PORT: int = 8080                                        # Port for FastAPI endpoint
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000"]  # add frontend URL
-    API_KEY: str
-    TEMP_DIR: str = Field(default="/app/temp")
+    API_KEY: str                                            # API key for calling FastAPI endpoints
+    TEMP_DIR: str = Field(default="/app/temp")              # Temp directory for local file saving
+    LOG_LEVEL: str = "INFO"                                 # Log level
+    MAX_API_WORKERS: int = 10                               # Max number of workers for the FastAPI app
+
+    # Preferred fonts in order of priority for text rendering
+    PREFERRED_FONTS: tuple[str, ...] = (
+        'Liberation Sans', 
+        'DejaVu Sans', 
+        'Roboto', 
+        'Open Sans', 
+        'Lato', 
+        'Noto Sans',
+        'Arial', 
+        'Helvetica'
+    )
 
     ## AWS env Settings
-    AWS_ACCESS_KEY_ID: str
-    AWS_SECRET_ACCESS_KEY: str
+    AWS_ACCESS_KEY_ID: str                                  # AWS access key ID
+    AWS_SECRET_ACCESS_KEY: str                              # AWS seecret access key
     AWS_DEFAULT_REGION: str                                 # AWS region
     PROCESSING_BUCKET: str                                  # s3 bucket
-    REKOGNITION_SNS_TOPIC_ARN: str
-    REKOGNITION_ROLE_ARN: str
+    REKOGNITION_SNS_TOPIC_ARN: str                          # AWS Rekognition SNS topic ARN
+    REKOGNITION_ROLE_ARN: str                               # AWS Rekognition role ARN
     SQS_QUEUE_URL: str
 
     ## Other AWS Settings
-    S3_RETRIES: int = 10
+    S3_RETRIES: int = 10                                    # Number of retries for s3
     MAX_POOL_CONNECTIONS: int = 50                          # Max pool connections for s3
     MULTIPART_THRESHOLD: int = 25                           # MB file size before mutlipart uploads take over
     MULTIPART_MAX_CONCURRENCY: int = 10                     # MAximum concurrency
@@ -43,7 +57,7 @@ class Settings(BaseSettings):
 
     ## OCR Settings
     BRAND_DATABASE_FILE: Path = Field(default="data/brand_database.json")
-    BRAND_DATABASE: Dict[str, Dict] = {}
+    BRAND_DATABASE: Dict[str, Dict] = {}                    # Brand database object
     MIN_BRAND_TIME: int = 1                                 # Minimum number of seconds a brand needs to appear
     MAX_CLEANING_CONFIDENCE: int = 67                       # Maximum confidence score required to skip text cleaning
     MIN_WORD_MATCH: int = 80                                # Minimum confidence for applying word corrections
@@ -62,18 +76,18 @@ class Settings(BaseSettings):
     MIN_OVERLAP_RATIO_FOR_MERGE: float = 0.1                # 10% overlap required for automatic merging
 
     # Video post-processing settings
-    SMOOTHING_WINDOW: int = 5
-    SHOW_CONFIDENCE: bool = False
-    TEXT_BG_OPACITY: float = 0.7
+    SMOOTHING_WINDOW: int = 5                               # Smoothing window for
+    SHOW_CONFIDENCE: bool = False                           # Show confidence score for detected brands in annotated video
+    TEXT_BG_OPACITY: float = 0.7                            # Background opacity for text in annotated video
 
     # FFmpeg settings
     FFMPEG_TIMEOUT: int = 300                               # Seconds for timeout
-    VIDEO_CODEC: str = 'libx264'
+    VIDEO_CODEC: str = 'libx264'                            # Annotated video codec used
     VIDEO_PRESET: str = 'medium'                            # Options: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
     VIDEO_PROFILE: str = 'high'                             # Options: baseline, main, high
     VIDEO_BITRATE: str = '5M'                               # 5 Mbps
-    VIDEO_PIXEL_FORMAT: str = 'yuv420p'
-    AUDIO_CODEC: str = 'aac'
+    VIDEO_PIXEL_FORMAT: str = 'yuv420p'                     # Annotated video pixel format
+    AUDIO_CODEC: str = 'aac'                                # Annotated video audio codec
     AUDIO_BITRATE: str = '192k'                             # 192 kbps
 
     @field_validator("BRAND_DATABASE_FILE", mode="before")
@@ -108,5 +122,4 @@ class Settings(BaseSettings):
         "extra": "ignore",
     }
 
-# Add these lines at the end of config.py
 settings = Settings()

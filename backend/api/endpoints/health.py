@@ -1,8 +1,5 @@
 from fastapi import APIRouter
-from core.logging import AppLogger
-
-# Create a global instance of AppLogger
-app_logger = AppLogger()
+from core.logging import logger
 
 router = APIRouter()
 
@@ -11,6 +8,6 @@ router = APIRouter()
 ########################################################
 @router.get("/health")
 async def health_check():
-    app_logger.log_info("Health check called")
+    logger.info("Health check called")
     return {"status": "product placement backend ok"}
 ########################################################

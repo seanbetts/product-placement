@@ -7,7 +7,7 @@ from io import BytesIO
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from core.config import settings
-from core.logging import AppLogger
+from core.logging import logger
 from services import s3_operations
 from models.status_tracker import StatusTracker
 from models.video_details import VideoDetails
@@ -15,9 +15,6 @@ from utils.utils import get_video_resolution
 from core.aws import get_s3_client
 from functools import lru_cache
 from bisect import insort
-
-# Create a global instance of AppLogger
-app_logger = AppLogger()
 
 # Create a cache for frame data
 @lru_cache(maxsize=100)
@@ -29,131 +26,129 @@ async def get_cached_frame(frame_key):
 
 ## Process video frames
 ########################################################
-async def process_video_frames(vlogger, video_path: str, video_id: str, status_tracker: StatusTracker, video_details: VideoDetails):
-    @vlogger.log_performance
-    async def _process_video_frames():
-        try:
-            start_time = time.time()
-            cap = cv2.VideoCapture(video_path)
+async def process_video_frames(video_path: str, video_id: str, status_tracker: StatusTracker, video_details: VideoDetails):
+    try:
+        logger.info(f"Video Processing - Thread 1 - Image Processing - Step 1.1: Started video frame extraction for video: {video_id}")
+        start_time = time.time()
+        cap = cv2.VideoCapture(video_path)
 
-            # Set file size
-            file_size = os.path.getsize(video_path)
-            video_details.set_detail("file_size", file_size)
-
-            # Set video resolution
-            video_resolution = get_video_resolution(vlogger, video_id)
-            video_details.set_detail("video_resolution", video_resolution)
-            
-            # Set FPS
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            video_details.set_detail("frames_per_second", fps)
-
-            # Set number of frames
-            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            video_details.set_detail("number_of_frames", frame_count)
-
-            # Set video length
-            duration = frame_count / fps
-            video_details.set_detail("video_length", duration)
-            
-            vlogger.logger.info(f"Video details - FPS: {fps}, Total frames: {frame_count}, Duration: {duration:.2f} seconds")
-            
-            frame_number = 0
-            tasks = []
-            current_batch = []
-            semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_BATCHES)
-            
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    if current_batch:
-                        tasks.append(asyncio.create_task(process_batch(vlogger, current_batch.copy(), video_id, semaphore)))
-                    break
-                if frame_number % settings.FRAME_INTERVAL == 0:
-                    success, frame_data = cv2.imencode('.jpg', frame)
-                    if not success:
-                        vlogger.logger.error(f"Failed to encode frame {frame_number}")
-                        continue
-                    frame_bytes = frame_data.tobytes()
-                    frame_filename = f'{frame_number:06d}.jpg'
-                    current_batch.append((frame_bytes, frame_filename))
-                    if len(current_batch) == settings.BATCH_SIZE:
-                        tasks.append(asyncio.create_task(process_batch(vlogger, current_batch.copy(), video_id, semaphore)))
-                        current_batch = []
-                
-                frame_number += 1
-                
-                # Update status every 5% of frames processed
-                if frame_number % max(1, frame_count // 20) == 0:
-                    progress = (frame_number / frame_count) * 100
-                    await status_tracker.update_process_status("video_processing", "in_progress", progress)
-            
-            cap.release()
-            vlogger.logger.info(f"Finished reading video. Total batches: {len(tasks)}")
-            
-            # Wait for all batch processing tasks to complete
-            total_frames_processed = sum(await asyncio.gather(*tasks))
-            
-            vlogger.logger.info(f"Total frames processed and uploaded: {total_frames_processed}")
-            
-            processing_time = time.time() - start_time
-            extracted_frames = frame_number // settings.FRAME_INTERVAL
-            processing_fps = extracted_frames / processing_time
-            processing_speed = (processing_fps / fps) * 100
-            
-            result = {
-                "video_length": f'{duration:.1f} seconds',
-                "total_frames": frame_count,
-                "extracted_frames": extracted_frames,
-                "video_fps": round(fps, 2),
-                "video_processing_time": processing_time,
-                "video_processing_fps": processing_fps,
-                "video_processing_speed": processing_speed
-            }
-            
-            vlogger.logger.info(f"Video processing completed. Results: {result}")
-            await status_tracker.update_process_status("video_processing", "complete", 100)
-            return result
+        # Set file size
+        file_size = os.path.getsize(video_path)
+        logger.debug(f"Video File Size: {(file_size / 1000000):.1f} Mb")
+        video_details.set_detail("file_size", file_size)
         
-        except Exception as e:
-            vlogger.logger.error(f"Error in video frame processing: {str(e)}", exc_info=True)
-            await status_tracker.set_error(f"Video frame processing error: {str(e)}")
-            raise
+        # Set FPS
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        logger.debug(f"FPS: {fps}")
+        video_details.set_detail("frames_per_second", fps)
 
-    return await _process_video_frames()
+        # Set number of frames
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        logger.debug(f"Frame Count: {frame_count}")
+        video_details.set_detail("number_of_frames", frame_count)
+
+        # Set video length
+        duration = frame_count / fps
+        logger.debug(f"Duration: {duration:.2f} seconds")
+        video_details.set_detail("video_length", duration)
+        
+        logger.debug(f"Video details - File size: {(file_size / 1000000):.1f} Mb, FPS: {fps:.1f}, Total frames: {frame_count}, Duration: {duration:.2f} seconds")
+        
+        frame_number = 0
+        tasks = []
+        current_batch = []
+        semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_BATCHES)
+        
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                if current_batch:
+                    tasks.append(asyncio.create_task(process_batch(current_batch.copy(), video_id, semaphore)))
+                break
+            if frame_number % settings.FRAME_INTERVAL == 0:
+                success, frame_data = cv2.imencode('.jpg', frame)
+                if not success:
+                    logger.error(f"Failed to encode frame {frame_number}")
+                    continue
+                frame_bytes = frame_data.tobytes()
+                frame_filename = f'{frame_number:06d}.jpg'
+                current_batch.append((frame_bytes, frame_filename))
+                if len(current_batch) == settings.BATCH_SIZE:
+                    tasks.append(asyncio.create_task(process_batch(current_batch.copy(), video_id, semaphore)))
+                    current_batch = []
+            
+            frame_number += 1
+            
+            # Update status every 5% of frames processed
+            if frame_number % max(1, frame_count // 20) == 0:
+                progress = (frame_number / frame_count) * 100
+                await status_tracker.update_process_status("video_processing", "in_progress", progress)
+        
+        cap.release()
+        logger.debug(f"Video Processing - Thread 1 - Image Processing - Step 1.1: Finished reading video. Total batches: {len(tasks)}")
+        
+        # Wait for all batch processing tasks to complete
+        total_frames_processed = sum(await asyncio.gather(*tasks))
+        
+        logger.debug(f"Video Processing - Thread 1 - Image Processing - Step 1.1: Total frames processed and uploaded: {total_frames_processed}")
+
+        # Set video resolution
+        video_resolution = await get_video_resolution(video_id)
+        logger.debug(f"Video Processing - Thread 1 - Image Processing - Step 1.1: Video Resolution: {video_resolution}")
+        video_details.set_detail("video_resolution", video_resolution)
+        
+        processing_time = time.time() - start_time
+        extracted_frames = frame_number // settings.FRAME_INTERVAL
+        processing_fps = extracted_frames / processing_time
+        processing_speed = (processing_fps / fps) * 100
+        
+        result = {
+            "video_length": f'{duration:.1f} seconds',
+            "total_frames": frame_count,
+            "extracted_frames": extracted_frames,
+            "video_fps": round(fps, 2),
+            "video_processing_time": processing_time,
+            "video_processing_fps": processing_fps,
+            "video_processing_speed": processing_speed
+        }
+        
+        logger.debug(f"Video processing completed. Results: {result}")
+        logger.info(f"Video Processing - Thread 1 - Image Processing - Step 1.2: Video frame extraction for video: {video_id} completed with {total_frames_processed} frames processed")
+        await status_tracker.update_process_status("video_processing", "complete", 100)
+        return result
+    
+    except Exception as e:
+        logger.error(f"Video Processing - Thread 1 - Image Processing - Error in video frame processing: {str(e)}")
+        await status_tracker.set_error(f"Video Processing - Thread 1 - Image Processing - Video frame processing error: {str(e)}")
+        raise
 ########################################################
 
 ## Process video frame image batches
 ########################################################
-async def process_batch(vlogger, batch, video_id, semaphore):
-    @vlogger.log_performance
-    async def _process_batch():
-        async with semaphore:
-            try:
-                vlogger.logger.info(f"Starting to process batch for video {video_id} with {len(batch)} frames")
-                successful_uploads = 0
+async def process_batch(batch, video_id, semaphore):
+    async with semaphore:
+        try:
+            logger.debug(f"Starting to process batch for video {video_id} with {len(batch)} frames")
+            successful_uploads = 0
 
-                upload_tasks = []
-                for frame_bytes, frame_filename in batch:
-                    s3_key = f'{video_id}/frames/{frame_filename}'
-                    upload_tasks.append(s3_operations.upload_frame_to_s3(vlogger, s3_key, frame_bytes))
+            upload_tasks = []
+            for frame_bytes, frame_filename in batch:
+                s3_key = f'{video_id}/frames/{frame_filename}'
+                upload_tasks.append(s3_operations.upload_frame_to_s3(s3_key, frame_bytes))
 
-                results = await asyncio.gather(*upload_tasks)
-                successful_uploads = sum(results)
+            results = await asyncio.gather(*upload_tasks)
+            successful_uploads = sum(results)
 
-                vlogger.logger.info(f"Successfully uploaded {successful_uploads} out of {len(batch)} frames for video {video_id}")
-                
-                if successful_uploads != len(batch):
-                    vlogger.logger.warning(f"Failed to upload {len(batch) - successful_uploads} frames for video {video_id}")
-                
-                return successful_uploads
+            logger.debug(f"Successfully uploaded {successful_uploads} out of {len(batch)} frames for video {video_id}")
             
-            except Exception as e:
-                vlogger.logger.error(f"Error processing batch for video {video_id}: {str(e)}", exc_info=True)
-                return 0
-
-    return await _process_batch()
-
+            if successful_uploads != len(batch):
+                logger.warning(f"Failed to upload {len(batch) - successful_uploads} frames for video {video_id}")
+            
+            return successful_uploads
+        
+        except Exception as e:
+            logger.error(f"Error processing batch for video {video_id}: {str(e)}", exc_info=True)
+            return 0
 ########################################################
 
 ## Get first video frame
@@ -176,7 +171,7 @@ async def get_first_video_frame(video_id: str):
             frame_data = await response['Body'].read()
             return StreamingResponse(BytesIO(frame_data), media_type="image/jpeg")
         except Exception as e:
-            app_logger.log_error(f"Error retrieving first frame for video {video_id}: {str(e)}", exc_info=True)
+            logger.error(f"Error retrieving first frame for video {video_id}: {str(e)}", exc_info=True)
             raise HTTPException(status_code=404, detail="First frame not found")
 ########################################################
 
@@ -209,12 +204,12 @@ async def get_all_video_frames(video_id: str) -> List[dict]:
                         insort(frames, frame_info, key=lambda x: x["number"])
                         frames_returned += 1
                 except Exception as e:
-                    app_logger.log_error(f"Error processing frame {obj['Key']}: {str(e)}")
+                    logger.error(f"Error processing frame {obj['Key']}: {str(e)}")
 
-        # app_logger.log_info(f"Processed {total_frames_processed} frames, returning {frames_returned} frames for video {video_id}")
+        logger.debug(f"Processed {total_frames_processed} frames, returning {frames_returned} frames for video {video_id}")
         return frames
 
     except Exception as e:
-        app_logger.log_error(f"Error processing frames for video {video_id}: {str(e)}", exc_info=True)
+        logger.error(f"Error processing frames for video {video_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing frames: {str(e)}")
 ########################################################

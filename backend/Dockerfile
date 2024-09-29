@@ -8,6 +8,12 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     libenchant-2-2 \
     fonts-liberation \
+    fonts-dejavu-core \
+    fonts-roboto \
+    fonts-open-sans \
+    fonts-lato \
+    fonts-noto-core \
+    fontconfig \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -19,6 +25,9 @@ RUN apt-get update && apt-get install -y \
 # Ensure /tmp has correct permissions
 RUN mkdir -p /tmp && chmod 777 /tmp
 RUN mkdir -p /temp && chmod 777 /temp
+
+# Ensure /app/logs has correct permissions
+RUN mkdir -p /app/logs && chmod 777 /app/logs
 
 # Install Python dependencies
 COPY requirements.txt .
@@ -43,6 +52,12 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     libenchant-2-2 \
     fonts-liberation \
+    fonts-dejavu-core \
+    fonts-roboto \
+    fonts-open-sans \
+    fonts-lato \
+    fonts-noto-core \
+    fontconfig \
     libglib2.0-0 \
     libsm6 \
     libxext6 \

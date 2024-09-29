@@ -25,3 +25,4 @@ moviepy
 retry
 pillow
 psutil
+watchtower
