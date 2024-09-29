@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useTransition } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
+import ReactPlayer from 'react-player';
 import { 
   Typography, 
   Box, 
@@ -29,9 +30,11 @@ import {
   setIsEditingName,
   setEditingName,
   setSnackbar,
-  selectVideoDetails,
-  selectVideoFrames,
-  selectVideoLoadingStates
+  selectMemoizedVideoDetails,
+  selectMemoizedVideoFrames,
+  selectMemoizedVideoLoadingStates,
+  fetchProcessedVideo,
+  selectMemoizedProcessedVideoStatus
 } from '../../store/videoSlice';
 import api from '../../services/api';
 import { saveAs } from 'file-saver';
@@ -54,9 +57,10 @@ const VideoDetails = () => {
   const { videoId } = useParams();
   const dispatch = useDispatch();
   
-  const video = useSelector(state => selectVideoDetails(state, videoId));
-  const frames = useSelector(state => selectVideoFrames(state, videoId));
-  const { loadingDetails, loadingFrames } = useSelector(state => selectVideoLoadingStates(state, videoId));
+  const video = useSelector(state => selectMemoizedVideoDetails(state, videoId));
+  const frames = useSelector(state => selectMemoizedVideoFrames(state, videoId));
+  const { loadingDetails, loadingFrames } = useSelector(state => selectMemoizedVideoLoadingStates(state, videoId));
+  const processedVideoStatus = useSelector(state => selectMemoizedProcessedVideoStatus(state, videoId));
   const transcript = useSelector(state => selectTranscript(state, videoId));
   const loadingTranscript = useSelector(state => selectTranscriptLoadingState(state, videoId));
   const searchTerm = useSelector(state => state.videos.ui.searchTerm);
@@ -67,6 +71,8 @@ const VideoDetails = () => {
 
   const [initialLoading, setInitialLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // eslint-disable-next-line
+  const [isVideoReady, setIsVideoReady] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (!videoId) {
@@ -92,10 +98,21 @@ const VideoDetails = () => {
     }
   }, [dispatch, videoId, video, frames, transcript, loadingDetails, loadingFrames, loadingTranscript, startTransition]);
 
+// Use effects
+//########################################################
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
+  useEffect(() => {
+    if (videoId && processedVideoStatus.status === 'idle') {
+      dispatch(fetchProcessedVideo(videoId));
+    }
+  }, [videoId, processedVideoStatus.status, dispatch]);
+//########################################################
+
+// Functions
+//########################################################
   const handleBackClick = () => {
     navigate('/history');
   };
@@ -179,19 +196,19 @@ const VideoDetails = () => {
     }
   }, [videoId, video?.name, dispatch, getFileExtension]);
 
-  const renderVideoPlaceholder = useMemo(() => {
-    return (
-      <Box
-        sx={{
-          width: '100%',
-          paddingTop: '56.25%', // 16:9 Aspect Ratio
-          position: 'relative',
-          bgcolor: 'grey.300',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-        }}
-      >
+  const renderProcessedVideo = useMemo(() => {
+    const placeholderStyles = {
+      width: '100%',
+      paddingTop: '56.25%',
+      position: 'relative',
+      bgcolor: 'grey.300',
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+    };
+  
+    const renderPlaceholder = (message) => (
+      <Box sx={placeholderStyles}>
         <Typography
           variant="h6"
           sx={{
@@ -199,13 +216,49 @@ const VideoDetails = () => {
             top: '50%',
             left: '50%',
             transform: 'translate(-50%, -50%)',
+            textAlign: 'center',
           }}
         >
-          Video Player Placeholder
+          {message}
         </Typography>
       </Box>
     );
-  }, []);
+  
+    if (processedVideoStatus.status === 'idle' || processedVideoStatus.status === 'loading') {
+      return renderPlaceholder("Loading video...");
+    }
+  
+    if (processedVideoStatus.status === 'failed') {
+      return renderPlaceholder(`Error loading video: ${processedVideoStatus.error || 'Unknown error'}`);
+    }
+  
+    if (processedVideoStatus.status === 'succeeded') {
+      if (processedVideoStatus.url) {
+        return (
+          <Box sx={placeholderStyles}>
+            <ReactPlayer
+              url={processedVideoStatus.url}
+              width="100%"
+              height="100%"
+              controls
+              playing={false}
+              onReady={() => setIsVideoReady(true)}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                backgroundColor: 'black',
+              }}
+            />
+          </Box>
+        );
+      } else {
+        return renderPlaceholder("Video not available");
+      }
+    }
+  
+    return renderPlaceholder("Unexpected video status");
+  }, [processedVideoStatus]);
 
   const renderVideoDetails = useMemo(() => {
     if (!video) return null;
@@ -440,9 +493,9 @@ const VideoDetails = () => {
       )}
       <Divider sx={{ mt: 2, mb: 4 }} />
       <Grid container sx={{ mt: 2, mb: 4 }}>
-        <Grid item xs={12} md={5.5} sx={{ pr: isLargeScreen ? 2 : 0, pb: isLargeScreen ? 0 : 2 }}>
-          {renderVideoPlaceholder}
-        </Grid>
+      <Grid item xs={12} md={5.5} sx={{ pr: isLargeScreen ? 2 : 0, pb: isLargeScreen ? 0 : 2 }}>
+        {renderProcessedVideo}
+      </Grid>
         {isLargeScreen && (
           <Grid item sx={{ display: 'flex', justifyContent: 'center', width: '1px', margin: '15px' }}>
             <Divider orientation="vertical" flexItem />

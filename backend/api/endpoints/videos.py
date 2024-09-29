@@ -97,21 +97,20 @@ async def annotate_video_endpoint(video_id: str):
 async def get_processed_video(video_id: str):
     logger.info(f"Received request to retrieve processed video for video_id: {video_id}")
     try:
-        logger.debug(f"Attempting to retrieve processed video from S3 for video_id: {video_id}")
-        video_path = await s3_operations.get_processed_video(video_id)
+        logger.debug(f"Attempting to generate pre-signed URL for video_id: {video_id}")
+        video_url = await s3_operations.get_processed_video(video_id)
         
-        if not video_path:
+        if not video_url:
             logger.warning(f"Processed video not found for video_id: {video_id}")
             raise HTTPException(status_code=404, detail="Processed video not found")
         
-        logger.debug(f"Successfully retrieved processed video for video_id: {video_id}")
-        return FileResponse(
-            video_path, 
-            media_type="video/mp4", 
-            filename=f"processed_{video_id}.mp4"
-        )
-
+        logger.debug(f"Successfully generated pre-signed URL for video_id: {video_id}")
+        return JSONResponse(content={"url": video_url})
+    
+    except HTTPException as he:
+        # Re-raise HTTP exceptions
+        raise he
     except Exception as e:
-        logger.error(f"Error retrieving processed video for video_id {video_id}: {str(e)}", exc_info=True)
+        logger.error(f"Error generating pre-signed URL for video_id {video_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error retrieving processed video")
 ########################################################

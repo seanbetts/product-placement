@@ -1,4 +1,4 @@
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
 import api from '../services/api';
 
 export const fetchProcessedVideos = createAsyncThunk(
@@ -79,6 +79,18 @@ export const updateVideoName = createAsyncThunk(
   }
 );
 
+export const fetchProcessedVideo = createAsyncThunk(
+  'videos/fetchProcessedVideo',
+  async (videoId, { rejectWithValue }) => {
+    try {
+      const url = await api.getProcessedVideo(videoId);
+      return { videoId, url };
+    } catch (error) {
+      return rejectWithValue({ videoId, error: error.message });
+    }
+  }
+);
+
 const videoSlice = createSlice({
   name: 'videos',
   initialState: {
@@ -87,6 +99,7 @@ const videoSlice = createSlice({
       details: {},
       frames: {},
       firstFrames: {},
+      processedVideos: {},
     },
     status: {
       loading: false,
@@ -181,6 +194,27 @@ const videoSlice = createSlice({
         if (state.data.details[action.meta.arg.videoId]) {
           state.data.details[action.meta.arg.videoId].name = action.meta.arg.newName;
         }
+      })
+      .addCase(fetchProcessedVideo.pending, (state, action) => {
+        state.data.processedVideos[action.meta.arg] = {
+          status: 'loading',
+          error: null,
+          blob: null,
+        };
+      })
+      .addCase(fetchProcessedVideo.fulfilled, (state, action) => {
+        state.data.processedVideos[action.payload.videoId] = {
+          status: 'succeeded',
+          error: null,
+          url: action.payload.url,
+        };
+      })
+      .addCase(fetchProcessedVideo.rejected, (state, action) => {
+        state.data.processedVideos[action.meta.arg] = {
+          status: 'failed',
+          error: action.payload.error,
+          url: null,
+        };
       });
   },
 });
@@ -202,5 +236,34 @@ export const selectVideoLoadingStates = (state, videoId) => ({
   loadingDetails: state.videos.status.loadingDetails[videoId],
   loadingFrames: state.videos.status.loadingFrames[videoId],
 });
+export const selectProcessedVideoStatus = (state, videoId) => 
+  state.videos.data.processedVideos[videoId] || { status: 'idle', error: null, blob: null };
+
+// Memoized selectors
+const selectVideosState = state => state.videos;
+
+export const selectMemoizedVideoDetails = createSelector(
+  [selectVideosState, (_, videoId) => videoId],
+  (videosState, videoId) => videosState.data.details[videoId]
+);
+
+export const selectMemoizedVideoFrames = createSelector(
+  [selectVideosState, (_, videoId) => videoId],
+  (videosState, videoId) => videosState.data.frames[videoId]?.data
+);
+
+export const selectMemoizedVideoLoadingStates = createSelector(
+  [selectVideosState, (_, videoId) => videoId],
+  (videosState, videoId) => ({
+    loadingDetails: videosState.status.loadingDetails[videoId],
+    loadingFrames: videosState.status.loadingFrames[videoId],
+  })
+);
+
+export const selectMemoizedProcessedVideoStatus = createSelector(
+  [selectVideosState, (_, videoId) => videoId],
+  (videosState, videoId) => 
+    videosState.data.processedVideos[videoId] || { status: 'idle', error: null, blob: null }
+);
 
 export default videoSlice.reducer;

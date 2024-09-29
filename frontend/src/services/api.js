@@ -301,7 +301,20 @@ const api = {
     } catch (error) {
       throw handleApiError(error);
     }
-  }
+  },
+
+  getProcessedVideo: async (videoId) => {
+    try {
+      const response = await axiosInstance.get(`${API_BASE_URL}/video/processed/${videoId}`);
+      return response.data.url;
+    } catch (error) {
+      if (error.response && error.response.status === 404) {
+        // Video not found, return null instead of throwing an error
+        return null;
+      }
+      throw handleApiError(error);
+    }
+  },
 };
 
 export default api;

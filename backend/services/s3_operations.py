@@ -568,34 +568,34 @@ async def get_brands_ocr_results(video_id: str):
 
 ## Get processed video for a given video ID
 ########################################################
-async def get_processed_video(video_id: str):
-    logger.debug(f"Received request for processed video of video_id: {video_id}")
-
+async def get_processed_video(video_id: str) -> Optional[str]:
+    logger.debug(f"Attempting to generate pre-signed URL for processed video: {video_id}")
     key = f'{video_id}/processed_video.mp4'
-
-    try:
-        logger.debug(f"Checking if processed video exists in S3 for video_id: {video_id}")
-
-        logger.debug(f"Generating pre-signed URL for processed video of video_id: {video_id}")
-        async with get_s3_client() as s3_client:
+    
+    async with get_s3_client() as s3_client:
+        try:
+            # Check if the file exists
+            await s3_client.head_object(Bucket=settings.PROCESSING_BUCKET, Key=key)
+            
+            # Generate pre-signed URL
             url = await s3_client.generate_presigned_url(
                 'get_object',
-                Params={'Bucket': settings.PROCESSING_BUCKET, 'Key': key},
-                ExpiresIn=3600,
-                HttpMethod='GET'
+                Params={
+                    'Bucket': settings.PROCESSING_BUCKET,
+                    'Key': key
+                },
+                ExpiresIn=3600  # URL expires in 1 hour
             )
-
-        logger.debug(f"Successfully generated download URL for processed video of video_id: {video_id}")
-        return RedirectResponse(url=url)
-
-    except s3_client.exceptions.ClientError as e:
-        if e.response['Error']['Code'] == '404':
-            logger.error(f"Processed video not found for video_id: {video_id}")
-            raise HTTPException(status_code=404, detail="Processed video not found")
-        else:
-            logger.error(f"Error retrieving processed video for video_id {video_id}: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Error retrieving processed video")
-    except Exception as e:
-        logger.error(f"Unexpected error retrieving processed video for video_id {video_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Unexpected error retrieving processed video")
+            logger.debug(f"Successfully generated pre-signed URL for video {video_id}")
+            return url
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == 'NoSuchKey' or error_code == '404':
+                logger.warning(f"Processed video not found for {video_id}")
+            else:
+                logger.error(f"Error accessing or generating URL for video {video_id}: {str(e)}", exc_info=True)
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error for video {video_id}: {str(e)}", exc_info=True)
+            return None
 ########################################################
