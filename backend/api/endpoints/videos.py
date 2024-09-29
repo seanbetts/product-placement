@@ -1,6 +1,6 @@
 import uuid
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from typing import Optional
 from core.logging import logger
 from services import s3_operations, video_annotation, object_detection
@@ -88,4 +88,30 @@ async def annotate_video_endpoint(video_id: str):
     except Exception as e:
         logger.error(f"Error annotating video {video_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error running video annotation: {str(e)}")
+########################################################
+
+## GET PROCESSED VIDEO ENDPOINT (GET)
+## Returns the processed video file for a given video ID
+########################################################
+@router.get("/video/processed/{video_id}")
+async def get_processed_video(video_id: str):
+    logger.info(f"Received request to retrieve processed video for video_id: {video_id}")
+    try:
+        logger.debug(f"Attempting to retrieve processed video from S3 for video_id: {video_id}")
+        video_path = await s3_operations.get_processed_video(video_id)
+        
+        if not video_path:
+            logger.warning(f"Processed video not found for video_id: {video_id}")
+            raise HTTPException(status_code=404, detail="Processed video not found")
+        
+        logger.debug(f"Successfully retrieved processed video for video_id: {video_id}")
+        return FileResponse(
+            video_path, 
+            media_type="video/mp4", 
+            filename=f"processed_{video_id}.mp4"
+        )
+
+    except Exception as e:
+        logger.error(f"Error retrieving processed video for video_id {video_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error retrieving processed video")
 ########################################################
