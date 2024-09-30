@@ -11,13 +11,13 @@ from services.ocr_processing import ocr_brand_matching
 ########################################################
 async def filter_brand_results(brand_results: List[Dict], brand_appearances: Dict[str, Set[int]], fps: float) -> List[Dict]:
     try:
-        logger.debug("Starting to filter brand results")
+        logger.debug("Video Processing - Brand Detection - Step 5.1: Starting to filter brand results")
 
         min_frames = int(fps * settings.MIN_BRAND_TIME)
-        logger.debug(f"Minimum frames for a valid brand: {min_frames}")
+        logger.debug(f"Video Processing - Brand Detection - Step 5.1: Minimum frames for a valid brand: {min_frames}")
 
         valid_brands = {brand for brand, appearances in brand_appearances.items() if len(appearances) >= min_frames}
-        logger.debug(f"Found {len(valid_brands)} valid brands out of {len(brand_appearances)} total brands")
+        logger.debug(f"Video Processing - Brand Detection - Step 5.1: Found {len(valid_brands)} valid brands out of {len(brand_appearances)} total brands")
 
         async def process_frame(frame):
             filtered_brands = [brand for brand in frame['detected_brands'] if brand['text'] in valid_brands]
@@ -31,7 +31,7 @@ async def filter_brand_results(brand_results: List[Dict], brand_appearances: Dic
         total_brands_before = sum(len(frame['detected_brands']) for frame in brand_results)
         total_brands_after = sum(len(frame['detected_brands']) for frame in filtered_results)
 
-        logger.debug(f"Filtering complete. Brands reduced from {total_brands_before} to {total_brands_after}")
+        logger.debug(f"Video Processing - Brand Detection - Step 5.1: Filtering complete. Brands reduced from {total_brands_before} to {total_brands_after}")
         return filtered_results
 
     except Exception as e:
@@ -45,7 +45,6 @@ async def clean_and_consolidate_ocr_data(raw_ocr_results: List[Dict], video_dime
     try:
         logger.info("Video Processing - Brand Detection - Step 2.2: Starting OCR data cleaning and consolidation")
         d = enchant.Dict("en_US")
-        print(f'Video dimension: {video_dimensions}')
         video_width, video_height = video_dimensions
 
         def is_valid_word(word: str) -> bool:
@@ -244,19 +243,19 @@ async def should_merge_bounding_boxes(box1: Dict, box2: Dict, frame_width: int, 
         logger.debug(f"Overlap area: {overlap_area}, Box1 area: {box1_area}, Box2 area: {box2_area}")
 
         if overlap_area > 0 and overlap_area / min_area >= settings.MIN_OVERLAP_RATIO_FOR_MERGE:
-            logger.info("Boxes should be merged due to significant overlap")
+            logger.debug("Boxes should be merged due to significant overlap")
             return True
 
         # Check if bottom of box1 is close to top of box2 or vice versa
         if close_edges(max(v1[2]['y'], v1[3]['y']), min(v2[0]['y'], v2[1]['y']), frame_height) or \
            close_edges(max(v2[2]['y'], v2[3]['y']), min(v1[0]['y'], v1[1]['y']), frame_height):
-            logger.info("Boxes should be merged due to close vertical edges")
+            logger.debug("Boxes should be merged due to close vertical edges")
             return True
 
         # Check if right of box1 is close to left of box2 or vice versa
         if close_edges(max(v1[1]['x'], v1[2]['x']), min(v2[0]['x'], v2[3]['x']), frame_width) or \
            close_edges(max(v2[1]['x'], v2[2]['x']), min(v1[0]['x'], v1[3]['x']), frame_width):
-            logger.info("Boxes should be merged due to close horizontal edges")
+            logger.debug("Boxes should be merged due to close horizontal edges")
             return True
 
         logger.debug("Boxes should not be merged")

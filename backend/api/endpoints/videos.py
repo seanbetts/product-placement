@@ -1,9 +1,11 @@
 import uuid
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse
 from typing import Optional
 from core.logging import logger
 from services import s3_operations, video_annotation, object_detection
+from models.status_tracker import StatusTracker
+from models.video_details import VideoDetails
 
 router = APIRouter()
 
@@ -80,9 +82,11 @@ async def detect_objects_endpoint(video_id: str):
 @router.post("/annotate_video/{video_id}")
 async def annotate_video_endpoint(video_id: str):
     logger.info(f"Received request to annotate video {video_id}")
+    status_tracker = StatusTracker(video_id)
+    video_details = await VideoDetails.create(video_id)
     try:
         logger.debug(f"Starting annotation for video: {video_id}")
-        await video_annotation.annotate_video(video_id)
+        await video_annotation.annotate_video(video_id, status_tracker, video_details)
         logger.info(f"Video annotation completed for video {video_id}")
         return {"message": f"Video annotation completed for video_id: {video_id}"}
     except Exception as e:

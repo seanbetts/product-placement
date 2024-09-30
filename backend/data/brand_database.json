@@ -1,16 +1,72 @@
 {
-  "pepsi": {"variations": ["pepsi cola", "pepsi-cola"], "category": "beverage"},
-  "coca cola": {"variations": ["coke", "coca-cola"], "category": "beverage"},
-  "pizza hut": {"variations": ["pizzahut"], "category": "food"},
-  "doritos": {"variations": ["dorito"], "category": "food"},
-  "reebok": {"variations": ["rebok", "reabok", "acebok", "redok", "radok", "rahok", "robok", "qabok", "recook", "rechok", "razook", "zohok"], "category": "apparel"},
-  "nuprin": {"variations": ["new print"], "category": "pharmaceutical"},
-  "adidas": {"variations": ["addidas", "adiddas", "addiddas"], "category": "apparel"},
-  "betano": {"variations": ["beteno"], "category": "gaming"},
-  "₿c.game": {"variations": ["bc.game", "☐c.game", "₿c game", "☐c game", "bc game", "₿c-game", "☐c-game", "bc-game", "₿cgame", "bcgame", "bccane", "bc.came", "bc came", "bc cane"], "category": "gaming"},
-  "chang": {"variations": ["chan", "ching"], "category": "beverages"},
-  "guiness": {"variations": ["guinness", "guinness", "guinnes"], "category": "beverages"},
-  "gambleaware": {"variations": ["gamble aware", "gambl aware"], "category": "gaming"},
-  "king power": {"variations": ["kingpower", "kingpow"], "category": "travel"},
-  "litefinance": {"variations": ["lite finance", "litefinans", "lite finans"], "category": "finance"}
-}
+  "pepsi": {
+      "variations": ["pepsi cola", "pepsi-cola"],
+      "category": "beverage",
+      "objects": ["Bottle", "Can", "Vending Machine"]
+  },
+  "coca cola": {
+      "variations": ["coke", "coca-cola"],
+      "category": "beverage",
+      "objects": ["Bottle", "Can", "Vending Machine"]
+  },
+  "pizza hut": {
+      "variations": ["pizzahut"],
+      "category": "food",
+      "objects": ["Pizza", "Restaurant", "Menu"]
+  },
+  "doritos": {
+      "variations": ["dorito"],
+      "category": "food",
+      "objects": ["Snack", "Bag"]
+  },
+  "reebok": {
+      "variations": ["rebok", "reabok", "acebok", "redok", "radok", "rahok", "robok", "qabok", "recook", "rechok", "razook", "zohok"],
+      "category": "apparel",
+      "objects": ["Sneaker", "T-Shirt"]
+  },
+  "nuprin": {
+      "variations": ["new print"],
+      "category": "pharmaceutical",
+      "objects": ["Pill", "Medicine"]
+  },
+  "adidas": {
+      "variations": ["addidas", "adiddas", "addiddas"],
+      "category": "apparel",
+      "objects": ["Sneaker", "T-Shirt", "Soccer Ball"]
+  },
+  "betano": {
+      "variations": ["beteno"],
+      "category": "gaming",
+      "objects": ["Casino", "Slot Machine", "Playing Cards", "Dice", "Roulette"]
+  },
+  "₿c.game": {
+      "variations": ["bc.game", "☐c.game", "₿c game", "☐c game", "bc game", "₿c-game", "☐c-game", "bc-game", "₿cgame", "bcgame", "bccane", "bc.came", "bc came", "bc cane"],
+      "category": "gaming",
+      "objects": ["Computer", "Casino", "Slot Machine"]
+  },
+  "chang": {
+      "variations": ["chan", "ching", "chana"],
+      "category": "beverages",
+      "objects": ["Beer", "Bottle", "Glass", "Pub", "Bar"]
+  },
+  "guinness": {
+      "variations": ["guiness", "guines", "guinnes"],
+      "category": "beverages",
+      "objects": ["Beer", "Glass", "Pub", "Bar"]
+  },
+  "gambleaware": {
+      "variations": ["gamble aware", "gambl aware"],
+      "category": "gaming",
+      "objects": ["Dice", "Playing Cards", "Slot Machine", "Casino"]
+  },
+  "king power": {
+      "variations": ["kingpower", "kingpow"],
+      "category": "travel",
+      "objects": ["Airport", "Suitcase", "Passport", "Airplane"]
+  },
+  "litefinance": {
+      "variations": ["lite finance", "litefinans", "lite finans"],
+      "category": "finance",
+      "objects": ["Computer", "Chart", "Calculator", "Money"]
+  }
+ }
