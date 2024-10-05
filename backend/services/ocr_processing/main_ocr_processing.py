@@ -258,7 +258,7 @@ async def brand_detection(video_id: str, status_tracker: StatusTracker, video_de
         await status_tracker.update_process_status("ocr", "in_progress", 100)
 
         logger.info(f"Video Processing - Brand Detection: Completed post-processing OCR for video: {video_id}")
-        return brand_stats
+        return filtered_brand_results
     except Exception as e:
         logger.error(f"Video Processing - Brand Detection: Error in post_process_ocr for video {video_id}: {str(e)}", exc_info=True)
         await status_tracker.update_process_status("ocr", "error", 80)

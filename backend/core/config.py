@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     ## OCR Settings
     BRAND_DATABASE_FILE: Path = Field(default="data/brand_database.json")
     BRAND_DATABASE: Dict[str, Dict] = {}                    # Brand database object
+    OCR_TYPE: str = 'LINE'                                  # Choose 'LINE' or 'WORD' type
     MIN_BRAND_TIME: int = 1                                 # Minimum number of seconds a brand needs to appear
     MAX_CLEANING_CONFIDENCE: int = 67                       # Maximum confidence score required to skip text cleaning
     MIN_WORD_MATCH: int = 80                                # Minimum confidence for applying word corrections
@@ -73,7 +74,7 @@ class Settings(BaseSettings):
     INTERPOLATION_LIMIT: int = 15                           # Maximum consecutive interpolated frames allowed
     WORDCLOUD_MINIMUM_CONFIDENCE: int = 70                  # Minium confidence threshold for words to be included in the wordcloud
     MAX_BOUNDING_BOX_MERGE_DISTANCE_PERCENT: float = 0.02   # 2% of frame dimension
-    MIN_OVERLAP_RATIO_FOR_MERGE: float = 0.1                # 10% overlap required for automatic merging
+    MIN_OVERLAP_RATIO_FOR_MERGE: float = 0.01               # 1% overlap required for automatic merging
 
     # Video post-processing settings
     SMOOTHING_WINDOW: int = 5                               # Smoothing window for

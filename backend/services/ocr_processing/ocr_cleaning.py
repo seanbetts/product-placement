@@ -35,7 +35,7 @@ async def filter_brand_results(brand_results: List[Dict], brand_appearances: Dic
         return filtered_results
 
     except Exception as e:
-        logger.error(f"OCR Data Processing: Error in filter_brand_results: {str(e)}", exc_info=True)
+        logger.error(f"Video Processing - Brand Detection: Error in filter_brand_results: {str(e)}", exc_info=True)
         return brand_results  # Return original results in case of error
 ########################################################
 
@@ -54,7 +54,7 @@ async def clean_and_consolidate_ocr_data(raw_ocr_results: List[Dict], video_dime
             return text.lower()
 
         async def clean_detection(detection: Dict) -> Dict:
-            if detection['Type'] != 'WORD':
+            if detection['Type'] != settings.OCR_TYPE:
                 return None
             
             original_text = detection['DetectedText']
@@ -123,7 +123,7 @@ async def clean_and_consolidate_ocr_data(raw_ocr_results: List[Dict], video_dime
         async def process_frame(frame):
             logger.debug(f"Processing frame {frame['frame_number']}")
             text_detections = frame['rekognition_response']['TextDetections']
-            cleaned_detections = await asyncio.gather(*[clean_detection(det) for det in text_detections if det['Type'] == 'WORD'])
+            cleaned_detections = await asyncio.gather(*[clean_detection(det) for det in text_detections if det['Type'] == settings.OCR_TYPE])
             cleaned_detections = [det for det in cleaned_detections if det is not None]
             
             brand_groups = {}
@@ -146,7 +146,19 @@ async def clean_and_consolidate_ocr_data(raw_ocr_results: List[Dict], video_dime
                         for j in range(i + 1, len(detections)):
                             if j in skip_indices:
                                 continue
-                            if await should_merge_bounding_boxes(merged_detection['bounding_box'], detections[j]['bounding_box'], video_width, video_height):
+                            box1 = {
+                                **merged_detection['bounding_box'],
+                                "text": merged_detection['text'],
+                                "cleaned_text": merged_detection['cleaned_text'],
+                                "confidence": merged_detection['confidence']
+                            }
+                            box2 = {
+                                **detections[j]['bounding_box'],
+                                "text": detections[j]['text'],
+                                "cleaned_text": detections[j]['cleaned_text'],
+                                "confidence": detections[j]['confidence']
+                            }
+                            if await should_merge_bounding_boxes(box1, box2, video_width, video_height):
                                 merged_box = await merge_bounding_boxes(merged_detection['bounding_box'], detections[j]['bounding_box'])
                                 merged_detection = {
                                     **merged_detection,
@@ -184,6 +196,94 @@ async def clean_and_consolidate_ocr_data(raw_ocr_results: List[Dict], video_dime
     except Exception as e:
         logger.error(f"OCR Data Processing: Error in clean_and_consolidate_ocr_data: {str(e)}", exc_info=True)
         return raw_ocr_results  # Return original results in case of error
+########################################################
+
+## Replace LINE detections that contain more than just the brand name
+########################################################
+async def filter_detections_by_brand(
+    detections: List[Dict],
+    brand_database: Dict[str, Dict],
+    video_width: int,
+    video_height: int
+) -> List[Dict]:
+    """
+    Filters and replaces 'LINE' detections containing brand names with corresponding 'WORD' detections.
+    
+    Args:
+        detections (List[Dict]): List of OCR detections for a frame.
+        brand_database (Dict[str, Dict]): Brand database with brand names and their variations.
+        video_width (int): Width of the video frame.
+        video_height (int): Height of the video frame.
+    
+    Returns:
+        List[Dict]: Filtered and possibly modified list of detections.
+    """
+    # Compile a list of all brand names and their variations
+    brand_variations = {}
+    for brand, details in brand_database.items():
+        variations = [brand.lower()] + [v.lower() for v in details.get('variations', [])]
+        brand_variations[brand.lower()] = variations
+
+    # Separate 'LINE' and 'WORD' detections
+    line_detections = [det for det in detections if det['Type'] == 'LINE']
+    word_detections = [det for det in detections if det['Type'] == 'WORD']
+
+    # Initialize a set to keep track of 'WORD' detections to retain
+    retained_word_indices = set()
+
+    # Initialize a list to store the final detections
+    final_detections = []
+
+    for line_det in line_detections:
+        line_text = line_det['text'].lower()
+        matched_brands = []
+
+        # Check for brand presence in the line text
+        for brand, variations in brand_variations.items():
+            for variation in variations:
+                # Use word boundaries to ensure exact matches
+                pattern = r'\b' + re.escape(variation) + r'\b'
+                if re.search(pattern, line_text):
+                    matched_brands.append((brand, variation))
+                    break  # Avoid multiple matches for the same brand
+
+        if not matched_brands:
+            # No brand found in this 'LINE' detection; retain it as is
+            final_detections.append(line_det)
+            continue
+
+        # Determine if the 'LINE' contains only the brand name(s)
+        # Remove all matched brand variations from the line text
+        modified_text = line_text
+        for _, variation in matched_brands:
+            modified_text = re.sub(r'\b' + re.escape(variation) + r'\b', '', modified_text)
+
+        # Check if the remaining text has non-whitespace characters
+        if modified_text.strip():
+            # The 'LINE' contains additional words besides the brand name(s)
+            # Replace with corresponding 'WORD' detections for the brand name(s)
+            for brand, variation in matched_brands:
+                # Split the brand variation into individual words
+                brand_words = variation.split()
+                for word in brand_words:
+                    # Find 'WORD' detections that match this word
+                    for idx, word_det in enumerate(word_detections):
+                        word_text = word_det['text'].lower()
+                        if word_text == word.lower() and idx not in retained_word_indices:
+                            final_detections.append(word_det)
+                            retained_word_indices.add(idx)
+            # Optionally, you can log or handle the replacement here
+            logger.debug(f"Replaced 'LINE' detection '{line_det['text']}' with 'WORD' detections for brands.")
+        else:
+            # The 'LINE' contains only the brand name(s); retain it
+            final_detections.append(line_det)
+
+    # Add the remaining 'WORD' detections that were not part of any replacement
+    for idx, word_det in enumerate(word_detections):
+        if idx not in retained_word_indices:
+            final_detections.append(word_det)
+
+    return final_detections
 ########################################################
 
 ## Calculate if bounding boxes are overlapping
@@ -232,12 +332,48 @@ async def should_merge_bounding_boxes(box1: Dict, box2: Dict, frame_width: int, 
             max_distance = settings.MAX_BOUNDING_BOX_MERGE_DISTANCE_PERCENT * frame_dimension
             return abs(edge1 - edge2) <= max_distance
 
-        v1, v2 = box1['vertices'], box2['vertices']
+        v1, v2 = box1.get('vertices', []), box2.get('vertices', [])
+
+        # Ensure the vertices are provided
+        if not v1 or not v2:
+            logger.error("Vertices not provided in one or both bounding boxes")
+            return False
+
+        # Extract texts and confidences from boxes
+        box1_text = box1.get('cleaned_text', '').lower()
+        box2_text = box2.get('cleaned_text', '').lower()
+        box1_full_text = box1.get('text', '').lower()
+        box2_full_text = box2.get('text', '').lower()
+        confidence1 = box1.get('confidence', 0.0)
+        confidence2 = box2.get('confidence', 0.0)
+
+        # Check if cleaned_text matches the full brand name in the text field
+        if box1_text == box1_full_text and box2_text == box2_full_text:
+            logger.debug("Boxes should not be merged as they contain the full brand name already")
+            return False
+
+        # Check if the combined cleaned_text of both boxes matches the text field of either box
+        combined_text = f"{box1_text} {box2_text}".strip()
+        if combined_text == box1_full_text or combined_text == box2_full_text:
+            logger.debug("Combined cleaned text matches full brand name, proceeding to evaluate proximity and overlap")
+        else:
+            logger.debug("Boxes do not form the full brand name, should not be merged")
+            return False
 
         # Check for overlap
         overlap_area = await calculate_overlap(box1, box2)
-        box1_area = (max(v1[1]['x'], v1[2]['x']) - min(v1[0]['x'], v1[3]['x'])) * (max(v1[2]['y'], v1[3]['y']) - min(v1[0]['y'], v1[1]['y']))
-        box2_area = (max(v2[1]['x'], v2[2]['x']) - min(v2[0]['x'], v2[3]['x'])) * (max(v2[2]['y'], v2[3]['y']) - min(v2[0]['y'], v2[1]['y']))
+        box1_x_min = min(v1[0]['x'], v1[3]['x'])
+        box1_x_max = max(v1[1]['x'], v1[2]['x'])
+        box1_y_min = min(v1[0]['y'], v1[1]['y'])
+        box1_y_max = max(v1[2]['y'], v1[3]['y'])
+        box1_area = (box1_x_max - box1_x_min) * (box1_y_max - box1_y_min)
+
+        box2_x_min = min(v2[0]['x'], v2[3]['x'])
+        box2_x_max = max(v2[1]['x'], v2[2]['x'])
+        box2_y_min = min(v2[0]['y'], v2[1]['y'])
+        box2_y_max = max(v2[2]['y'], v2[3]['y'])
+        box2_area = (box2_x_max - box2_x_min) * (box2_y_max - box2_y_min)
+
         min_area = min(box1_area, box2_area)
 
         logger.debug(f"Overlap area: {overlap_area}, Box1 area: {box1_area}, Box2 area: {box2_area}")
@@ -247,14 +383,14 @@ async def should_merge_bounding_boxes(box1: Dict, box2: Dict, frame_width: int, 
             return True
 
         # Check if bottom of box1 is close to top of box2 or vice versa
-        if close_edges(max(v1[2]['y'], v1[3]['y']), min(v2[0]['y'], v2[1]['y']), frame_height) or \
-           close_edges(max(v2[2]['y'], v2[3]['y']), min(v1[0]['y'], v1[1]['y']), frame_height):
+        if close_edges(box1_y_max, box2_y_min, frame_height) or \
+           close_edges(box2_y_max, box1_y_min, frame_height):
             logger.debug("Boxes should be merged due to close vertical edges")
             return True
 
         # Check if right of box1 is close to left of box2 or vice versa
-        if close_edges(max(v1[1]['x'], v1[2]['x']), min(v2[0]['x'], v2[3]['x']), frame_width) or \
-           close_edges(max(v2[1]['x'], v2[2]['x']), min(v1[0]['x'], v1[3]['x']), frame_width):
+        if close_edges(box1_x_max, box2_x_min, frame_width) or \
+           close_edges(box2_x_max, box1_x_min, frame_width):
             logger.debug("Boxes should be merged due to close horizontal edges")
             return True
 

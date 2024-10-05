@@ -1,7 +1,7 @@
 import re
 import asyncio
 import numpy as np
-from typing import Tuple, Optional, List, Dict, Set
+from typing import Tuple, Optional, List, Dict
 from collections import defaultdict
 from thefuzz import fuzz, process
 from core.config import settings
@@ -64,7 +64,7 @@ async def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float,
                     width_px = width * video_width
                     height_px = height * video_height
                     if width_px < min_text_width or height_px < min_text_height:
-                        logger.debug(f"Text size ({width_px}x{height_px}) below minimum threshold ({min_text_width}x{min_text_height})")
+                        logger.debug(f"Video Processing - Brand Detection - Step 4.2: Text size ({width_px}x{height_px}) below minimum threshold ({min_text_width}x{min_text_height})")
                         continue
                 else:
                     logger.debug("Video Processing - Brand Detection - Step 4.2: No bounding box found")

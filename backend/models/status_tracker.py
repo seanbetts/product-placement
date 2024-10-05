@@ -17,6 +17,7 @@ class StatusTracker:
             "audio_extraction": {"status": "pending", "progress": 0},
             "transcription": {"status": "pending", "progress": 0},
             "ocr": {"status": "pending", "progress": 0},
+            "objects": {"status": "pending", "progress": 0},
             "annotation": {"status": "pending", "progress": 0},
             "error": None
         }
@@ -25,6 +26,7 @@ class StatusTracker:
             "audio_extraction": asyncio.Event(),
             "transcription": asyncio.Event(),
             "ocr": asyncio.Event(),
+            "objects": asyncio.Event(),
             "annotation": asyncio.Event()
         }
 

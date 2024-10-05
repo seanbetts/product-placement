@@ -10,7 +10,7 @@ from core.config import settings
 from core.aws import get_s3_client, multipart_upload
 from models.status_tracker import StatusTracker
 from models.video_details import VideoDetails
-from services import audio_processing, frames_processing, status_processing, video_annotation
+from services import audio_processing, frames_processing, status_processing, object_detection, video_annotation
 from services.ocr_processing import main_ocr_processing
 import boto3
 from botocore.exceptions import ClientError
@@ -107,7 +107,12 @@ async def run_video_processing(video_id: str):
             brand_results = await main_ocr_processing.brand_detection(video_id, status_tracker, video_details)
             await status_tracker.update_process_status("ocr", "complete", 100)
 
-            # Step 5: Video annotation
+            # Step 5: Object detection
+            logger.info(f"Video Processing - Object Detection - Step 1.1: Starting object detection for video: {video_id}")
+            annotation_objects = await object_detection.detect_objects(video_id, brand_results, status_tracker, video_details)
+            await status_tracker.update_process_status("objects", "complete", 100)
+
+            # Step 6: Video annotation
             logger.info(f"Video Processing - Video Annotation - Step 1.1: Starting annotation for video: {video_id}")
             await video_annotation.annotate_video(video_id, status_tracker, video_details)
             await status_tracker.update_process_status("annotation", "complete", 100)
