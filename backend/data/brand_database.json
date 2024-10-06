@@ -60,7 +60,7 @@
       "objects": ["Dice", "Playing Cards", "Slot Machine", "Casino"]
   },
   "king power": {
-      "variations": ["king power", "kingpower", "kingpow", "eino power", "kind power"],
+      "variations": ["king power", "kingpower", "kingpow", "eino power", "kind power", "king bower"],
       "category": "travel",
       "objects": ["Airport", "Suitcase", "Passport", "Airplane"]
   },
@@ -68,5 +68,10 @@
       "variations": ["litefinance", "lite finance", "litefinans", "lite finans"],
       "category": "finance",
       "objects": ["Computer", "Chart", "Calculator", "Money"]
-  }
+  },
+  "eggo": {
+    "variations": ["eggo", "ego", "3ggo", "3gg0", "egg0"],
+    "category": "food",
+    "objects": ["Computer", "Chart", "Calculator", "Money"]
+}
  }

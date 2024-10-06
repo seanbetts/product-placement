@@ -18,7 +18,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 async def transcribe_audio(video_id: str, status_tracker: StatusTracker, video_details: VideoDetails):
-    logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 2.2: Transcribing audio for video: {video_id}")
+    logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 1.4: Transcribing audio for video: {video_id}")
     audio_key = f'{video_id}/audio.mp3'
     transcript_key = f"{video_id}/transcripts/audio_transcript_{video_id}.json"
     video_length = await video_details.get_detail("video_length")
@@ -33,9 +33,9 @@ async def transcribe_audio(video_id: str, status_tracker: StatusTracker, video_d
                 )
             except ClientError as e:
                 if e.response['Error']['Code'] == '404':
-                    logger.warning(f"Video Processing - Thread 2 - Audio Processing - Step 2.2: Audio file not found for video: {video_id}")
+                    logger.warning(f"Video Processing - Thread 2 - Audio Processing - Step 1.4: Audio file not found for video: {video_id}")
                     await status_tracker.update_process_status("transcription", "error", 0)
-                    await status_tracker.set_error("Video Processing - Thread 2 - Audio Processing - Step 2.2: Audio file not found for transcription.")
+                    await status_tracker.set_error("Video Processing - Thread 2 - Audio Processing - Step 1.4: Audio file not found for transcription.")
                     return None
                 else:
                     raise
@@ -47,7 +47,7 @@ async def transcribe_audio(video_id: str, status_tracker: StatusTracker, video_d
             job_uri = f"s3://{settings.PROCESSING_BUCKET}/{audio_key}"
             
             transcription_start_time = time.time()
-            logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 2.3: Starting transcription job for video: {video_id}")
+            logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 1.5: Starting transcription job for video: {video_id}")
             await transcribe_client.start_transcription_job(
                 TranscriptionJobName=job_name,
                 Media={'MediaFileUri': job_uri},
@@ -77,12 +77,12 @@ async def transcribe_audio(video_id: str, status_tracker: StatusTracker, video_d
                 elapsed_time = time.time() - transcription_start_time
                 progress = min(95, (elapsed_time / timeout) * 100)  # Cap at 95% until completion
                 await status_tracker.update_process_status("transcription", "in_progress", progress)
-                logger.debug(f"Video Processing - Thread 2 - Audio Processing - Step 2.3: Transcription progress for video {video_id}: {progress:.2f}%")
+                logger.debug(f"Video Processing - Thread 2 - Audio Processing - Step 1.5: Transcription progress for video {video_id}: {progress:.2f}%")
 
             transcription_end_time = time.time()
             
             if job_status == 'COMPLETED':
-                logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 2.4: Transcription completed for video {video_id}")
+                logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 1.6: Transcription completed for video {video_id}")
                 
                 # Wait for the transcript file to be available in S3
                 max_retries = 10
@@ -93,18 +93,18 @@ async def transcribe_audio(video_id: str, status_tracker: StatusTracker, video_d
                                 Bucket=settings.PROCESSING_BUCKET,
                                 Key=transcript_key
                             )
-                            logger.debug(f"Video Processing - Thread 2 - Audio Processing - Step 2.4: Transcript file found for video {video_id}")
+                            logger.debug(f"Video Processing - Thread 2 - Audio Processing - Step 1.6: Transcript file found for video {video_id}")
                             break
                         except ClientError:
                             if i < max_retries - 1:
                                 await asyncio.sleep(5)
                             else:
-                                raise FileNotFoundError(f"Video Processing - Thread 2 - Audio Processing - Step 2.4: Transcript file not found for video {video_id} after {max_retries} retries")
+                                raise FileNotFoundError(f"Video Processing - Thread 2 - Audio Processing - Step 1.6: Transcript file not found for video {video_id} after {max_retries} retries")
 
                 # Process the response and create transcripts
                 plain_transcript, json_transcript, word_count, overall_confidence = await process_transcription_response(video_id)
 
-                logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 2.5: Transcripts processed and uploaded for video: {video_id}")
+                logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 1.7: Transcripts processed and uploaded for video: {video_id}")
 
                 # Calculate transcription stats
                 transcription_time = transcription_end_time - transcription_start_time

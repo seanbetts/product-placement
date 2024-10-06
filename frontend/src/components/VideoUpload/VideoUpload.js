@@ -33,6 +33,7 @@ const VideoUpload = () => {
     audio: { status: 'pending', progress: 0 },
     transcription: { status: 'pending', progress: 0 },
     ocr: { status: 'pending', progress: 0 },
+    objects: { status: 'pending', progress: 0 },
     annotation: { status: 'pending', progress: 0 }
   });
   const [videoDimensions, setVideoDimensions] = useState(null);
@@ -213,7 +214,8 @@ const handleCancel = async () => {
         audio_extraction: { status: response.audio_extraction?.status || 'pending', progress: response.audio_extraction?.progress || 0 },
         transcription: { status: response.transcription?.status || 'pending', progress: response.transcription?.progress || 0 },
         ocr: { status: response.ocr?.status || 'pending', progress: response.ocr?.progress || 0 },
-        annotation: { status: response.annotation?.status || 'pending', progress: response.annotation?.progress || 0 }  // Add this line
+        objects: { status: response.objects?.status || 'pending', progress: response.objects?.progress || 0 },
+        annotation: { status: response.annotation?.status || 'pending', progress: response.annotation?.progress || 0 }
       }));
 
       setProcessingStatus({
@@ -332,7 +334,7 @@ const handleCancel = async () => {
               />
             </Box>
           ) : null}
-          <Typography variant="subtitle1" sx={{ mt: 2, fontWeight: 'bold' }}>
+          <Typography variant="h5" sx={{ mt: 2}}>
             {file.name}
           </Typography>
           {videoDimensions && (
@@ -343,6 +345,7 @@ const handleCancel = async () => {
           <Typography variant="body2" color="text.secondary">
             <strong>File Size:</strong> {(file.size / (1024 * 1024)).toFixed(2)} MB
           </Typography>
+          {processingStatus?.status === 'complete' && renderCompletedProcessing()}
         </Grid>
         <Grid item xs={12} md={6}>
         {!uploading && !uploadedVideoId && !isCancelling && (
@@ -401,10 +404,9 @@ const handleCancel = async () => {
 
   const renderProcessingStatus = () => (
     <Box sx={{ width: '100%' }}>
-      <Typography variant="h6" gutterBottom>Video Processing Status</Typography>
+      <Typography variant="h5" gutterBottom>Video Processing Status</Typography>
       <Typography variant="body2" color="text.secondary" gutterBottom><strong>Video ID:</strong> {uploadedVideoId}</Typography>
       {renderProcessingProgress()}
-      {processingStatus?.status === 'complete' && renderCompletedProcessing()}
     </Box>
   );
 
@@ -530,13 +532,27 @@ const handleCancel = async () => {
       {renderProgressBar('Extracting Audio...', processingProgress.audio_extraction?.status, processingProgress.audio_extraction?.progress)}
       {renderProgressBar('Transcribing Audio...', processingProgress.transcription?.status, processingProgress.transcription?.progress)}
       {renderProgressBar('Detecting Brands...', processingProgress.ocr?.status, processingProgress.ocr?.progress)}
+      {renderProgressBar('Detecting Objects...', processingProgress.objects?.status, processingProgress.objects?.progress)}
       {renderProgressBar('Annotating Video...', processingProgress.annotation?.status, processingProgress.annotation?.progress)}
     </Box>
   );
 
+  // <Box sx={{ 
+  //   mt: isTotal ? 3 : 2,
+  //   mb: isTotal ? 3 : 2,
+  //   p: isTotal ? 2 : 0,
+  //   backgroundColor: isTotal ? 'rgba(0, 0, 0, 0.04)' : 'transparent',
+  //   borderRadius: 2,
+  // }}>
+
   const renderCompletedProcessing = () => (
-    <Box sx={{ mt: 3 }}>
-      <Typography variant="h6" gutterBottom>Processing Complete</Typography>
+    <Box sx={{ 
+      mt: 3,
+      p: 2,
+      backgroundColor: 'rgba(0, 0, 0, 0.04)',
+      borderRadius: 2,
+    }}>
+      <Typography variant="h5" gutterBottom>Processing Complete</Typography>
       {processingStats ? (
         <>
           <Typography variant="body2"><strong>Processing Time:</strong> {processingStats.total_processing_time ? parseFloat(processingStats?.total_processing_time).toFixed(0) : 'N/A'} seconds</Typography>
@@ -547,10 +563,15 @@ const handleCancel = async () => {
       )}
       <Button 
         variant="contained" 
-        color="primary" 
+        color="success" 
         onClick={handleViewDetails}
-        sx={{ mt: 2 }}
-        fullWidth
+        sx={{
+          mt: 2,
+          maxWidth: '400px',  // Adjust this value as needed
+          width: '100%',
+          display: 'block',
+          mx: 'auto'  // Centers the button
+        }}
       >
         View Processed Video
       </Button>

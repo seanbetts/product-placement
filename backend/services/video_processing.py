@@ -11,7 +11,7 @@ from core.aws import get_s3_client, multipart_upload
 from models.status_tracker import StatusTracker
 from models.video_details import VideoDetails
 from services import audio_processing, frames_processing, status_processing, object_detection, video_annotation
-from services.ocr_processing import main_ocr_processing
+from services.ocr_processing import main_ocr_processing, brand_detection
 import boto3
 from botocore.exceptions import ClientError
 
@@ -52,8 +52,8 @@ async def run_video_processing(video_id: str):
                 await status_tracker.update_s3_status()
                 return
 
-            # Step 2: Start transcription immediately after audio extraction
-            logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 2.1: Started transcription for video: {video_id}")
+            # Step 1: Start transcription immediately after audio extraction
+            logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 1.3: Started transcription for video: {video_id}")
             await status_tracker.update_process_status("transcription", "in_progress", 0)
             transcription_task = asyncio.create_task(audio_processing.transcribe_audio(video_id, status_tracker, video_details))
 
@@ -65,7 +65,7 @@ async def run_video_processing(video_id: str):
                 await status_tracker.update_s3_status()
                 return
 
-            # Step 3: Start OCR processing after video frames are available
+            # Step 2: Start OCR processing after video frames are available
             logger.info(f"Video Processing - Thread 1 - Image Processing - Step 2.1: Started OCR processing for video: {video_id}")
             await status_tracker.update_process_status("ocr", "in_progress", 0)
             ocr_task = asyncio.create_task(main_ocr_processing.process_ocr(video_id, status_tracker, video_details))
@@ -82,7 +82,7 @@ async def run_video_processing(video_id: str):
                         try:
                             transcription_stats = task.result()
                             await status_tracker.update_process_status("transcription", "complete", 100)
-                            logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 2.6: Transcription completed for video: {video_id}")
+                            logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 1.8: Transcription completed for video: {video_id}")
                             logger.info(f"Video Processing - Thread 2: Audio Processing completed for video: {video_id}")
                         except Exception as e:
                             logger.error(f"Video Processing - Thread 2 - Audio Processing: Error in transcription: {str(e)}")
@@ -102,18 +102,19 @@ async def run_video_processing(video_id: str):
                 await status_tracker.update_s3_status()
                 return
 
-            # Step 4: Brand detection
-            logger.info(f"Video Processing - Brand Detection - Step 1.1: Starting brand detection for video: {video_id}")
-            brand_results = await main_ocr_processing.brand_detection(video_id, status_tracker, video_details)
+            # Step 3: Brand detection
+            logger.info(f"Video Processing - Brand Detection - Step 3.1.1: Starting brand detection for video: {video_id}")
+            brand_results = await brand_detection.detect_brands(video_id, status_tracker, video_details)
             await status_tracker.update_process_status("ocr", "complete", 100)
 
-            # Step 5: Object detection
-            logger.info(f"Video Processing - Object Detection - Step 1.1: Starting object detection for video: {video_id}")
-            annotation_objects = await object_detection.detect_objects(video_id, brand_results, status_tracker, video_details)
+            # Step 4: Object detection
+            # logger.info(f"Video Processing - Object Detection - Step 4.1: Starting object detection for video: {video_id}")
+            # annotation_objects = await object_detection.detect_objects(video_id, brand_results, status_tracker, video_details)
             await status_tracker.update_process_status("objects", "complete", 100)
 
-            # Step 6: Video annotation
-            logger.info(f"Video Processing - Video Annotation - Step 1.1: Starting annotation for video: {video_id}")
+            # Step 5: Video annotation
+            logger.info(f"Video Processing - Video Annotation - Step 5.1: Starting annotation for video: {video_id}")
+            await status_tracker.update_process_status("annotation", "in_progress", 0)
             await video_annotation.annotate_video(video_id, status_tracker, video_details)
             await status_tracker.update_process_status("annotation", "complete", 100)
 
@@ -196,7 +197,7 @@ async def extract_audio_from_video(video_path: str, video_id: str, status_tracke
                 if progress is None:
                     break
                 await status_tracker.update_process_status("audio_extraction", "in_progress", progress)
-                logger.debug(f"Video Processing: Audio extraction progress for video {video_id}: {progress:.2f}%")
+                logger.debug(f"Video Processing - Thread 2 - Audio Processing - Step 1.1: Audio extraction progress for video {video_id}: {progress:.2f}%")
 
         progress_task = asyncio.create_task(update_progress())
 
@@ -229,7 +230,7 @@ async def extract_audio_from_video(video_path: str, video_id: str, status_tracke
                 except asyncio.TimeoutError:
                     pass  # This is expected when there's no output for a while
                 except Exception as e:
-                    logger.error(f"Error reading FFmpeg output: {str(e)}")
+                    logger.error(f"Video Processing - Thread 2 - Audio Processing - Step 1.1 - Error reading FFmpeg output: {str(e)}")
 
             output_task = asyncio.create_task(read_output())
 
@@ -237,7 +238,7 @@ async def extract_audio_from_video(video_path: str, video_id: str, status_tracke
                 await asyncio.wait_for(process.wait(), timeout=FFMPEG_TIMEOUT)
             except asyncio.TimeoutError:
                 process.kill()
-                raise TimeoutError(f"FFmpeg process timed out after {FFMPEG_TIMEOUT} seconds")
+                raise TimeoutError(f"Video Processing - Thread 2 - Audio Processing - Step 1.1 - FFmpeg process timed out after {FFMPEG_TIMEOUT} seconds")
             finally:
                 output_task.cancel()
                 try:
@@ -256,7 +257,7 @@ async def extract_audio_from_video(video_path: str, video_id: str, status_tracke
         
         try:
             await multipart_upload(audio_path, settings.PROCESSING_BUCKET, s3_key, video_size)
-            logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 1.1: Audio extraction completed for video: {video_id}")
+            logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 1.2: Audio extraction completed for video: {video_id}")
         except Exception as e:
             logger.error(f"Video Processing - Thread 2 - Audio Processing - Step 1.1: Error uploading audio to S3 for video {video_id}: {str(e)}")
             raise

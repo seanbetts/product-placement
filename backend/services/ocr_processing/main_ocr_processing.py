@@ -12,8 +12,6 @@ from models.status_tracker import StatusTracker
 from models.video_details import VideoDetails
 from utils import utils
 from utils.decorators import retry
-from services import s3_operations
-from services.ocr_processing import ocr_cleaning, ocr_brand_matching
 
 # Initialize Rekognition client
 rekognition_client = boto3.client('rekognition', region_name=settings.AWS_DEFAULT_REGION)
@@ -30,22 +28,22 @@ async def process_ocr(video_id: str, status_tracker: 'StatusTracker', video_deta
     video_resolution = await video_details.get_detail("video_resolution")
 
     try:
-            # Asynchronous S3 listing
+        # Asynchronous S3 listing
         async def list_objects_async(prefix):
             all_objects = []
             async with get_s3_client() as s3_client:
                 paginator = s3_client.get_paginator('list_objects_v2')
             async for page in paginator.paginate(Bucket=settings.PROCESSING_BUCKET, Prefix=prefix):
                 all_objects.extend(page.get('Contents', []))
-                logger.debug(f"Retrieved {len(all_objects)} objects so far for video: {video_id}")
+                logger.debug(f"Video Processing - Thread 1 - Image Processing - Step 2.2: Retrieved {len(all_objects)} objects so far for video: {video_id}")
             return all_objects
 
         logger.debug(f"Starting S3 listing for video: {video_id}")
         frame_objects = await list_objects_async(f'{video_id}/frames/')
-        logger.debug(f"Completed S3 listing for video: {video_id}. Total frames: {len(frame_objects)}")
+        logger.debug(f"Video Processing - Thread 1 - Image Processing - Step 2.2: Completed S3 listing for video: {video_id}. Total frames: {len(frame_objects)}")
 
         total_frames = len(frame_objects)
-        logger.debug(f"Total frames to process for video {video_id}: {total_frames}")
+        logger.debug(f"Video Processing - Thread 1 - Image Processing - Step 2.2: Total frames to process for video {video_id}: {total_frames}")
 
         ocr_results = []
         raw_ocr_results = []
@@ -86,7 +84,7 @@ async def process_ocr(video_id: str, status_tracker: 'StatusTracker', video_deta
 
             # Log progress periodically
             if processed_frames % 100 == 0 or processed_frames == total_frames:
-                logger.debug(f"Processed {processed_frames}/{total_frames} frames for video {video_id}")
+                logger.debug(f"Video Processing - Thread 1 - Image Processing - Step 2.2: Processed {processed_frames}/{total_frames} frames for video {video_id}")
                 continue
 
         # Sort OCR results by frame number
@@ -128,9 +126,9 @@ async def process_ocr(video_id: str, status_tracker: 'StatusTracker', video_deta
         return ocr_stats
 
     except Exception as e:
-        logger.error(f"Video Processing - Thread 1 - Image Processing - Step 2.4: Error in OCR processing for video {video_id}: {str(e)}", exc_info=True)
+        logger.error(f"Video Processing - Thread 1 - Image Processing: Error in OCR processing for video {video_id}: {str(e)}", exc_info=True)
         await status_tracker.update_process_status("ocr", "error", 80)
-        await status_tracker.set_error(f"Video Processing - Thread 1 - Image Processing - Step 2.4: Error in OCR processing: {str(e)}")
+        await status_tracker.set_error(f"Video Processing - Thread 1 - Image Processing: Error in OCR processing: {str(e)}")
         return None
 ########################################################
 
@@ -201,67 +199,4 @@ async def process_single_frame_ocr(video_id: str, frame_number: int, video_resol
     except Exception as e:
         logger.error(f"Video Processing - Thread 1 - Image Processing: Error processing OCR for frame {frame_number} of video {video_id}: {str(e)}", exc_info=True)
         return None, None
-########################################################
-
-## Post processing on raw OCR data
-########################################################
-async def brand_detection(video_id: str, status_tracker: StatusTracker, video_details: VideoDetails):
-    try:
-        # Assume post-processing is 20% of the total OCR process
-        total_steps = 7
-        step_progress = 20 / total_steps
-
-        video_resolution = await video_details.get_detail('video_resolution')
-        fps = await video_details.get_detail('frames_per_second')
-
-        await status_tracker.update_process_status("ocr", "in_progress", 80)  # Start at 80%
-
-        # Load OCR results
-        logger.info(f"Video Processing - Brand Detection - Step 1.2: Loading OCR results for video: {video_id}")
-        ocr_results = await s3_operations.load_ocr_results(video_id)
-        logger.debug(f"Loaded {len(ocr_results)} OCR results for video: {video_id}")
-        await status_tracker.update_process_status("ocr", "in_progress", 80 + step_progress)
-
-        # Step 1: Clean and consolidate OCR data
-        logger.info(f"Video Processing - Brand Detection - Step 2.1: Cleaning and consolidating OCR data for video: {video_id}")
-        cleaned_results = await ocr_cleaning.clean_and_consolidate_ocr_data(ocr_results, video_resolution)
-        logger.info(f"Video Processing - Brand Detection - Step 2.4: Cleaned and consolidated {len(cleaned_results)} frames for video: {video_id}")
-        logger.info(f"Video Processing - Brand Detection - Step 2.5: Saving processed OCR results for video: {video_id}")
-        await s3_operations.save_processed_ocr_results(video_id, cleaned_results)
-        await status_tracker.update_process_status("ocr", "in_progress", 80 + 2 * step_progress)
-
-        # Step 2: Create word cloud
-        logger.info(f"Video Processing - Brand Detection - Step 3.1: Creating word cloud for video: {video_id}")
-        await utils.create_word_cloud(video_id, cleaned_results)
-        await status_tracker.update_process_status("ocr", "in_progress", 80 + 3 * step_progress)
-
-        # Step 3: Detect brands and interpolate
-        logger.info(f"Video Processing - Brand Detection - Step 4.1: Detecting brands and interpolating for video: {video_id}")
-        brand_results, brand_appearances = await ocr_brand_matching.detect_brands_and_interpolate(cleaned_results, fps, video_resolution)
-        logger.info(f"Video Processing - Brand Detection - Step 4.5: Detected {len(brand_appearances)} unique brands for video: {video_id}")
-        await status_tracker.update_process_status("ocr", "in_progress", 80 + 4 * step_progress)
-
-        # Step 4: Filter brand results
-        logger.info(f"Video Processing - Brand Detection - Step 5.1: Filtering brand results for video: {video_id}")
-        filtered_brand_results = await ocr_cleaning.filter_brand_results(brand_results, brand_appearances, fps)
-        await status_tracker.update_process_status("ocr", "in_progress", 80 + 5 * step_progress)
-
-        # Step 5: Save filtered brands OCR results
-        logger.info(f"Video Processing - Brand Detection - Step 6.1: Saving filtered brand OCR results for video: {video_id}")
-        await s3_operations.save_brands_ocr_results(video_id, filtered_brand_results)
-        await status_tracker.update_process_status("ocr", "in_progress", 80 + 6 * step_progress)
-
-        # Step 6: Create and save brand table
-        logger.info(f"Video Processing - Brand Detection - Step 7.1: Creating and saving brand table for video: {video_id}")
-        brand_stats = await s3_operations.create_and_save_brand_table(video_id, brand_appearances, fps)
-        logger.info(f"Video Processing - Brand Detection - Step 7.2: Created brand table with {len(brand_stats)} entries for video: {video_id}")
-        await status_tracker.update_process_status("ocr", "in_progress", 100)
-
-        logger.info(f"Video Processing - Brand Detection: Completed post-processing OCR for video: {video_id}")
-        return filtered_brand_results
-    except Exception as e:
-        logger.error(f"Video Processing - Brand Detection: Error in post_process_ocr for video {video_id}: {str(e)}", exc_info=True)
-        await status_tracker.update_process_status("ocr", "error", 80)
-        await status_tracker.set_error(f"Video Processing - Brand Detection: Error in post-OCR processing: {str(e)}")
-        raise
 ########################################################

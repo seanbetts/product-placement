@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     INTERPOLATION_LIMIT: int = 15                           # Maximum consecutive interpolated frames allowed
     WORDCLOUD_MINIMUM_CONFIDENCE: int = 70                  # Minium confidence threshold for words to be included in the wordcloud
     MAX_BOUNDING_BOX_MERGE_DISTANCE_PERCENT: float = 0.02   # 2% of frame dimension
-    MIN_OVERLAP_RATIO_FOR_MERGE: float = 0.01               # 1% overlap required for automatic merging
+    MIN_OVERLAP_RATIO_FOR_MERGE: float = 0.015              # 1.5% overlap required for automatic merging
 
     # Video post-processing settings
     SMOOTHING_WINDOW: int = 5                               # Smoothing window for

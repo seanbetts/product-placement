@@ -25,9 +25,7 @@ async def annotate_video(video_id: str, status_tracker: StatusTracker, video_det
     max_concurrent_tasks = settings.MAX_WORKERS
     
     try:
-        await status_tracker.update_process_status("annotation", "processing", 0)
-        
-        logger.info(f"Video Processing - Video Annotation - Step 1.2: Loading OCR results for video {video_id}")
+        logger.info(f"Video Processing - Video Annotation - Step 5.2: Loading detection results for video {video_id}")
         async with get_s3_client() as s3_client:
             ocr_results_obj = await s3_client.get_object(
                 Bucket=settings.PROCESSING_BUCKET,
@@ -41,7 +39,7 @@ async def annotate_video(video_id: str, status_tracker: StatusTracker, video_det
             processed_frames_dir = os.path.join(temp_dir, "processed_frames")
             os.makedirs(processed_frames_dir, exist_ok=True)
 
-            logger.info(f"Video Processing - Video Annotation - Step 2.1: Started annotating of frames for video {video_id}")
+            logger.info(f"Video Processing - Video Annotation - Step 5.3: Started annotating of frames for video {video_id}")
             
             total_frames = len(ocr_results)
             processed_frames = 0
@@ -74,7 +72,9 @@ async def annotate_video(video_id: str, status_tracker: StatusTracker, video_det
                     logger.debug(f"Processed {i}/{total_frames} frames for video {video_id}. "
                                         f"Successful: {processed_frames}, Failed: {failed_frames}")
                     progress = (i / total_frames) * 100
-                    await status_tracker.update_process_status("annotation", "processing", progress)
+                    await status_tracker.update_process_status("annotation", "in_progress", progress)
+
+            logger.info(f"Video Processing - Video Annotation - Step 5.4: Finished annotating of frames for video {video_id}")
 
             logger.debug(f"Completed frame processing for video {video_id}. "
                                 f"Successfully processed: {processed_frames}, Failed: {failed_frames}")
@@ -88,7 +88,7 @@ async def annotate_video(video_id: str, status_tracker: StatusTracker, video_det
             if not frame_files:
                 raise RuntimeError(f"Video Processing - Video Annotation: No processed frames found in {processed_frames_dir}")
 
-            logger.info(f"Video Processing - Video Annotation - Step 3.1: Started video reconstruction for video {video_id}")
+            logger.info(f"Video Processing - Video Annotation - Step 5.5: Started video reconstruction for video {video_id}")
             await reconstruct_video(video_id, temp_dir, video_details)
 
         await status_tracker.update_process_status("annotation", "complete", 100)
@@ -98,7 +98,7 @@ async def annotate_video(video_id: str, status_tracker: StatusTracker, video_det
         await status_tracker.set_error(f"Video Processing - Video Annotation: Error in video annotation: {str(e)}")
         raise
 
-    logger.info(f"Video Processing - Video Annotation - Step 5.1: Completed annotation for video {video_id}")
+    logger.info(f"Video Processing - Video Annotation - Step 5.10: Completed annotation for video {video_id}")
 ########################################################
 
 ## Process each individual frame
@@ -342,7 +342,7 @@ async def reconstruct_video(video_id: str, temp_dir: str, video_details: VideoDe
         ]
 
         # Run FFmpeg command to combine video and audio
-        logger.debug(f"Running FFmpeg command to combine video and audio for {video_id}")
+        logger.debug(f"Video Processing - Video Annotation: Running FFmpeg command to combine video and audio for {video_id}")
         result = await asyncio.subprocess.create_subprocess_exec(
             *combine_command, 
             stdout=asyncio.subprocess.PIPE, 
@@ -351,21 +351,23 @@ async def reconstruct_video(video_id: str, temp_dir: str, video_details: VideoDe
         stdout, stderr = await result.communicate()
         if result.returncode != 0:
             raise subprocess.CalledProcessError(result.returncode, combine_command, stderr)
-        logger.debug(f"FFmpeg combine output: {stdout.decode()}")
+        logger.debug(f"Video Processing - Video Annotation: FFmpeg combine output: {stdout.decode()}")
 
-        logger.info(f"Video Processing - Video Annotation - Step 4.1: Uploading annotated video {video_id}")
+        logger.info(f"Video Processing - Video Annotation - Step 5.6: Finished reconstructing annotated video {video_id}")
+        
+        logger.info(f"Video Processing - Video Annotation - Step 5.7: Uploading annotated video {video_id}")
         
         # Wait for the upload task to complete
         try:
             await save_data_to_s3(video_id, 'processed_video.mp4', final_output_path)
         except asyncio.TimeoutError:
-            logger.error(f"Video Processing - Video Annotation - Step 4.1: Upload timeout for video {video_id}")
+            logger.error(f"Video Processing - Video Annotation - Step 5.7: Upload timeout for video {video_id}")
             raise
         except Exception as upload_error:
-            logger.error(f"Video Processing - Video Annotation - Step 4.1: Upload failed for video {video_id}: {str(upload_error)}")
+            logger.error(f"Video Processing - Video Annotation - Step 5.7: Upload failed for video {video_id}: {str(upload_error)}")
             raise
 
-        logger.info(f"Video Processing - Video Annotation - Step 4.2: Successfully processed and uploaded video {video_id}")
+        logger.info(f"Video Processing - Video Annotation - Step 5.8: Successfully uploaded annotated video {video_id}")
 
     except RuntimeError as e:
         logger.error(f"Video Processing - Video Annotation: FFmpeg error for {video_id}: {str(e)}", exc_info=True)
@@ -379,7 +381,7 @@ async def reconstruct_video(video_id: str, temp_dir: str, video_details: VideoDe
                 if os.path.exists(file_path):
                     os.remove(file_path)
                     logger.debug(f"Video Processing - Video Annotation: Removed temporary file: {file_path}")
-                logger.info(f"Video Processing - Video Annotation - Step 4.3: Completed video reconstruction for video {video_id}")
+                logger.info(f"Video Processing - Video Annotation - Step 5.9: Completed video annotation and reconstruction for video {video_id}")
             except Exception as e:
                 logger.error(f"Video Processing - Video Annotation: Error removing temporary file {file_path}: {str(e)}")
 ########################################################

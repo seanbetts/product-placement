@@ -69,20 +69,20 @@ async def detect_objects(video_id: str, status_tracker: 'StatusTracker', video_d
 
             except ClientError as e:
                 if e.response['Error']['Code'] == 'ResourceNotFoundException':
-                    logger.error(f"Video Processing - Object Detection - Step 1.1: Frame {frame_number:06d}.jpg not found for video {video_id}")
+                    logger.error(f"Video Processing - Object Detection - Step 4.1: Frame {frame_number:06d}.jpg not found for video {video_id}")
                 else:
-                    logger.error(f"Video Processing - Object Detection - Step 1.1: Error processing frame {frame_number:06d}.jpg for video {video_id}: {str(e)}")
+                    logger.error(f"Video Processing - Object Detection - Step 4.1: Error processing frame {frame_number:06d}.jpg for video {video_id}: {str(e)}")
             except Exception as e:
-                logger.error(f"Video Processing - Object Detection - Step 1.1: Error processing frame {frame_number:06d}.jpg for video {video_id}: {str(e)}")
+                logger.error(f"Video Processing - Object Detection - Step 4.1: Error processing frame {frame_number:06d}.jpg for video {video_id}: {str(e)}")
 
         # Save combined raw results to S3
         await s3_operations.save_data_to_s3(video_id, 'raw_object_detection_results.json', raw_results)
-        logger.info(f"Video Processing - Object Detection - Step 1.1: Object detection completed for video {video_id}")
+        logger.info(f"Video Processing - Object Detection - Step 4.2: Object detection completed for video {video_id}")
 
         # Set status to complete
         await status_tracker.update_process_status("objects", "complete", 100)
 
-        logger.info(f"Video Processing - Object Detection - Step 1.2: Combining brand and object stats for annotation: {video_id}")
+        logger.info(f"Video Processing - Object Detection - Step 4.3: Combining brand and object stats for annotation: {video_id}")
         annotation_objects = await combine_object_and_brand_data(video_id, status_tracker, video_details, brand_results, raw_results)
 
         return annotation_objects

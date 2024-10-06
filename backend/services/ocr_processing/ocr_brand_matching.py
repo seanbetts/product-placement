@@ -35,26 +35,26 @@ async def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float,
         brand_results = []
         brand_appearances = defaultdict(lambda: defaultdict(list))
 
-        logger.info("Video Processing - Brand Detection - Step 4.2: Starting first pass - Detecting brands")
+        logger.info("Video Processing - Brand Detection - Step 3.4.2: Starting first pass - Detecting brands")
         # First pass: Detect brands
         for frame in cleaned_results:
             frame_number = frame['frame_number']
             detected_brands = []
 
             for detection in frame['cleaned_detections']:
-                logger.debug(f"Video Processing - Brand Detection - Step 4.2: Examining detection: {detection['text']}")
+                logger.debug(f"Video Processing - Brand Detection - Step 3.4.2: Examining detection: {detection['text']}")
 
                 if not detection.get('brand_match'):
-                    logger.debug(f"Video Processing - Brand Detection - Step 4.2: No brand match for: {detection['text']}")
+                    logger.debug(f"Video Processing - Brand Detection - Step 3.4.2: No brand match for: {detection['text']}")
                     continue
 
                 if detection.get('brand_score', 0) < params["low_confidence_threshold"]:
-                    logger.debug(f"Video Processing - Brand Detection - Step 4.2: Brand score {detection.get('brand_score')} below threshold {params['low_confidence_threshold']}")
+                    logger.debug(f"Video Processing - Brand Detection - Step 3.4.2: Brand score {detection.get('brand_score')} below threshold {params['low_confidence_threshold']}")
                     continue
 
                 text_diff_score = fuzz.ratio(detection.get('original_text', '').lower(), detection['brand_match'].lower())
                 if text_diff_score < params["text_difference_threshold"]:
-                    logger.debug(f"Video Processing - Brand Detection - Step 4.2: Text difference score {text_diff_score} below threshold {params['text_difference_threshold']}")
+                    logger.debug(f"Video Processing - Brand Detection - Step 3.4.2: Text difference score {text_diff_score} below threshold {params['text_difference_threshold']}")
                     continue
 
                 box = detection.get('bounding_box', {})
@@ -64,13 +64,13 @@ async def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float,
                     width_px = width * video_width
                     height_px = height * video_height
                     if width_px < min_text_width or height_px < min_text_height:
-                        logger.debug(f"Video Processing - Brand Detection - Step 4.2: Text size ({width_px}x{height_px}) below minimum threshold ({min_text_width}x{min_text_height})")
+                        logger.debug(f"Video Processing - Brand Detection - Step 3.4.2: Text size ({width_px}x{height_px}) below minimum threshold ({min_text_width}x{min_text_height})")
                         continue
                 else:
-                    logger.debug("Video Processing - Brand Detection - Step 4.2: No bounding box found")
+                    logger.debug("Video Processing - Brand Detection - Step 3.4.2: No bounding box found")
                     continue
 
-                logger.debug(f"Video Processing - Brand Detection - Step 4.2: Brand detected: {detection['brand_match']}")
+                logger.debug(f"Video Processing - Brand Detection - Step 3.4.2: Brand detected: {detection['brand_match']}")
                 brand_data = {
                     'text': detection['brand_match'],
                     'confidence': detection['brand_score'],
@@ -89,10 +89,10 @@ async def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float,
 
         
         # Second pass: Interpolate brands
-        logger.info("Video Processing - Brand Detection - Step 4.3: Starting second pass - Interpolating brands")
+        logger.info("Video Processing - Brand Detection - Step 3.4.3: Starting second pass - Interpolating brands")
         final_brand_appearances = defaultdict(lambda: defaultdict(list))
         for brand, frame_appearances in brand_appearances.items():
-            logger.debug(f"Video Processing - Brand Detection - Step 4.3: Processing brand: {brand}")
+            logger.debug(f"Video Processing - Brand Detection - Step 3.4.3: Processing brand: {brand}")
             all_frames = sorted(frame_appearances.keys())
             consistent_appearances = []
             for frame in all_frames:
@@ -106,12 +106,12 @@ async def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float,
             if consistent_appearances:
                 first_appearance = consistent_appearances[0]
                 last_appearance = consistent_appearances[-1]
-                logger.debug(f"Video Processing - Brand Detection - Step 4.3: Brand {brand} appears from frame {first_appearance} to {last_appearance}")
+                logger.debug(f"Video Processing - Brand Detection - Step 3.4.3: Brand {brand} appears from frame {first_appearance} to {last_appearance}")
                 
                 for frame_number in range(first_appearance, last_appearance + 1):
                     if frame_number in frame_appearances:
                         final_brand_appearances[brand][frame_number] = frame_appearances[frame_number]
-                        logger.debug(f"Video Processing - Brand Detection - Step 4.3: Frame {frame_number}: {len(frame_appearances[frame_number])} instances of {brand}")
+                        logger.debug(f"Video Processing - Brand Detection - Step 3.4.3: Frame {frame_number}: {len(frame_appearances[frame_number])} instances of {brand}")
                     else:
                         prev_frame = max((f for f in all_frames if f < frame_number), default=None)
                         next_frame = min((f for f in all_frames if f > frame_number), default=None)
@@ -126,13 +126,13 @@ async def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float,
                             if frame_index < len(brand_results):
                                 brand_results[frame_index]['detected_brands'].extend(interpolated_instances)
                                 final_brand_appearances[brand][frame_number] = interpolated_instances
-                                logger.debug(f"Video Processing - Brand Detection - Step 4.3: Frame {frame_number}: Interpolated {len(interpolated_instances)} instances of {brand}")
+                                logger.debug(f"Video Processing - Brand Detection - Step 3.4.3: Frame {frame_number}: Interpolated {len(interpolated_instances)} instances of {brand}")
 
-        logger.info("Video Processing - Brand Detection - Step 4.4: Removing over interpolated brands")
+        logger.info("Video Processing - Brand Detection - Step 3.4.4: Removing over interpolated brands")
         # Post-processing to remove over-interpolated sections
         brand_results, final_brand_appearances = await remove_over_interpolated_sections(brand_results, final_brand_appearances)
 
-        logger.debug("Video Processing - Brand Detection - Step 4.4: Updating brand_results")
+        logger.debug("Video Processing - Brand Detection - Step 3.4.4: Updating brand_results")
         # Update brand_results to include all instances from final_brand_appearances
         for frame in brand_results:
             frame_number = frame['frame_number']
@@ -140,7 +140,7 @@ async def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float,
             for brand, appearances in final_brand_appearances.items():
                 if frame_number in appearances:
                     frame['detected_brands'].extend(appearances[frame_number])
-            logger.debug(f"Video Processing - Brand Detection - Step 4.4: Frame {frame_number}: Final count of {len(frame['detected_brands'])} brands")
+            logger.debug(f"Video Processing - Brand Detection - Step 3.4.4: Frame {frame_number}: Final count of {len(frame['detected_brands'])} brands")
 
         # Sort detected brands in each frame by confidence, preserving multiple detections
         for frame in brand_results:
