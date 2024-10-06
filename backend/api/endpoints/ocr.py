@@ -7,7 +7,7 @@ from models.video_details import VideoDetails
 from core.logging import logger
 from core.s3_download import get_s3_object
 from services import s3_operations
-from services.ocr_processing import main_ocr_processing
+from services import ocr_processing
 from utils.utils import get_video_resolution
 
 router = APIRouter()
@@ -59,7 +59,7 @@ async def reprocess_ocr(video_id: str) -> Dict[str, Any]:
         
         # Start OCR reprocessing
         logger.info(f"Starting to reprocess OCR data for video: {video_id}")
-        result = await main_ocr_processing.brand_detection(video_id, status_tracker, video_details)
+        result = await ocr_processing.brand_detection(video_id, status_tracker, video_details)
         logger.info(f"Reprocessing of OCR Data for video {video_id} complete, identified {len(result)} brands")
         
         return {"status": "success", "message": f"OCR data reprocessing completed, identified {len(result)} brands"}

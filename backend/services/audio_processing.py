@@ -1,14 +1,159 @@
+import os
 import time
 import json
 import asyncio
+import subprocess
 import aioboto3
 from fastapi import HTTPException
 from core.config import settings
 from core.logging import logger
-from core.aws import get_s3_client
+from core.aws import get_s3_client, multipart_upload
 from models.status_tracker import StatusTracker
 from models.video_details import VideoDetails
 from botocore.exceptions import ClientError
+
+## Extracts audio from video
+########################################################
+async def extract_audio_from_video(video_path: str, video_id: str, status_tracker: StatusTracker, video_details: VideoDetails):
+    logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 1.1: Extracting audio for video: {video_id}")
+    audio_path = f"/tmp/{video_id}_audio.mp3"
+    start_time = time.time()
+    FFMPEG_TIMEOUT = settings.FFMPEG_TIMEOUT
+
+    try:
+        # Estimate total time based on video file size
+        video_size = await video_details.get_detail("file_size")
+        estimated_total_time = max(1, video_size / 1000000)  # Rough estimate: 1 second per MB, minimum 1 second
+
+        progress_queue = asyncio.Queue()
+
+        async def update_progress():
+            while True:
+                progress = await progress_queue.get()
+                if progress is None:
+                    break
+                await status_tracker.update_process_status("audio_extraction", "in_progress", progress)
+                logger.debug(f"Video Processing - Thread 2 - Audio Processing - Step 1.1: Audio extraction progress for video {video_id}: {progress:.2f}%")
+
+        progress_task = asyncio.create_task(update_progress())
+
+        async def run_ffmpeg():
+            command = [
+                'ffmpeg',
+                '-i', video_path,
+                '-q:a', '0',
+                '-map', 'a',
+                '-progress', 'pipe:1',
+                audio_path
+            ]
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            async def read_output():
+                try:
+                    while True:
+                        line = await asyncio.wait_for(process.stdout.readline(), timeout=1.0)
+                        if not line:
+                            break
+                        line = line.decode().strip()
+                        if line.startswith("out_time_ms="):
+                            time_ms = int(line.split("=")[1])
+                            progress = min(100, (time_ms / 1000000) / estimated_total_time * 100)
+                            await progress_queue.put(progress)
+                except asyncio.TimeoutError:
+                    pass  # This is expected when there's no output for a while
+                except Exception as e:
+                    logger.error(f"Video Processing - Thread 2 - Audio Processing - Step 1.1 - Error reading FFmpeg output: {str(e)}")
+
+            output_task = asyncio.create_task(read_output())
+
+            try:
+                await asyncio.wait_for(process.wait(), timeout=FFMPEG_TIMEOUT)
+            except asyncio.TimeoutError:
+                process.kill()
+                raise TimeoutError(f"Video Processing - Thread 2 - Audio Processing - Step 1.1 - FFmpeg process timed out after {FFMPEG_TIMEOUT} seconds")
+            finally:
+                output_task.cancel()
+                try:
+                    await output_task
+                except asyncio.CancelledError:
+                    pass
+
+            if process.returncode != 0:
+                stderr = await process.stderr.read()
+                raise subprocess.CalledProcessError(process.returncode, command, stderr.decode())
+
+        await run_ffmpeg()
+
+        # Upload audio file to S3 using multipart upload
+        s3_key = f'{video_id}/audio.mp3'
+        
+        try:
+            await multipart_upload(audio_path, settings.PROCESSING_BUCKET, s3_key, video_size)
+            logger.info(f"Video Processing - Thread 2 - Audio Processing - Step 1.2: Audio extraction completed for video: {video_id}")
+        except Exception as e:
+            logger.error(f"Video Processing - Thread 2 - Audio Processing - Step 1.1: Error uploading audio to S3 for video {video_id}: {str(e)}")
+            raise
+
+        # Signal the progress_task to stop
+        await progress_queue.put(None)
+        await progress_task
+
+        async def get_audio_duration():
+            duration_command = [
+                'ffprobe',
+                '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                audio_path
+            ]
+            process = await asyncio.create_subprocess_exec(
+                *duration_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)  # 30 seconds timeout
+                return float(stdout.decode().strip())
+            except asyncio.TimeoutError:
+                process.kill()
+                raise TimeoutError("ffprobe process timed out after 30 seconds")
+
+        audio_duration = await get_audio_duration()
+        processing_time = time.time() - start_time
+        processing_speed = (audio_duration / processing_time) * 100
+
+        await status_tracker.update_process_status("audio_extraction", "complete", 100)
+
+        return {
+            "audio_length": f"{audio_duration:.2f} seconds",
+            "audio_processing_time": processing_time,
+            "audio_processing_speed": processing_speed
+        }
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Video Processing - Thread 2 - Audio Processing - Step 1.1: FFmpeg error extracting audio from video {video_id}: {str(e)}")
+        logger.error(f"Video Processing - Thread 2 - Audio Processing - Step 1.1: FFmpeg stderr: {e.stderr}")
+        await status_tracker.set_error(f"FFmpeg error extracting audio from video {video_id}.")
+    except TimeoutError as e:
+        logger.error(f"Video Processing - Thread 2 - Audio Processing - Step 1.1: Timeout error processing audio for video {video_id}: {str(e)}")
+        await status_tracker.set_error(f"Video Processing - Thread 2 - Audio Processing - Step 1.1: Timeout error processing audio for video {video_id}.")
+    except Exception as e:
+        logger.error(f"Video Processing - Thread 2 - Audio Processing - Step 1.1: Unexpected error extracting audio from video {video_id}: {str(e)}", exc_info=True)
+        await status_tracker.set_error(f"Video Processing - Thread 2 - Audio Processing - Step 1.1: Unexpected error extracting audio from video {video_id}.")
+    finally:
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+
+    return {
+        "audio_length": "Unknown",
+        "audio_processing_time": time.time() - start_time,
+        "audio_processing_speed": 0
+    }
+########################################################
 
 ## Transcribes the video audio
 ########################################################
