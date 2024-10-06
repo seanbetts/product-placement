@@ -1,6 +1,7 @@
 import os
 import time
 import cv2
+import re
 import asyncio
 from typing import List
 from io import BytesIO
@@ -178,7 +179,22 @@ async def get_first_video_frame(video_id: str):
 ## Get all video frames
 ########################################################
 async def get_all_video_frames(video_id: str) -> List[dict]:
-    frames_prefix = f'{video_id}/frames/'
+    """
+    Retrieve information about processed frames for a given video.
+
+    Args:
+        video_id (str): The ID of the video.
+
+    Returns:
+        List[dict]: A list of dictionaries containing frame information.
+        Each dictionary contains 'number' (frame number) and 'url' (signed S3 URL).
+
+    Raises:
+        HTTPException: If there's an error processing the frames.
+    """
+    FRAME_FILENAME_PREFIX = "processed_frame_"
+    FRAME_FILENAME_PATTERN = re.compile(rf"{FRAME_FILENAME_PREFIX}(\d+)\.jpg")
+    frames_prefix = f'{video_id}/processed_frames/'
     frames = []
     total_frames_processed = 0
     frames_returned = 0
@@ -186,29 +202,33 @@ async def get_all_video_frames(video_id: str) -> List[dict]:
     try:
         async with get_s3_client() as s3_client:
             paginator = s3_client.get_paginator('list_objects_v2')
-        async for page in paginator.paginate(Bucket=settings.PROCESSING_BUCKET, Prefix=frames_prefix):
-            for obj in page.get('Contents', []):
-                total_frames_processed += 1
-                try:
-                    frame_number = int(obj['Key'].split('/')[-1].split('.')[0])
-                    if frame_number % 50 == 0:
-                        signed_url = await s3_client.generate_presigned_url(
-                            'get_object',
-                            Params={'Bucket': settings.PROCESSING_BUCKET, 'Key': obj['Key']},
-                            ExpiresIn=3600
-                        )
-                        frame_info = {
-                            "number": frame_number,
-                            "url": signed_url
-                        }
-                        insort(frames, frame_info, key=lambda x: x["number"])
-                        frames_returned += 1
-                except Exception as e:
-                    logger.error(f"Error processing frame {obj['Key']}: {str(e)}")
+            async for page in paginator.paginate(Bucket=settings.PROCESSING_BUCKET, Prefix=frames_prefix):
+                for obj in page.get('Contents', []):
+                    total_frames_processed += 1
+                    try:
+                        filename = obj['Key'].split('/')[-1]
+                        match = FRAME_FILENAME_PATTERN.match(filename)
+                        if match:
+                            frame_number = int(match.group(1))
+                            if frame_number % 50 == 0:
+                                signed_url = await s3_client.generate_presigned_url(
+                                    'get_object',
+                                    Params={'Bucket': settings.PROCESSING_BUCKET, 'Key': obj['Key']},
+                                    ExpiresIn=3600
+                                )
+                                frame_info = {
+                                    "number": frame_number,
+                                    "url": signed_url
+                                }
+                                insort(frames, frame_info, key=lambda x: x["number"])
+                                frames_returned += 1
+                        else:
+                            logger.warning(f"Skipping file with unexpected format: {filename}")
+                    except Exception as e:
+                        logger.error(f"Error processing frame {obj['Key']}: {str(e)}")
 
         logger.debug(f"Processed {total_frames_processed} frames, returning {frames_returned} frames for video {video_id}")
         return frames
-
     except Exception as e:
         logger.error(f"Error processing frames for video {video_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing frames: {str(e)}")
