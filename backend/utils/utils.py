@@ -1,17 +1,11 @@
 import json
 import io
 import asyncio
-import enchant
-import numpy as np
-import matplotlib.pyplot as plt
-import asyncio
 from typing import AsyncGenerator
 from matplotlib import font_manager
 from typing import Tuple, Dict, List, AsyncGenerator
 from PIL import Image
-from collections import Counter
 from thefuzz import fuzz
-from wordcloud import WordCloud
 from core.config import settings
 from core.aws import get_s3_client
 from core.logging import logger
@@ -176,114 +170,7 @@ async def convert_relative_bbox(bbox: Dict, video_resolution: Tuple[int, int]) -
         return {"vertices": []}
 ########################################################
 
-## Create wordcloud
-########################################################
-async def create_word_cloud(video_id: str, cleaned_results: List[Dict]):
-    """
-    Create a styled word cloud from the processed OCR results, using individual text annotations
-    and a default system font. Only includes words with confidence above the minimum threshold
-    and length greater than 2 characters.
-    """
-    # Create an enchant dictionary for English
-    d = enchant.Dict("en_US")
-    
-    # Extract all text annotations with confidence above the threshold and length > 2
-    all_text = []
-    excluded_confidence_count = 0
-    excluded_length_count = 0
-    excluded_not_word_count = 0
-    brand_match_count = 0
-
-    logger.debug(f"OCR Data Processing: Processing cleaned OCR results for word cloud creation for video: {video_id}")
-    for frame in cleaned_results:
-        for detection in frame['cleaned_detections']:
-            confidence = detection.get('confidence', 1.0)  # Default to 1.0 if confidence is not available
-            
-            # Prioritize brand_match, then cleaned_text (if it's a valid word), then original text
-            if detection.get('brand_match') is not None:
-                text = detection['brand_match'].lower().strip()
-                brand_match_count += 1
-            elif 'cleaned_text' in detection and d.check(detection['cleaned_text'].strip()):
-                text = detection['cleaned_text'].lower().strip()
-            elif 'cleaned_text' in detection:
-                excluded_not_word_count += 1
-                continue
-            else:
-                text = detection.get('text', '').lower().strip()
-
-            if confidence >= settings.WORDCLOUD_MINIMUM_CONFIDENCE:
-                if len(text) > 2:
-                    all_text.append(text)
-                else:
-                    excluded_length_count += 1
-            else:
-                excluded_confidence_count += 1
-    
-    if not all_text:
-        logger.warning(f"No text found for word cloud creation for video: {video_id}")
-        return
-    
-    logger.debug(f"Excluded {excluded_confidence_count} words due to low confidence, "
-                        f"{excluded_length_count} words due to short length, and "
-                        f"{excluded_not_word_count} words not in dictionary. "
-                        f"Included {brand_match_count} brand matches for video: {video_id}")
-
-    # Count word frequencies
-    word_freq = Counter(all_text)
-    
-    # Create a mask image (circle shape)
-    x, y = np.ogrid[:300, :300]
-    mask = (x - 150) ** 2 + (y - 150) ** 2 > 130 ** 2
-    mask = 255 * mask.astype(int)
-
-    # Find the first available preferred font
-    font_path = await find_font(settings.PREFERRED_FONTS)
-    if not font_path:
-        logger.warning("No preferred font found. Using default.")
-
-    try:
-        logger.debug(f"Generating word cloud for video: {video_id}")
-        # Generate word cloud
-        wordcloud = WordCloud(width=600, height=600,
-                                background_color='white',
-                                max_words=100,  # Limit to top 100 words for clarity
-                                min_font_size=10,
-                                max_font_size=120,
-                                mask=mask,
-                                font_path=font_path,
-                                colormap='ocean',  # Use a colorful colormap
-                                prefer_horizontal=0.9,
-                                scale=2
-                                ).generate_from_frequencies(word_freq)
-
-        # Create a figure and save it to a BytesIO object
-        plt.figure(figsize=(10,10), frameon=False)
-        plt.imshow(wordcloud, interpolation='bilinear')
-        plt.axis("off")
-        plt.tight_layout(pad=0)
-        img_buffer = io.BytesIO()
-        plt.savefig(img_buffer, format='jpg', dpi=300, bbox_inches='tight', pad_inches=0)
-        img_buffer.seek(0)
-
-        logger.debug(f"Uploading word cloud to S3 for video: {video_id}")
-        
-        # Upload to S3
-        async with get_s3_client() as s3_client:
-            await s3_client.put_object(
-                Bucket=settings.PROCESSING_BUCKET,
-                Key=f'{video_id}/ocr/wordcloud.jpg',
-                Body=img_buffer.getvalue(),
-                ContentType='image/jpeg'
-            )
-        logger.debug(f"Word cloud created and saved for video: {video_id}")
-    except Exception as e:
-        logger.error(f"OCR Data Processing: Error creating or saving word cloud for video {video_id}: {str(e)}", exc_info=True)
-        raise
-    finally:
-        plt.close()
-########################################################
-
-## Find font for wordcloud
+## Find fonts
 ########################################################
 async def find_font(font_names: List[str]) -> str:
     """

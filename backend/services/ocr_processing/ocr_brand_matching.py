@@ -36,6 +36,7 @@ async def detect_brands_and_interpolate(cleaned_results: List[Dict], fps: float,
         brand_appearances = defaultdict(lambda: defaultdict(list))
 
         logger.info("Video Processing - Brand Detection - Step 3.4.2: Starting first pass - Detecting brands")
+        
         # First pass: Detect brands
         for frame in cleaned_results:
             frame_number = frame['frame_number']

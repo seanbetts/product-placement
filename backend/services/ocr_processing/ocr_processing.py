@@ -2,7 +2,8 @@ import time
 import json
 import asyncio
 import boto3
-from typing import Tuple, Dict
+from typing import Tuple, Dict, List
+from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 from botocore.exceptions import ClientError
 from core.config import settings
@@ -18,6 +19,14 @@ rekognition_client = boto3.client('rekognition', region_name=settings.AWS_DEFAUL
 
 # Create a thread pool executor
 thread_pool = ThreadPoolExecutor()
+
+## Data Classes
+########################################################
+@dataclass
+class OCRResult:
+    ocr_stats: Dict
+    ocr_results: List[Dict]
+########################################################
 
 ## Runs OCR processing for an uploaded video
 ########################################################
@@ -123,7 +132,7 @@ async def process_ocr(video_id: str, status_tracker: 'StatusTracker', video_deta
         }
 
         await status_tracker.update_process_status("ocr", "in_progress", 80)  # Ensure we're at 80% before post-processing
-        return ocr_stats
+        return OCRResult(ocr_stats=ocr_stats, ocr_results=raw_ocr_results)
 
     except Exception as e:
         logger.error(f"Video Processing - Thread 1 - Image Processing: Error in OCR processing for video {video_id}: {str(e)}", exc_info=True)

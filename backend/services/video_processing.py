@@ -89,7 +89,10 @@ async def run_video_processing(video_id: str):
                             await status_tracker.set_error(f"Video Processing - Thread 2 - Audio Processing: Transcription error: {str(e)}")
                     elif task == ocr_task:
                         try:
-                            ocr_stats = task.result()
+                            ocr_result = task.result()
+                            if ocr_result:
+                                ocr_stats = ocr_result.ocr_stats
+                                ocr_results = ocr_result.ocr_results
                             await status_tracker.update_process_status("ocr", "complete", 80)
                             logger.info(f"Video Processing - Thread 1 - Image Processing - Step 2.4: Completed OCR processing for video: {video_id}")
                             logger.info(f"Video Processing - Thread 1: Image Processing completed for video: {video_id}")
@@ -103,8 +106,8 @@ async def run_video_processing(video_id: str):
                 return
 
             # Step 3: Brand detection
-            logger.info(f"Video Processing - Brand Detection - Step 3.1.1: Starting brand detection for video: {video_id}")
-            brand_results = await brand_detection.detect_brands(video_id, status_tracker, video_details)
+            logger.info(f"Video Processing - Brand Detection - Step 3.1: Starting brand detection for video: {video_id}")
+            brand_results = await brand_detection.detect_brands(video_id, status_tracker, video_details, ocr_results)
             await status_tracker.update_process_status("ocr", "complete", 100)
 
             # Step 4: Object detection

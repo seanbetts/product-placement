@@ -1,14 +1,11 @@
-import json
 import traceback
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException
 from models.status_tracker import StatusTracker
 from models.video_details import VideoDetails
 from core.logging import logger
-from core.s3_download import get_s3_object
 from services import s3_operations
-from services import ocr_processing
-from utils.utils import get_video_resolution
+from services.ocr_processing import brand_detection
 
 router = APIRouter()
 
@@ -59,7 +56,7 @@ async def reprocess_ocr(video_id: str) -> Dict[str, Any]:
         
         # Start OCR reprocessing
         logger.info(f"Starting to reprocess OCR data for video: {video_id}")
-        result = await ocr_processing.brand_detection(video_id, status_tracker, video_details)
+        result = await brand_detection.detect_brands(video_id, status_tracker, video_details)
         logger.info(f"Reprocessing of OCR Data for video {video_id} complete, identified {len(result)} brands")
         
         return {"status": "success", "message": f"OCR data reprocessing completed, identified {len(result)} brands"}

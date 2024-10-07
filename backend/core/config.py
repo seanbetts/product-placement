@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     MAX_QUEUE_SIZE: int = 100                               # Max number of batches in the queue
     STATUS_UPDATE_INTERVAL: int = 3                         # in seconds
 
-    ## OCR Settings
+    ## Brand Detection Settings
     BRAND_DATABASE_FILE: Path = Field(default="data/brand_database.json")
     BRAND_DATABASE: Dict[str, Dict] = {}                    # Brand database object
     OCR_TYPE: str = 'LINE'                                  # Choose 'LINE' or 'WORD' type

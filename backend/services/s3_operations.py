@@ -13,6 +13,7 @@ from core.logging import logger
 from utils.decorators import retry
 from services import video_processing
 from botocore.exceptions import ClientError
+from models.detection_classes import DetectionResult
 
 ## Uploads a video to S3
 ########################################################
@@ -307,15 +308,14 @@ async def save_processed_ocr_results(video_id: str, cleaned_results: List[Dict])
 
 ## Save brands OCR results for video
 ########################################################
-async def save_brands_ocr_results(video_id: str, brand_results: List[Dict]):
+async def save_brands_ocr_results(video_id: str, brand_results: List[DetectionResult]):
     logger.debug(f"Saving brands OCR results for video: {video_id}")
-
     key = f'{video_id}/ocr/brands_ocr.json'
-
     try:
-        brand_data = json.dumps(brand_results, indent=2)
+        # Convert DetectionResult objects to serializable dictionaries
+        serializable_results = [result.to_dict() for result in brand_results]
+        brand_data = json.dumps(serializable_results, indent=2)
         data_size = len(brand_data)
-
         logger.debug(f"Attempting to save brands OCR results to S3 for video: {video_id}")
         async with get_s3_client() as s3_client:
             await s3_client.put_object(
@@ -324,9 +324,7 @@ async def save_brands_ocr_results(video_id: str, brand_results: List[Dict]):
                 Body=brand_data,
                 ContentType='application/json'
             )
-        
         logger.debug(f"Successfully saved brands OCR results for video: {video_id}. Size: {data_size} bytes")
-
     except ClientError as e:
         logger.error(f"Error saving brands OCR results for video {video_id}: {str(e)}", exc_info=True)
         raise
@@ -337,32 +335,39 @@ async def save_brands_ocr_results(video_id: str, brand_results: List[Dict]):
 
 ## Create and save brands OCR results table for video
 ########################################################
-async def create_and_save_brand_table(video_id: str, brand_appearances: Dict[str, Set[int]], fps: float):
-    logger.debug(f"Creating and saving brand table for video: {video_id}")
-
-    brand_stats = {}
+async def create_and_save_brand_table(video_id: str, detection_results: List[DetectionResult], fps: float):
+    logger.debug(f"Creating and saving detected brand table for video: {video_id}")
+    detected_brand_appearances = {}
+    detected_brand_stats = {}
     min_frames = int(fps)  # Minimum number of frames (1 second)
 
-    for brand, frames in brand_appearances.items():
+    # First, collect all brand appearances
+    for result in detection_results:
+        for detected_brand in result.detected_brands:
+            if detected_brand.text not in detected_brand_appearances:
+                detected_brand_appearances[detected_brand.text] = set()
+            detected_brand_appearances[detected_brand.text].add(result.frame_number)
+
+    # Then, create the detected brand stats
+    for detected_brand, frames in detected_brand_appearances.items():
         frame_list = sorted(frames)
         if len(frame_list) >= min_frames:
-            brand_stats[brand] = {
+            detected_brand_stats[detected_brand] = {
                 "frame_count": len(frame_list),
                 "time_on_screen": round(len(frame_list) / fps, 2),
                 "first_appearance": frame_list[0],
                 "last_appearance": frame_list[-1]
             }
-            logger.debug(f"Brand '{brand}' added to stats with {len(frame_list)} frames")
+            logger.debug(f"Brand '{detected_brand}' added to stats with {len(frame_list)} frames")
         else:
-            logger.debug(f"Discarded brand '{brand}' as it appeared for less than 1 second ({len(frame_list)} frames)")
+            logger.debug(f"Discarded brand '{detected_brand}' as it appeared for less than 1 second ({len(frame_list)} frames)")
 
-    logger.debug(f"Brand table created with {len(brand_stats)} entries for video: {video_id}")
+    logger.debug(f"Detected brand table created with {len(detected_brand_stats)} entries for video: {video_id}")
 
     try:
-        brand_table_data = json.dumps(brand_stats, indent=2)
+        brand_table_data = json.dumps(detected_brand_stats, indent=2)
         data_size = len(brand_table_data)
-        logger.debug(f"Attempting to save brand table to S3 for video: {video_id}")
-
+        logger.debug(f"Attempting to save detected brand table to S3 for video: {video_id}")
         async with get_s3_client() as s3_client:
             await s3_client.put_object(
                 Bucket=settings.PROCESSING_BUCKET,
@@ -370,11 +375,10 @@ async def create_and_save_brand_table(video_id: str, brand_appearances: Dict[str
                 Body=brand_table_data,
                 ContentType='application/json'
             )
-
-        logger.debug(f"Successfully saved brand table for video: {video_id}. Size: {data_size} bytes")
-        return brand_stats
+        logger.debug(f"Successfully saved detected brand table for video: {video_id}. Size: {data_size} bytes")
+        return detected_brand_stats
     except ClientError as e:
-        logger.error(f"Error saving brand table for video {video_id}: {str(e)}", exc_info=True)
+        logger.error(f"Error saving detected brand table for video {video_id}: {str(e)}", exc_info=True)
         raise
     except Exception as e:
         logger.error(f"Unexpected error saving brand table for video {video_id}: {str(e)}", exc_info=True)

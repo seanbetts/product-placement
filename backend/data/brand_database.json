@@ -25,7 +25,7 @@
       "objects": ["Sneaker", "T-Shirt"]
   },
   "nuprin": {
-      "variations": ["nuprin", "new print"],
+      "variations": ["nuprin", "new print", "auprin"],
       "category": "pharmaceutical",
       "objects": ["Pill", "Medicine"]
   },
