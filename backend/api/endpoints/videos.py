@@ -85,7 +85,7 @@ async def annotate_video_endpoint(video_id: str):
     status_tracker = StatusTracker(video_id)
     video_details = await VideoDetails.create(video_id)
     try:
-        logger.debug(f"Video Processing - Video Annotation - Step 5.1: Starting annotation and reconstruction for video: {video_id}")
+        logger.info(f"Video Processing - Video Annotation - Step 5.1: Starting annotation and reconstruction for video: {video_id}")
         await video_annotation.annotate_video(video_id, status_tracker, video_details)
         logger.info(f"Video Processing - Video Annotation - Step 5.9: Video annotation and reconstruction completed for video {video_id}")
         return {"message": f"Video annotation completed for video_id: {video_id}"}
