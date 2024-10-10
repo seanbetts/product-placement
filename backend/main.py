@@ -19,6 +19,7 @@ app.include_router(router)
 @app.on_event("startup")
 async def on_startup():
     logger.info("FastAPI application startup initiated")
+    logger.info(f"Optimized parameters: BATCH_SIZE={settings.BATCH_SIZE}, MAX_WORKERS={settings.MAX_WORKERS}, MAX_CONCURRENT_BATCHES={settings.MAX_CONCURRENT_BATCHES}")
     try:
         await aws.initialize_s3_client()
         logger.info("S3 client initialized successfully")

@@ -1,8 +1,9 @@
 import io
+import asyncio
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import List, Dict, Optional
-from collections import Counter
+from collections import Counter, defaultdict
 from wordcloud import WordCloud
 from core.config import settings
 from core.logging import logger
@@ -12,6 +13,26 @@ from models.video_details import VideoDetails
 from utils.utils import find_font
 from services import s3_operations
 from models.detection_classes import DetectionResult, BrandDetector, Frame
+
+## Task pool for parallel processing
+########################################################
+class TaskPool:
+    def __init__(self, max_workers):
+        self.semaphore = asyncio.Semaphore(max_workers)
+        self.tasks = set()
+
+    async def run(self, coro):
+        async with self.semaphore:
+            task = asyncio.create_task(coro)
+            self.tasks.add(task)
+            try:
+                return await task
+            finally:
+                self.tasks.remove(task)
+
+    async def join(self):
+        await asyncio.gather(*self.tasks)
+########################################################
 
 ## Detect brands in raw OCR data
 ########################################################
@@ -27,66 +48,145 @@ async def detect_brands(
             ocr_results = await s3_operations.load_ocr_results(video_id)
             logger.info(f"Video Processing - Brand Detection - Step 3.1: Loaded {len(ocr_results)} OCR results for video: {video_id}")
 
-        logger.debug(f"Video Processing - Brand Detection - Step 3.1: OCR results type: {type(ocr_results)}")
-        logger.debug(f"Video Processing - Brand Detection - Step 3.1: Sample OCR result: {ocr_results[0] if ocr_results else 'No OCR results'}")
-
         video_width, video_height = await video_details.get_detail('video_resolution')
         video_fps = await video_details.get_detail('frames_per_second')
-
-        brand_detector = BrandDetector(fps=video_fps)
+        brand_detector = BrandDetector(fps=video_fps, frame_width=video_width, frame_height=video_height)
         frames = [Frame(ocr['frame_number'], video_width, video_height, ocr) for ocr in ocr_results]
-        
-        results = []
+
         total_frames = len(frames)
-        total_detected_brands = 0
-
-        # Step 3.2: Process frames
         logger.info(f"Video Processing - Brand Detection - Step 3.2: Starting to process {total_frames} frames for video: {video_id}")
-        for i, frame in enumerate(frames):
-            result = await brand_detector.process_frame(frame)
-            results.append(result)
-            total_detected_brands += len(result.detected_brands)
-            progress = int((i + 1) / total_frames * 100)
-            await status_tracker.update_process_status("ocr", "in_progress", progress)
-            
-            if i > 0 and i % 100 == 0:
-                logger.info(f"Video Processing - Brand Detection - Step 3.2: Processed {i}/{total_frames} frames for video: {video_id}. Total brands detected so far: {total_detected_brands}")
 
-        # Step 3.3: Create word cloud
-        logger.info(f"Video Processing - Brand Detection - Step 3.3: Creating word cloud for video: {video_id}")
-        await create_word_cloud(video_id, results)
+        task_pool = TaskPool(settings.MAX_WORKERS)
+        batch_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_BATCHES)
+        all_results = []
 
-        # Step 3.4: Save filtered brands OCR results
-        logger.info(f"Video Processing - Brand Detection - Step 3.4: Saving filtered brand OCR results for video: {video_id}")
-        await s3_operations.save_brands_ocr_results(video_id, results)
+        async def process_batch(batch):
+            async with batch_semaphore:
+                return await task_pool.run(process_frame_batch(brand_detector, batch, status_tracker, total_frames))
 
-        # Step 3.5: Create and save brand table
-        logger.info(f"Video Processing - Brand Detection - Step 3.5: Creating and saving brand table for video: {video_id}")
-        brand_appearances = {}
-        for result in results:
-            for detected_brand in result.detected_brands:
-                if detected_brand.text not in brand_appearances:
-                    brand_appearances[detected_brand.text] = {}
-                brand_appearances[detected_brand.text][result.frame_number] = [detected_brand]
+        batches = [frames[i:i+settings.BATCH_SIZE] for i in range(0, total_frames, settings.BATCH_SIZE)]
+        batch_tasks = [process_batch(batch) for batch in batches]
         
-        brand_stats = await s3_operations.create_and_save_brand_table(video_id, results, video_fps)
-        logger.info(f"Video Processing - Brand Detection - Step 3.6: Created brand table with {len(brand_stats)} entries for video: {video_id}")
+        for batch_result in asyncio.as_completed(batch_tasks):
+            batch_results = await batch_result
+            all_results.extend(batch_results)
+            logger.info(f"Video Processing - Brand Detection - Step 3.2: Processed batch. Total frames processed: {len(all_results)}/{total_frames} ({((len(all_results)/total_frames) * 100):.0f}%)")
+
+        await task_pool.join()
+
+        # Step 3.3: Finalize brand detections
+        logger.info(f"Video Processing - Brand Detection - Step 3.3: Finalizing brand detections for video: {video_id}")
+        await post_process_interpolation(brand_detector)
+        final_results = await finalize_brand_detections(brand_detector)
+        logger.info(f"Video Processing - Brand Detection - Step 3.3: Finalized detection results for {len(final_results)} video frames")
+
+        # Step 3.4: Validate results
+        logger.info(f"Video Processing - Brand Detection - Step 3.4: Validating brand detection results for video: {video_id}")
+        validated_results = [result for result in final_results if await validate_brand_result(result)]
+        sorted_validated_results = sorted(validated_results, key=lambda x: x.frame_number)
+        total_validated_brands = sum(len(result.detected_brands) for result in validated_results)
+        logger.info(f"Video Processing - Brand Detection - Step 3.4: Validation complete. Total of {total_validated_brands} validated brand detections")
+
+        # Step 3.5: Create word cloud
+        logger.info(f"Video Processing - Brand Detection - Step 3.5: Creating brand word cloud for video: {video_id}")
+        await create_word_cloud(video_id, sorted_validated_results)
+
+        # Step 3.6: Save brand OCR results
+        logger.info(f"Video Processing - Brand Detection - Step 3.6: Saving {total_validated_brands} brand detection results for video: {video_id}")
+        await s3_operations.save_brands_ocr_results(video_id, sorted_validated_results)
+
+        # Step 3.7: Create and save brand table
+        logger.info(f"Video Processing - Brand Detection - Step 3.7: Creating and saving brand detections table for video: {video_id}")
+        await create_brand_table(video_id, sorted_validated_results, video_fps)
 
         await status_tracker.update_process_status("ocr", "completed", 100)
         
-        # Log some statistics about the results
-        total_brands = sum(len(result.detected_brands) for result in results)
-        unique_brands = set(brand.text for result in results for brand in result.detected_brands)
-        logger.info(f"Video Processing - Brand Detection - Step 3.7: Detected {len(unique_brands)} unique brands across {total_brands} brand instances in video: {video_id}")
-        logger.info(f"Video Processing - Brand Detection - Step 3.8: Completed brand detection for video: {video_id}")
-
-        return results
+        return sorted_validated_results
 
     except Exception as e:
         logger.error(f"Video Processing - Brand Detection: Error in detect_brands for video {video_id}: {str(e)}", exc_info=True)
         await status_tracker.update_process_status("ocr", "error", 0)
         raise
 ########################################################
+
+## Process frames in batches
+########################################################
+async def process_frame_batch(brand_detector: BrandDetector, frames: List[Frame], status_tracker: StatusTracker, total_frames: int):
+    results = []
+    for frame in frames:
+        result = await brand_detector.process_frame(frame)
+        results.append(result)
+        progress = int((frame.number + 1) / total_frames * 100)
+        await status_tracker.update_process_status("ocr", "in_progress", progress)
+    return results
+########################################################
+
+## xxx
+########################################################
+async def post_process_interpolation(brand_detector: BrandDetector):
+    all_frames = sorted(set(b.frame_number for b in brand_detector.get_all_brand_detections()))
+    all_brands = set(b.brand for b in brand_detector.get_all_brand_detections())
+    
+    for brand in all_brands:
+        brand_frames = sorted(set(b.frame_number for b in brand_detector.get_all_brand_detections() if b.brand == brand))
+        
+        for i in range(len(brand_frames) - 1):
+            start_frame = brand_frames[i]
+            end_frame = brand_frames[i + 1]
+            
+            for frame in range(start_frame + 1, end_frame):
+                if frame not in brand_frames:
+                    interpolated_brand = await brand_detector.interpolate_brand(brand, frame)
+                    if interpolated_brand:
+                        brand_detector.add_brand_detection(interpolated_brand)
+                        brand_detector.add_to_accumulated_results(frame, interpolated_brand)
+    
+    # Sort all_brand_detections by frame_number
+    brand_detector.sort_all_brand_detections()
+########################################################
+
+## xxx
+########################################################
+async def finalize_brand_detections(brand_detector: BrandDetector) -> List[DetectionResult]:
+    min_frames = max(1, int(settings.MIN_BRAND_TIME * brand_detector.fps))
+    logger.debug(f"Minimum frames for brand appearance: {min_frames}")
+
+    final_results = []
+    brand_runs = defaultdict(list)
+    current_run = defaultdict(list)
+
+    # Identify runs of consecutive frames for each brand
+    for frame_number, brands in sorted(brand_detector.get_accumulated_results().items()):
+        for brand in brands:
+            if frame_number - 1 not in current_run[brand.brand]:
+                # Start of a new run
+                if current_run[brand.brand]:
+                    brand_runs[brand.brand].append(current_run[brand.brand])
+                    current_run[brand.brand] = []
+            current_run[brand.brand].append(frame_number)
+
+    # Add any remaining runs
+    for brand, run in current_run.items():
+        if run:
+            brand_runs[brand].append(run)
+
+    # Filter out short runs
+    for brand, runs in brand_runs.items():
+        for run in runs:
+            if len(run) < min_frames:
+                logger.debug(f"Removing short run of brand '{brand}' from frames {run[0]} to {run[-1]}")
+                for frame in run:
+                    brand_detector.remove_brand_from_accumulated_results(frame, brand)
+            else:
+                logger.debug(f"Keeping run of brand '{brand}' from frames {run[0]} to {run[-1]}")
+
+    # Create final results
+    for frame_number, brands in sorted(brand_detector.get_accumulated_results().items()):
+        final_results.append(DetectionResult(frame_number=frame_number, detected_brands=brands))
+
+    return final_results
+########################################################
+
 
 ## Create wordcloud
 ########################################################
@@ -101,16 +201,15 @@ async def create_word_cloud(video_id: str, results: List[DetectionResult]):
     all_text = []
     excluded_confidence_count = 0
     excluded_length_count = 0
-    excluded_not_word_count = 0
     brand_match_count = 0
 
     logger.debug(f"Video Processing - Brand Detection - Step 3.3 - OCR Data Processing: Processing cleaned OCR results for word cloud creation for video: {video_id}")
     for frame in results:
         for detection in frame.detected_brands:
-            confidence = detection.confidence
+            confidence = detection.brand_match_confidence
             
-            # Use the text field of BrandInstance, which should already be the best match
-            text = detection.text.lower().strip()
+            # Use the brand field of BrandInstance
+            text = detection.brand.lower().strip()
             
             if detection.is_interpolated:
                 brand_match_count += 1
@@ -128,8 +227,7 @@ async def create_word_cloud(video_id: str, results: List[DetectionResult]):
         return
     
     logger.debug(f"Video Processing - Brand Detection - Step 3.3: Excluded {excluded_confidence_count} words due to low confidence, "
-                        f"{excluded_length_count} words due to short length, and "
-                        f"{excluded_not_word_count} words not in dictionary. "
+                        f"{excluded_length_count} words due to short length. "
                         f"Included {brand_match_count} brand matches for video: {video_id}")
 
     # Count word frequencies
@@ -185,4 +283,70 @@ async def create_word_cloud(video_id: str, results: List[DetectionResult]):
         raise
     finally:
         plt.close()
+########################################################
+
+## Create brand table
+########################################################
+async def create_brand_table(video_id: str, detection_results: List[DetectionResult], video_fps: float) -> Dict[str, Dict]:
+    brand_stats = {}
+    for result in detection_results:
+        for brand_instance in result.detected_brands:
+            brand = brand_instance.brand
+            if brand not in brand_stats:
+                brand_stats[brand] = {
+                    "frame_count": 0,
+                    "time_on_screen": 0,
+                    "first_appearance": result.frame_number,
+                    "last_appearance": result.frame_number,
+                    "confidences": [],
+                    "sizes": [],
+                    "min_confidence": brand_instance.brand_match_confidence,
+                    "max_confidence": brand_instance.brand_match_confidence
+                }
+            stats = brand_stats[brand]
+            stats["frame_count"] += 1
+            stats["time_on_screen"] += 1 / video_fps
+            stats["last_appearance"] = result.frame_number
+            stats["confidences"].append(brand_instance.brand_match_confidence)
+            stats["sizes"].append(brand_instance.relative_size)
+            stats["min_confidence"] = min(stats["min_confidence"], brand_instance.brand_match_confidence)
+            stats["max_confidence"] = max(stats["max_confidence"], brand_instance.brand_match_confidence)
+
+    # Calculate averages and round values
+    for brand, stats in brand_stats.items():
+        stats["time_on_screen"] = round(stats["time_on_screen"], 2)
+        stats["avg_confidence"] = round(sum(stats["confidences"]) / len(stats["confidences"]), 2)
+        stats["min_confidence"] = round(stats["min_confidence"], 2)
+        stats["max_confidence"] = round(stats["max_confidence"], 2)
+        stats["avg_relative_size"] = round(sum(stats["sizes"]) / len(stats["sizes"]), 4)
+        del stats["confidences"]
+        del stats["sizes"]
+
+    # Save brand stats to S3
+    await s3_operations.create_and_save_brand_table(video_id, brand_stats)
+    return brand_stats
+########################################################
+
+## Validate brand results
+########################################################
+async def validate_brand_result(result: DetectionResult) -> bool:
+    valid = True
+    for brand in result.detected_brands:
+        if brand.is_interpolated:
+            if brand.original_detected_text != "[INTERPOLATED]":
+                logger.warning(f"Inconsistent data: Interpolated brand with non-interpolated original text in frame {result.frame_number}")
+                valid = False
+        else:
+            if brand.original_detected_text == "[INTERPOLATED]":
+                logger.warning(f"Inconsistent data: Non-interpolated brand with interpolated original text in frame {result.frame_number}")
+                valid = False
+        if brand.original_detected_text != "[INTERPOLATED]" and brand.original_detected_text_confidence < settings.MINIMUM_OCR_CONFIDENCE:
+            logger.warning(f"Inconsistent data: Brand with low confidence in frame {result.frame_number}")
+            valid = False
+        logger.debug(f"Frame {result.frame_number}: Validated brand - {brand.brand}, Interpolated: {brand.is_interpolated}, Original text: {brand.original_detected_text}, Confidence: {brand.original_detected_text_confidence}")
+    if not valid:
+        logger.warning(f"Invalid result in frame {result.frame_number}")
+    else:
+        logger.debug(f"Valid result in frame {result.frame_number} with {len(result.detected_brands)} brands")
+    return valid
 ########################################################

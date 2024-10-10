@@ -13,7 +13,7 @@ from core.logging import logger
 from utils.decorators import retry
 from services import video_processing
 from botocore.exceptions import ClientError
-from models.detection_classes import DetectionResult
+from models.detection_classes import DetectionResult, BrandInstance
 
 ## Uploads a video to S3
 ########################################################
@@ -309,14 +309,20 @@ async def save_processed_ocr_results(video_id: str, cleaned_results: List[Dict])
 ## Save brands OCR results for video
 ########################################################
 async def save_brands_ocr_results(video_id: str, brand_results: List[DetectionResult]):
-    logger.debug(f"Saving brands OCR results for video: {video_id}")
+    logger.debug(f"Video Processing - Brand Detection - Step 3.5: Saving brands OCR results for video: {video_id}")
     key = f'{video_id}/ocr/brands_ocr.json'
     try:
         # Convert DetectionResult objects to serializable dictionaries
-        serializable_results = [result.to_dict() for result in brand_results]
+        serializable_results = [
+            {
+                "frame_number": result.frame_number,
+                "detected_brands": [brand.to_dict() for brand in result.detected_brands]
+            }
+            for result in brand_results
+        ]
         brand_data = json.dumps(serializable_results, indent=2)
         data_size = len(brand_data)
-        logger.debug(f"Attempting to save brands OCR results to S3 for video: {video_id}")
+        logger.debug(f"Video Processing - Brand Detection - Step 3.5: Attempting to save brands OCR results to S3 for video: {video_id}")
         async with get_s3_client() as s3_client:
             await s3_client.put_object(
                 Bucket=settings.PROCESSING_BUCKET,
@@ -324,50 +330,24 @@ async def save_brands_ocr_results(video_id: str, brand_results: List[DetectionRe
                 Body=brand_data,
                 ContentType='application/json'
             )
-        logger.debug(f"Successfully saved brands OCR results for video: {video_id}. Size: {data_size} bytes")
+        logger.debug(f"Video Processing - Brand Detection - Step 3.5: Successfully saved brands OCR results for video: {video_id}. Size: {data_size} bytes")
     except ClientError as e:
-        logger.error(f"Error saving brands OCR results for video {video_id}: {str(e)}", exc_info=True)
+        logger.error(f"Video Processing - Brand Detection - Step 3.5: Error saving brands OCR results for video {video_id}: {str(e)}", exc_info=True)
         raise
     except Exception as e:
-        logger.error(f"Unexpected error saving brands OCR results for video {video_id}: {str(e)}", exc_info=True)
+        logger.error(f"Video Processing - Brand Detection - Step 3.5: Unexpected error saving brands OCR results for video {video_id}: {str(e)}", exc_info=True)
         raise
 ########################################################
 
 ## Create and save brands OCR results table for video
 ########################################################
-async def create_and_save_brand_table(video_id: str, detection_results: List[DetectionResult], fps: float):
-    logger.debug(f"Creating and saving detected brand table for video: {video_id}")
-    detected_brand_appearances = {}
-    detected_brand_stats = {}
-    min_frames = int(fps)  # Minimum number of frames (1 second)
-
-    # First, collect all brand appearances
-    for result in detection_results:
-        for detected_brand in result.detected_brands:
-            if detected_brand.text not in detected_brand_appearances:
-                detected_brand_appearances[detected_brand.text] = set()
-            detected_brand_appearances[detected_brand.text].add(result.frame_number)
-
-    # Then, create the detected brand stats
-    for detected_brand, frames in detected_brand_appearances.items():
-        frame_list = sorted(frames)
-        if len(frame_list) >= min_frames:
-            detected_brand_stats[detected_brand] = {
-                "frame_count": len(frame_list),
-                "time_on_screen": round(len(frame_list) / fps, 2),
-                "first_appearance": frame_list[0],
-                "last_appearance": frame_list[-1]
-            }
-            logger.debug(f"Brand '{detected_brand}' added to stats with {len(frame_list)} frames")
-        else:
-            logger.debug(f"Discarded brand '{detected_brand}' as it appeared for less than 1 second ({len(frame_list)} frames)")
-
-    logger.debug(f"Detected brand table created with {len(detected_brand_stats)} entries for video: {video_id}")
+async def create_and_save_brand_table(video_id: str, brand_stats: Dict[str, Dict]):
+    logger.debug(f"Video Processing - Brand Detection - Step 3.6: Creating and saving detected brand table for video: {video_id}")
 
     try:
-        brand_table_data = json.dumps(detected_brand_stats, indent=2)
+        brand_table_data = json.dumps(brand_stats, indent=2)
         data_size = len(brand_table_data)
-        logger.debug(f"Attempting to save detected brand table to S3 for video: {video_id}")
+        logger.debug(f"Video Processing - Brand Detection - Step 3.6: Attempting to save detected brand table to S3 for video: {video_id}")
         async with get_s3_client() as s3_client:
             await s3_client.put_object(
                 Bucket=settings.PROCESSING_BUCKET,
@@ -375,13 +355,13 @@ async def create_and_save_brand_table(video_id: str, detection_results: List[Det
                 Body=brand_table_data,
                 ContentType='application/json'
             )
-        logger.debug(f"Successfully saved detected brand table for video: {video_id}. Size: {data_size} bytes")
-        return detected_brand_stats
+        logger.debug(f"Video Processing - Brand Detection - Step 3.6: Successfully saved detected brand table for video: {video_id}. Size: {data_size} bytes")
+        return brand_stats
     except ClientError as e:
-        logger.error(f"Error saving detected brand table for video {video_id}: {str(e)}", exc_info=True)
+        logger.error(f"Video Processing - Brand Detection - Step 3.6: Error saving detected brand table for video {video_id}: {str(e)}", exc_info=True)
         raise
     except Exception as e:
-        logger.error(f"Unexpected error saving brand table for video {video_id}: {str(e)}", exc_info=True)
+        logger.error(f"Video Processing - Brand Detection - Step 3.6: Unexpected error saving brand table for video {video_id}: {str(e)}", exc_info=True)
         raise
 ########################################################
 
@@ -455,12 +435,12 @@ async def get_brands_ocr_table(video_id: str):
 
 ## Get video's OCR results
 ########################################################
-async def get_ocr_results(video_id: str):
-    logger.debug(f"Received request for OCR results of video: {video_id}")
-    ocr_key = f'{video_id}/ocr/ocr_results.json'
-
+async def get_brands_ocr_results(video_id: str):
+    logger.debug(f"Received request for brand OCR results of video: {video_id}")
+    ocr_key = f'{video_id}/ocr/brands_ocr.json'
+    
     try:
-        logger.debug(f"Attempting to retrieve OCR results from S3 for video: {video_id}")
+        logger.debug(f"Attempting to retrieve brand OCR results from S3 for video: {video_id}")
 
         async with get_s3_client() as s3_client:
             response = await s3_client.get_object(
@@ -471,25 +451,37 @@ async def get_ocr_results(video_id: str):
         data_size = len(data)
 
         ocr_results = json.loads(data.decode('utf-8'))
-        logger.debug(f"Successfully retrieved OCR results for video {video_id}. Size: {data_size} bytes")
+        logger.debug(f"Successfully retrieved brand OCR results for video {video_id}. Size: {data_size} bytes")
         
-        return ocr_results
+        # Convert the JSON data back to DetectionResult objects
+        detection_results = [
+            DetectionResult(
+                frame_number=frame_data['frame_number'],
+                detected_brands=[
+                    BrandInstance(**brand_data)
+                    for brand_data in frame_data['detected_brands']
+                ]
+            )
+            for frame_data in ocr_results
+        ]
+        
+        return detection_results
 
     except s3_client.exceptions.NoSuchKey:
-        logger.error(f"OCR results not found for video {video_id}")
-        raise HTTPException(status_code=404, detail=f"OCR results not found for video {video_id}")
+        logger.error(f"Brand OCR results not found for video {video_id}")
+        raise HTTPException(status_code=404, detail="Brand OCR results not found")
     
     except json.JSONDecodeError as e:
-        logger.error(f"Error decoding JSON for OCR results of video {video_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Error processing OCR results")
+        logger.error(f"Error decoding JSON for brand OCR results of video {video_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error processing brand OCR results")
 
     except s3_client.exceptions.ClientError as e:
-        logger.error(f"S3 client error retrieving OCR results for video {video_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Error retrieving OCR results from storage")
+        logger.error(f"S3 client error retrieving brand OCR results for video {video_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error retrieving brand OCR results from storage")
 
     except Exception as e:
-        logger.error(f"Unexpected error retrieving OCR results for video {video_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Unexpected error retrieving OCR results")
+        logger.error(f"Unexpected error retrieving brand OCR results for video {video_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Unexpected error retrieving brand OCR results")
 ########################################################
 
 ## Get video's processed OCR results

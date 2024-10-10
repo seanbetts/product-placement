@@ -13,6 +13,7 @@ from core.aws import get_s3_client
 from core.s3_upload import save_data_to_s3
 from models.status_tracker import StatusTracker
 from models.video_details import VideoDetails
+from models.detection_classes import BrandInstance
 from core.logging import logger
 from utils.utils import find_font
 
@@ -69,6 +70,7 @@ async def annotate_video(video_id: str, status_tracker: StatusTracker, video_det
                     failed_frames += 1
 
                 if i % 100 == 0 or i == total_frames:
+                    logger.info(f"Video Processing - Video Annotation - Step 5.3: Processed {i}/{total_frames} frames ({((i / total_frames) * 100):.0f}%) for video {video_id}")
                     logger.debug(f"Processed {i}/{total_frames} frames for video {video_id}. "
                                         f"Successful: {processed_frames}, Failed: {failed_frames}")
                     progress = (i / total_frames) * 100
@@ -97,65 +99,70 @@ async def annotate_video(video_id: str, status_tracker: StatusTracker, video_det
         logger.error(f"Video Processing - Video Annotation: Error in annotate_video for video {video_id}: {str(e)}", exc_info=True)
         await status_tracker.set_error(f"Video Processing - Video Annotation: Error in video annotation: {str(e)}")
         raise
-
-    logger.info(f"Video Processing - Video Annotation - Step 5.10: Completed annotation for video {video_id}")
 ########################################################
 
 ## Process each individual frame
 ########################################################
 async def process_single_frame(video_id: str, frame_data: dict, processed_frames_dir: str):
     frame_number = None
-
     try:
         frame_number = int(frame_data['frame_number'])
-        logger.debug(f"Processing frame {frame_number} for video {video_id}")
+        logger.debug(f"Video Processing - Video Annotation: Processing frame {frame_number} for video {video_id}")
 
         original_frame_key = f"{video_id}/frames/{frame_number:06d}.jpg"
+        logger.debug(f"Video Processing - Video Annotation: Downloading frame {frame_number} for video {video_id}")
 
-        logger.debug(f"Downloading frame {frame_number} for video {video_id}")
         async with get_s3_client() as s3_client:
             frame_obj = await s3_client.get_object(
                 Bucket=settings.PROCESSING_BUCKET,
                 Key=original_frame_key
             )
-        frame_bytes = await frame_obj['Body'].read()
-        
-        logger.debug(f"Decoding frame {frame_number} for video {video_id}")
+            frame_bytes = await frame_obj['Body'].read()
+
+        logger.debug(f"Video Processing - Video Annotation: Decoding frame {frame_number} for video {video_id}")
         frame_array = np.frombuffer(frame_bytes, np.uint8)
         frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+
         if frame is None:
             raise ValueError(f"Video Processing - Video Annotation: Failed to decode frame {frame_number}")
-        logger.debug(f"Successfully downloaded and decoded frame {frame_number}")
 
-        logger.debug(f"Annotating frame {frame_number} for video {video_id}")
+        logger.debug(f"Video Processing - Video Annotation: Successfully downloaded and decoded frame {frame_number}")
+
+        detected_brands = frame_data.get('detected_brands', [])
+
+        logger.debug(f"Video Processing - Video Annotation: Annotating frame {frame_number} for video {video_id}")
         frame = await annotate_frame(
             frame,
-            frame_data.get('detected_brands', []),
+            detected_brands,
             show_confidence=settings.SHOW_CONFIDENCE,
             text_bg_opacity=settings.TEXT_BG_OPACITY
         )
-        logger.debug(f"Successfully annotated frame {frame_number}")
+        logger.debug(f"Video Processing - Video Annotation: Successfully annotated frame {frame_number}")
 
         processed_frame_path = os.path.join(processed_frames_dir, f"processed_frame_{frame_number:06d}.jpg")
-        logger.debug(f"Saving annotated frame {frame_number} to {processed_frame_path}")
+        logger.debug(f"Video Processing - Video Annotation: Saving annotated frame {frame_number} to {processed_frame_path}")
         cv2.imwrite(processed_frame_path, frame)
+
         if not os.path.exists(processed_frame_path):
             raise IOError(f"Video Processing - Video Annotation: Failed to save annotated frame {frame_number}")
-        logger.debug(f"Successfully saved processed frame {frame_number} to {processed_frame_path}")
 
-        logger.debug(f"Uploading annotated frame {frame_number} for video {video_id}")
-        with open(processed_frame_path, 'rb') as f:
-            await s3_client.put_object(
-                Bucket=settings.PROCESSING_BUCKET,
-                Key=f"{video_id}/processed_frames/processed_frame_{frame_number:06d}.jpg",
-                Body=f
-            )
-        logger.debug(f"Successfully uploaded annotated frame {frame_number}")
+        logger.debug(f"Video Processing - Video Annotation: Successfully saved processed frame {frame_number} to {processed_frame_path}")
 
-        logger.debug(f"Completed annotating frame {frame_number} for video {video_id}")
+        logger.debug(f"Video Processing - Video Annotation: Uploading annotated frame {frame_number} for video {video_id}")
+        async with get_s3_client() as s3_client:
+            with open(processed_frame_path, 'rb') as f:
+                await s3_client.put_object(
+                    Bucket=settings.PROCESSING_BUCKET,
+                    Key=f"{video_id}/processed_frames/processed_frame_{frame_number:06d}.jpg",
+                    Body=f
+                )
+
+        logger.debug(f"Video Processing - Video Annotation: Successfully uploaded annotated frame {frame_number}")
+        logger.debug(f"Video Processing - Video Annotation: Completed annotating frame {frame_number} for video {video_id}")
         return True
+
     except Exception as e:
-        logger.info(f"Video Processing - Video Annotation: Error annotating frame {frame_number} for video {video_id}: {str(e)}", exc_info=True)
+        logger.error(f"Video Processing - Video Annotation: Error annotating frame {frame_number} for video {video_id}: {str(e)}", exc_info=True)
         return False
 ########################################################
 
@@ -167,100 +174,100 @@ async def annotate_frame(
     show_confidence: bool = True,
     text_bg_opacity: float = 0.7,
 ) -> np.ndarray:
-        if not isinstance(frame, np.ndarray):
-            logger.error("Video Processing - Video Annotation: Frame must be a numpy array")
-            raise ValueError("Video Processing - Video Annotation: Frame must be a numpy array")
+    if not isinstance(frame, np.ndarray):
+        logger.error("Video Processing - Video Annotation: Frame must be a numpy array")
+        raise ValueError("Video Processing - Video Annotation: Frame must be a numpy array")
+    
+    logger.debug(f"Video Processing - Video Annotation: Input frame shape: {frame.shape}, dtype: {frame.dtype}")
+
+    # Find the first available preferred font
+    font_size = 16
+    font_path = await find_font(settings.PREFERRED_FONTS)
+
+    if font_path:
+        try:
+            font = ImageFont.truetype(font_path, font_size)
+            logger.debug(f"Video Processing - Video Annotation: Loaded font from {font_path}")
+        except IOError:
+            logger.warning(f"Video Processing - Video Annotation: Failed to load font from {font_path}, using default")
+            font = ImageFont.load_default()
+    
+    if len(detected_brands) > 0:
+        logger.debug(f"Video Processing - Video Annotation: Annotating frame with {len(detected_brands)} detected brands")
         
-        logger.debug(f"Input frame shape: {frame.shape}, dtype: {frame.dtype}")
-
-        # Find the first available preferred font
-        font_size = 16
-        font_path = await find_font(settings.PREFERRED_FONTS)
-
-        if font_path:
+        # Convert OpenCV BGR to RGB
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        logger.debug(f"Video Processing - Video Annotation: Converted frame to RGB. Shape: {frame_rgb.shape}, dtype: {frame_rgb.dtype}")
+        
+        pil_image = Image.fromarray(frame_rgb)
+        logger.debug(f"Video Processing - Video Annotation: Created PIL Image. Size: {pil_image.size}, mode: {pil_image.mode}")
+        
+        draw = ImageDraw.Draw(pil_image)
+        
+        for brand in detected_brands:
             try:
-                font = ImageFont.truetype(font_path, font_size)
-                logger.debug(f"Video Annotation: Loaded font from {font_path}")
-            except IOError:
-                logger.warning(f"Failed to load font from {font_path}, using default")
-                font = ImageFont.load_default()
-        
-        if len(detected_brands) > 0:
-            logger.debug(f"Annotating frame with {len(detected_brands)} detected brands")
-            
-            # Convert OpenCV BGR to RGB
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            logger.debug(f"Converted frame to RGB. Shape: {frame_rgb.shape}, dtype: {frame_rgb.dtype}")
-            
-            pil_image = Image.fromarray(frame_rgb)
-            logger.debug(f"Created PIL Image. Size: {pil_image.size}, mode: {pil_image.mode}")
-            
-            draw = ImageDraw.Draw(pil_image)
-            
-            for brand in detected_brands:
+                if 'bounding_box' not in brand or 'vertices' not in brand['bounding_box']:
+                    logger.warning(f"Video Processing - Video Annotation: Skipping brand without bounding box: {brand.get('brand', 'Unknown')}")
+                    continue  # Skip brands without bounding boxes
+                
+                vertices = brand['bounding_box']['vertices']
+                brand_name = brand.get('brand', '').upper()  # Capitalize the brand name
+                confidence = brand.get('brand_match_confidence', 0.0)
+                
+                logger.debug(f"Video Processing - Video Annotation: Processing brand: {brand_name}, confidence: {confidence}")
+
+                pts = np.array([(int(v['x']), int(v['y'])) for v in vertices], np.int32)
+                x_min, y_min = pts.min(axis=0)
+                x_max, y_max = pts.max(axis=0)
+                
                 try:
-                    if 'bounding_box' not in brand or 'vertices' not in brand['bounding_box']:
-                        logger.warning(f"Video Processing - Video Annotation: Skipping brand without bounding box: {brand}")
-                        continue  # Skip brands without bounding boxes
-                    
-                    vertices = brand['bounding_box']['vertices']
-                    text = str(brand.get('text', '')).upper()  # Capitalize the brand name
-                    confidence = float(brand.get('confidence', 0.0))
-                    
-                    logger.debug(f"Video Processing - Video Annotation - Processing brand: {text}, confidence: {confidence}")
+                    color = await get_color_by_confidence(confidence)
+                    logger.debug(f"Video Processing - Video Annotation: Color returned by get_color_by_confidence: {color}")
+                except Exception as color_error:
+                    logger.error(f"Video Processing - Video Annotation: Error in get_color_by_confidence: {str(color_error)}")
+                    color = (255, 0, 0)  # Default to red if there's an error
+                
+                # Draw bounding box
+                draw.rectangle([x_min, y_min, x_max, y_max], outline=color, width=2)
+                logger.debug(f"Video Processing - Video Annotation: Drew bounding box at ({x_min}, {y_min}, {x_max}, {y_max})")
 
-                    pts = np.array([(int(v['x']), int(v['y'])) for v in vertices], np.int32)
-                    x_min, y_min = pts.min(axis=0)
-                    x_max, y_max = pts.max(axis=0)
-                    
-                    try:
-                        color = await get_color_by_confidence(confidence)
-                        logger.debug(f"Color returned by get_color_by_confidence: {color}")
-                    except Exception as color_error:
-                        logger.error(f"Video Processing - Video Annotation: Error in get_color_by_confidence: {str(color_error)}")
-                        color = (255, 0, 0)  # Default to red if there's an error
-                    
-                    # Draw bounding box
-                    draw.rectangle([x_min, y_min, x_max, y_max], outline=color, width=2)
-                    logger.debug(f"Video Annotation: Drew bounding box at ({x_min}, {y_min}, {x_max}, {y_max})")
+                # Prepare label
+                label = f"{brand_name}" + (f" ({confidence:.2f})" if show_confidence else "")
+                label_size = draw.textbbox((0, 0), label, font=font)
+                label_width = label_size[2] - label_size[0]
+                label_height = label_size[3] - label_size[1]
 
-                    # Prepare label
-                    label = f"{text}" + (f" ({confidence:.2f})" if show_confidence else "")
-                    label_size = draw.textbbox((0, 0), label, font=font)
-                    label_width = label_size[2] - label_size[0]
-                    label_height = label_size[3] - label_size[1]
+                # Position label box
+                label_x = x_min
+                label_y = y_min - label_height if y_min > label_height else y_max
 
-                    # Position label box
-                    label_x = x_min
-                    label_y = y_min - label_height if y_min > label_height else y_max
+                # Draw label background
+                label_bg = Image.new('RGBA', pil_image.size, (0, 0, 0, 0))
+                label_bg_draw = ImageDraw.Draw(label_bg)
+                label_bg_draw.rectangle((label_x, label_y, label_x + label_width, label_y + label_height),
+                                        fill=(color[0], color[1], color[2], int(255 * text_bg_opacity)))
+                pil_image = Image.alpha_composite(pil_image.convert('RGBA'), label_bg)
+                draw = ImageDraw.Draw(pil_image)
 
-                    # Draw label background
-                    label_bg = Image.new('RGBA', pil_image.size, (0, 0, 0, 0))
-                    label_bg_draw = ImageDraw.Draw(label_bg)
-                    label_bg_draw.rectangle((label_x, label_y, label_x + label_width, label_y + label_height),
-                                            fill=(color[0], color[1], color[2], int(255 * text_bg_opacity)))
-                    pil_image = Image.alpha_composite(pil_image.convert('RGBA'), label_bg)
-                    draw = ImageDraw.Draw(pil_image)
+                # Draw text
+                text_x = label_x + (label_width - label_size[2]) // 2
+                text_y = label_y + (label_height - label_size[3]) // 2
+                draw.text((text_x, text_y), label, font=font, fill=(255, 255, 255))
 
-                    # Draw text
-                    text_x = label_x + (label_width - label_size[2]) // 2
-                    text_y = label_y + (label_height - label_size[3]) // 2
-                    draw.text((text_x, text_y), label, font=font, fill=(255, 255, 255))
+                logger.debug(f"Video Processing - Video Annotation: Annotated brand: {brand_name} at position ({x_min}, {y_min}, {x_max}, {y_max})")
+            except Exception as e:
+                logger.error(f"Video Processing - Video Annotation : Error annotating brand {brand.get('brand', 'Unknown')}: {str(e)}")
 
-                    logger.debug("Annotated brand: {text} at position ({x_min}, {y_min}, {x_max}, {y_max})")
-                except Exception as e:
-                    logger.info(f"Video Processing - Video Annotation: Error annotating brand {brand}: {str(e)}")
+        logger.debug("Video Processing - Video Annotation: Frame annotation completed")
 
-            logger.debug("Frame annotation completed")
+        # Convert back to OpenCV format
+        annotated_frame = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+        logger.debug(f"Video Processing - Video Annotation: Converted annotated frame back to BGR. Shape: {annotated_frame.shape}, dtype: {annotated_frame.dtype}")
 
-            # Convert back to OpenCV format
-            annotated_frame = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-            logger.debug(f"Converted annotated frame back to BGR. Shape: {annotated_frame.shape}, dtype: {annotated_frame.dtype}")
-
-            return annotated_frame
-        else:
-            logger.debug("Video Annotation: No brands detected, returning original frame")
-            return frame
+        return annotated_frame
+    else:
+        logger.debug("Video Processing - Video Annotation: No brands detected, returning original frame")
+        return frame
 ########################################################
 
 ## Reconstruct video with annotations
@@ -381,7 +388,6 @@ async def reconstruct_video(video_id: str, temp_dir: str, video_details: VideoDe
                 if os.path.exists(file_path):
                     os.remove(file_path)
                     logger.debug(f"Video Processing - Video Annotation: Removed temporary file: {file_path}")
-                logger.info(f"Video Processing - Video Annotation - Step 5.9: Completed video annotation and reconstruction for video {video_id}")
             except Exception as e:
                 logger.error(f"Video Processing - Video Annotation: Error removing temporary file {file_path}: {str(e)}")
 ########################################################

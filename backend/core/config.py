@@ -1,4 +1,6 @@
 import json
+import os
+import psutil
 from pathlib import Path
 from typing import List, Dict, Any
 from pydantic_settings import BaseSettings
@@ -45,37 +47,42 @@ class Settings(BaseSettings):
     MULTIPART_MAX_CONCURRENCY: int = 10                     # MAximum concurrency
     MULTIPART_CHUNK_SIZE: int = 5                           # MB per chunk
 
-    ## Frame Processing Settings
+    ## Fixed Frame Processing Settings
     DOWNLOAD_CHUNK_SIZE: int = 8388608                      # 8MB chunks
     FRAME_INTERVAL: int = 1                                 # Frame intervals to process, 1 = all
-    BATCH_SIZE: int = 30                                    # Number of images per batch
-    MAX_WORKERS: int = 30                                   # Max workers for ThreadPoolExecutor
-    MAX_CONCURRENT_BATCHES: int = 10                        # Max number of concurrent batches to process
     MAX_CONCURRENT_UPLOADS: int = 10                        # Max number of concurrent uploads
     MAX_QUEUE_SIZE: int = 100                               # Max number of batches in the queue
     STATUS_UPDATE_INTERVAL: int = 3                         # in seconds
+
+    ## Dynamic Frame Processing Settings
+    BATCH_SIZE: int = Field(default_factory=lambda: Settings.calculate_optimal_parameters()[0])                 # Number of images per batch
+    MAX_WORKERS: int = Field(default_factory=lambda: Settings.calculate_optimal_parameters()[1])                # Max workers for ThreadPoolExecutor
+    MAX_CONCURRENT_BATCHES: int = Field(default_factory=lambda: Settings.calculate_optimal_parameters()[2])     # Max number of concurrent batches to process
 
     ## Brand Detection Settings
     BRAND_DATABASE_FILE: Path = Field(default="data/brand_database.json")
     BRAND_DATABASE: Dict[str, Dict] = {}                    # Brand database object
     OCR_TYPE: str = 'LINE'                                  # Choose 'LINE' or 'WORD' type
-    MIN_BRAND_TIME: int = 1                                 # Minimum number of seconds a brand needs to appear
+    MINIMUM_OCR_CONFIDENCE: int = 70.0                      # Minimum acceptable confidence score for including a LINE from raw_ocr.json
     MAX_CLEANING_CONFIDENCE: int = 67                       # Maximum confidence score required to skip text cleaning
-    MIN_WORD_MATCH: int = 80                                # Minimum confidence for applying word corrections
-    HIGH_CONFIDENCE_THRESHOLD: int = 80                     # Minimum score for high-confidence detections
-    LOW_CONFIDENCE_THRESHOLD: int = 70                      # Minimum score for low-confidence detections
-    MIN_BRAND_LENGTH: int = 3                               # Minimum length of a brand name
     MIN_DETECTIONS: int = 2                                 # Minimum number of detections for a brand to be considered
+    MIN_BRAND_TIME: int = 1                                 # Minimum number of seconds a brand needs to appear
     FRAME_WINDOW: int = 1                                   # Window (in seconds) for checking brand consistency
-    TEXT_DIFF_THRESHOLD: int = 60                           # Minimum fuzzy match score between original and matched text
-    MIN_TEXT_WIDTH: int = 5                                 # Minimum text width as percentage of video width
-    MIN_TEXT_HEIGHT: int = 5                                # Minimum text height as percentage of video height
-    INTERPOLATION_CONFIDENCE: int = 70                      # Confidence score for interpolated brand appearances
+    MINIMUM_FUZZY_BRAND_MATCH_SCORE: int = 70               # Minimum fuzzy match score between original and matched text
     INTERPOLATION_LIMIT: int = 15                           # Maximum consecutive interpolated frames allowed
     WORDCLOUD_MINIMUM_CONFIDENCE: int = 70                  # Minium confidence threshold for words to be included in the wordcloud
     MAX_BOUNDING_BOX_MERGE_DISTANCE_PERCENT: float = 0.02   # 2% of frame dimension
     MIN_OVERLAP_RATIO_FOR_MERGE: float = 0.015              # 1.5% overlap required for automatic merging
-
+    
+    ## No longer used
+    MIN_WORD_MATCH: int = 80                                # Minimum confidence for applying word corrections
+    # HIGH_CONFIDENCE_THRESHOLD: int = 80                     # Minimum score for high-confidence detections
+    # LOW_CONFIDENCE_THRESHOLD: int = 70                      # Minimum score for low-confidence detections
+    MIN_BRAND_LENGTH: int = 3                               # Minimum length of a brand name
+    MIN_TEXT_WIDTH: int = 5                                 # Minimum text width as percentage of video width
+    MIN_TEXT_HEIGHT: int = 5                                # Minimum text height as percentage of video height
+    INTERPOLATION_CONFIDENCE: int = 70                      # Confidence score for interpolated brand appearances
+    
     # Video post-processing settings
     SMOOTHING_WINDOW: int = 5                               # Smoothing window for
     SHOW_CONFIDENCE: bool = False                           # Show confidence score for detected brands in annotated video
@@ -90,6 +97,64 @@ class Settings(BaseSettings):
     VIDEO_PIXEL_FORMAT: str = 'yuv420p'                     # Annotated video pixel format
     AUDIO_CODEC: str = 'aac'                                # Annotated video audio codec
     AUDIO_BITRATE: str = '192k'                             # 192 kbps
+
+    @staticmethod
+    def calculate_optimal_parameters():
+        cpu_count = psutil.cpu_count(logical=False)
+        total_memory = psutil.virtual_memory().total / (1024 * 1024 * 1024)
+        available_memory = psutil.virtual_memory().available / (1024 * 1024 * 1024)
+        
+        # Multiplier for the number of CPU cores to determine the maximum number of workers
+        # Higher values allow for more concurrent tasks but may increase CPU contention
+        worker_factor = 2.0
+
+        # Fraction of available memory to be used for batches
+        # Higher values allocate more memory for batches, potentially increasing throughput but leaving less for other operations
+        batch_size_factor = 0.4
+
+        # Minimum number of items in a batch
+        # Ensures that batches are not too small, which could lead to excessive overhead
+        min_batch_size = 50
+
+        # Maximum number of items in a batch
+        # Prevents batches from becoming too large, which could cause memory issues or reduce responsiveness
+        max_batch_size = 1000
+
+        # Estimated memory usage per worker in GB
+        # Used to calculate the maximum number of workers based on available memory
+        # Lower values allow for more workers but may underestimate actual memory usage
+        estimated_memory_per_worker = 0.2
+
+        # Minimum number of workers to use, regardless of other calculations
+        # Ensures a base level of parallelism
+        min_workers = 16
+
+        # Maximum number of workers allowed, regardless of available resources
+        # Prevents excessive parallelism which could lead to diminishing returns or system instability
+        max_workers_limit = 32
+
+        # Calculate max workers
+        max_workers = max(min_workers, min(
+            max_workers_limit,
+            int(cpu_count * worker_factor),
+            int(available_memory / estimated_memory_per_worker)
+        ))
+
+        # Calculate batch size
+        memory_for_batches = available_memory * batch_size_factor
+        batch_size = max(min_batch_size, min(
+            max_batch_size,
+            int(memory_for_batches / max_workers)
+        ))
+
+        # Ensure batch size is at least 100 if we have enough memory
+        if memory_for_batches >= 100 * max_workers:
+            batch_size = max(batch_size, 100)
+
+        # Calculate max concurrent batches
+        max_concurrent_batches = max(4, min(max_workers // 2, int(available_memory / (batch_size * estimated_memory_per_worker))))
+
+        return batch_size, max_workers, max_concurrent_batches
 
     @field_validator("BRAND_DATABASE_FILE", mode="before")
     @classmethod
