@@ -22,44 +22,11 @@ async def reprocess_ocr(video_id: str) -> Dict[str, Any]:
     video_details = await VideoDetails.create(video_id)
     
     try:
-        # Fetch processing stats from S3
-        # logger.debug(f"About to fetch processing stats for video {video_id}")
-        # try:
-        #     stats_obj = await get_s3_object(f'{video_id}/processing_stats.json')
-        #     logger.debug(f"Successfully retrieved processing stats for video {video_id}")
-        # except Exception as e:
-        #     logger.debug(f"Error fetching processing stats for video {video_id}: {str(e)}")
-        #     raise HTTPException(status_code=500, detail="Error fetching processing stats")
-
-        # if stats_obj is None:
-        #     logger.debug(f"Processing stats not found for video {video_id}")
-        #     raise HTTPException(status_code=404, detail="Processing stats not found")
-
-        # stats = json.loads(stats_obj.decode('utf-8'))
-        
-        # # Set video details
-        # try:
-        #     video_resolution = await get_video_resolution(video_id)
-        #     fps = stats['video']['video_fps']
-        #     frame_count = stats['video']['total_frames']
-        #     duration = frame_count / fps
-
-        #     video_details.set_detail("video_resolution", video_resolution)
-        #     video_details.set_detail("frames_per_second", fps)
-        #     video_details.set_detail("number_of_frames", frame_count)
-        #     video_details.set_detail("video_length", duration)
-            
-        #     logger.debug(f"Video details - Resolution: {video_resolution}, FPS: {fps}, Total frames: {frame_count}, Duration: {duration:.2f} seconds")
-        # except KeyError as e:
-        #     logger.error(f"Missing key in stats for video {video_id}: {str(e)}")
-        #     raise HTTPException(status_code=500, detail="Error retrieving video details")
-        
-        # Start OCR reprocessing
         logger.info(f"Starting to reprocess OCR data for video: {video_id}")
         result = await brand_detection.detect_brands(video_id, status_tracker, video_details)
         logger.info(f"Reprocessing of OCR Data for video {video_id} complete, identified {len(result)} brands")
         
-        return {"status": "success", "message": f"OCR data reprocessing completed, identified {len(result)} brands"}
+        return {"status": "success", "message": f"OCR data reprocessing completed for video {video_id}"}
     except Exception as e:
         logger.error(f"Error reprocessing OCR data for video {video_id}: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="Error reprocessing OCR data")

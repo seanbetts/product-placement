@@ -227,7 +227,6 @@ async def finalize_brand_detections(brand_detector: BrandDetector) -> List[Detec
     return final_results
 ########################################################
 
-
 ## Create wordcloud
 ########################################################
 async def create_word_cloud(video_id: str, results: List[DetectionResult]):

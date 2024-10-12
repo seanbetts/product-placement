@@ -191,7 +191,7 @@ async def find_font(font_names: List[str]) -> str:
             logger.debug(f"Font not found: {font_name}. Error: {str(e)}")
             continue
     logger.warning("No fonts found from the provided list.")
-    return None
+    return ""
 ########################################################
 
 ## Weight the beginning of a string

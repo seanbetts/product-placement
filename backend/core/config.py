@@ -1,5 +1,4 @@
 import json
-import os
 import psutil
 from pathlib import Path
 from typing import List, Dict, Any
@@ -63,7 +62,7 @@ class Settings(BaseSettings):
     BRAND_DATABASE_FILE: Path = Field(default="data/brand_database.json")
     BRAND_DATABASE: Dict[str, Dict] = {}                    # Brand database object
     OCR_TYPE: str = 'LINE'                                  # Choose 'LINE' or 'WORD' type
-    MINIMUM_OCR_CONFIDENCE: int = 30.0                      # Minimum acceptable confidence score for including a LINE from raw_ocr.json
+    MINIMUM_OCR_CONFIDENCE: int = 30                        # Minimum acceptable confidence score for including a LINE from raw_ocr.json
     MAX_CLEANING_CONFIDENCE: int = 67                       # Maximum confidence score required to skip text cleaning
     MIN_DETECTIONS: int = 2                                 # Minimum number of detections for a brand to be considered
     MIN_BRAND_TIME: float = 0.9                             # Minimum number of seconds a brand needs to appear
@@ -87,16 +86,8 @@ class Settings(BaseSettings):
     CONTAINS_BRAND_BONUS: int = 50                          # Bonus for containing the brand name
     WORD_IN_BRAND_BONUS: int = 30                           # Bonus for the word being part of the whole brand name
     MIN_VERTICAL_OVERLAP_RATIO_FOR_MERGE: float = 0.015     # 1.5% vertical overlap required for merging
-    MIN_HORIZONTAL_OVERLAP_RATIO_FOR_MERGE: float = 0.75    # 75% horizontal overlap required for merging
+    MIN_HORIZONTAL_OVERLAP_RATIO_FOR_MERGE: float = 0.85    # 85% horizontal overlap required for merging
     COMMON_WORDS: set = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with'}  # Common words to ignore in matching process
-
-    ## No longer used
-    # MIN_WORD_MATCH: int = 80                                # Minimum confidence for applying word corrections
-    # HIGH_CONFIDENCE_THRESHOLD: int = 80                     # Minimum score for high-confidence detections
-    # LOW_CONFIDENCE_THRESHOLD: int = 70                      # Minimum score for low-confidence detections
-    # MIN_TEXT_WIDTH: int = 5                                 # Minimum text width as percentage of video width
-    # MIN_TEXT_HEIGHT: int = 5                                # Minimum text height as percentage of video height
-    # INTERPOLATION_CONFIDENCE: int = 70                      # Confidence score for interpolated brand appearances
     
     # Video post-processing settings
     SMOOTHING_WINDOW: int = 5                               # Smoothing window for

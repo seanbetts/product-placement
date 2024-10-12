@@ -91,11 +91,13 @@ class BrandDetector:
         self.video_resolution = (frame.width, frame.height)
 
         # Enable logging for a specific brand and frames
-        DO_LOGGING = True
-        LOGGING_BRAND: Optional[str] = 'doritos'
-        LOGGING_START_FRAME = 663
-        LOGGING_END_FRAME = 663
-        DO_LOGGING = not DO_LOGGING
+        # DO_LOGGING = False
+        # LOGGING_BRAND: Optional[str] = 'doritos'
+        # LOGGING_START_FRAME = 663
+        # LOGGING_END_FRAME = 663
+
+        # Default logging to false to avoid logging for every frame
+        DO_LOGGING = False
 
         # Try to get the logging frame range, use default values if not set
         try:
