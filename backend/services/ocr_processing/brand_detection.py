@@ -3,7 +3,7 @@ import asyncio
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import List, Dict, Optional
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, OrderedDict
 from wordcloud import WordCloud
 from core.config import settings
 from core.logging import logger
@@ -77,6 +77,7 @@ async def detect_brands(
         # Step 3.3: Finalize brand detections
         logger.info(f"Video Processing - Brand Detection - Step 3.3: Finalizing brand detections for video: {video_id}")
         await post_process_interpolation(brand_detector)
+        await remove_over_interpolated_brands(brand_detector)
         final_results = await finalize_brand_detections(brand_detector)
         logger.info(f"Video Processing - Brand Detection - Step 3.3: Finalized detection results for {len(final_results)} video frames")
 
@@ -145,7 +146,46 @@ async def post_process_interpolation(brand_detector: BrandDetector):
     brand_detector.sort_all_brand_detections()
 ########################################################
 
-## xxx
+## Remove over interpolated brands
+########################################################
+async def remove_over_interpolated_brands(brand_detector: BrandDetector):
+    accumulated_results = brand_detector.get_accumulated_results()
+    filtered_results = {}
+    
+    # Find the maximum frame number to ensure we process all frames
+    max_frame = max(accumulated_results.keys()) if accumulated_results else 0
+    
+    for frame_number in range(max_frame + 1):
+        brands = accumulated_results.get(frame_number, [])
+        
+        if not brands:
+            # Preserve empty frames
+            filtered_results[frame_number] = []
+            continue
+        
+        filtered_brands = []
+        for brand in brands:
+            if not brand.is_interpolated:
+                filtered_brands.append(brand)
+            else:
+                prev_frame = brand_detector.find_previous_non_interpolated_frame(brand.brand, frame_number)
+                next_frame = brand_detector.find_next_non_interpolated_frame(brand.brand, frame_number)
+                
+                if prev_frame is not None and next_frame is not None:
+                    if next_frame - prev_frame <= settings.INTERPOLATION_LIMIT:
+                        filtered_brands.append(brand)
+                    else:
+                        logger.debug(f"Removed over-interpolated brand {brand.brand} at frame {frame_number}")
+                else:
+                    logger.debug(f"Removed interpolated brand {brand.brand} at frame {frame_number} without non-interpolated anchor")
+        
+        filtered_results[frame_number] = filtered_brands
+    
+    brand_detector.set_accumulated_results(filtered_results)
+    logger.debug(f"Removed over-interpolated brands. Processed {len(filtered_results)} frames.")
+########################################################
+
+## Finalise brand detections
 ########################################################
 async def finalize_brand_detections(brand_detector: BrandDetector) -> List[DetectionResult]:
     min_frames = max(1, int(settings.MIN_BRAND_TIME * brand_detector.fps))
@@ -288,13 +328,23 @@ async def create_word_cloud(video_id: str, results: List[DetectionResult]):
 ## Create brand table
 ########################################################
 async def create_brand_table(video_id: str, detection_results: List[DetectionResult], video_fps: float) -> Dict[str, Dict]:
+    """
+    Create a brand table with statistics for each detected brand, counting unique frames per brand.
+    The frame_count will appear as the first item in each brand's statistics.
+
+    :param video_id: The ID of the video being processed.
+    :param detection_results: A list of DetectionResult objects containing brand detections.
+    :param video_fps: The frames per second of the video.
+    :return: A dictionary containing statistics for each detected brand, with frame_count first.
+    """
     brand_stats = {}
+
     for result in detection_results:
         for brand_instance in result.detected_brands:
             brand = brand_instance.brand
             if brand not in brand_stats:
                 brand_stats[brand] = {
-                    "frame_count": 0,
+                    "frames": set(),
                     "time_on_screen": 0,
                     "first_appearance": result.frame_number,
                     "last_appearance": result.frame_number,
@@ -303,28 +353,35 @@ async def create_brand_table(video_id: str, detection_results: List[DetectionRes
                     "min_confidence": brand_instance.brand_match_confidence,
                     "max_confidence": brand_instance.brand_match_confidence
                 }
+            
             stats = brand_stats[brand]
-            stats["frame_count"] += 1
+            stats["frames"].add(result.frame_number)
             stats["time_on_screen"] += 1 / video_fps
-            stats["last_appearance"] = result.frame_number
+            stats["last_appearance"] = max(stats["last_appearance"], result.frame_number)
             stats["confidences"].append(brand_instance.brand_match_confidence)
             stats["sizes"].append(brand_instance.relative_size)
             stats["min_confidence"] = min(stats["min_confidence"], brand_instance.brand_match_confidence)
             stats["max_confidence"] = max(stats["max_confidence"], brand_instance.brand_match_confidence)
 
-    # Calculate averages and round values
+    # Calculate averages, round values, and create final ordered dictionary with frame_count first
+    final_brand_stats = {}
     for brand, stats in brand_stats.items():
-        stats["time_on_screen"] = round(stats["time_on_screen"], 2)
-        stats["avg_confidence"] = round(sum(stats["confidences"]) / len(stats["confidences"]), 2)
-        stats["min_confidence"] = round(stats["min_confidence"], 2)
-        stats["max_confidence"] = round(stats["max_confidence"], 2)
-        stats["avg_relative_size"] = round(sum(stats["sizes"]) / len(stats["sizes"]), 4)
-        del stats["confidences"]
-        del stats["sizes"]
+        frame_count = len(stats["frames"])
+        final_stats = OrderedDict([
+            ("frame_count", frame_count),
+            ("time_on_screen", round(stats["time_on_screen"], 2)),
+            ("first_appearance", stats["first_appearance"]),
+            ("last_appearance", stats["last_appearance"]),
+            ("min_confidence", round(stats["min_confidence"], 2)),
+            ("max_confidence", round(stats["max_confidence"], 2)),
+            ("avg_confidence", round(sum(stats["confidences"]) / len(stats["confidences"]), 2)),
+            ("avg_relative_size", round(sum(stats["sizes"]) / len(stats["sizes"]), 4))
+        ])
+        final_brand_stats[brand] = final_stats
 
     # Save brand stats to S3
-    await s3_operations.create_and_save_brand_table(video_id, brand_stats)
-    return brand_stats
+    await s3_operations.create_and_save_brand_table(video_id, final_brand_stats)
+    return final_brand_stats
 ########################################################
 
 ## Validate brand results

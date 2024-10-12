@@ -4,14 +4,13 @@ import datetime
 import time
 import tempfile
 import asyncio
-from services import ocr_processing
 from core.logging import logger
 from core.config import settings
 from core.aws import get_s3_client
 from models.status_tracker import StatusTracker
 from models.video_details import VideoDetails
 from services import audio_processing, frames_processing, status_processing, object_detection, video_annotation
-from services.ocr_processing import brand_detection
+from services.ocr_processing import brand_detection, main_ocr_processing
 import boto3
 from botocore.exceptions import ClientError
 
@@ -68,7 +67,7 @@ async def run_video_processing(video_id: str):
             # Step 2: Start OCR processing after video frames are available
             logger.info(f"Video Processing - Thread 1 - Image Processing - Step 2.1: Started OCR processing for video: {video_id}")
             await status_tracker.update_process_status("ocr", "in_progress", 0)
-            ocr_task = asyncio.create_task(ocr_processing.process_ocr(video_id, status_tracker, video_details))
+            ocr_task = asyncio.create_task(main_ocr_processing.process_ocr(video_id, status_tracker, video_details))
 
             # Wait for transcription and OCR tasks to complete, but handle them separately
             transcription_stats = None

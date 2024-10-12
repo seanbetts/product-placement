@@ -63,25 +63,38 @@ class Settings(BaseSettings):
     BRAND_DATABASE_FILE: Path = Field(default="data/brand_database.json")
     BRAND_DATABASE: Dict[str, Dict] = {}                    # Brand database object
     OCR_TYPE: str = 'LINE'                                  # Choose 'LINE' or 'WORD' type
-    MINIMUM_OCR_CONFIDENCE: int = 70.0                      # Minimum acceptable confidence score for including a LINE from raw_ocr.json
+    MINIMUM_OCR_CONFIDENCE: int = 30.0                      # Minimum acceptable confidence score for including a LINE from raw_ocr.json
     MAX_CLEANING_CONFIDENCE: int = 67                       # Maximum confidence score required to skip text cleaning
     MIN_DETECTIONS: int = 2                                 # Minimum number of detections for a brand to be considered
-    MIN_BRAND_TIME: int = 1                                 # Minimum number of seconds a brand needs to appear
+    MIN_BRAND_TIME: float = 0.9                             # Minimum number of seconds a brand needs to appear
     FRAME_WINDOW: int = 1                                   # Window (in seconds) for checking brand consistency
-    MINIMUM_FUZZY_BRAND_MATCH_SCORE: int = 70               # Minimum fuzzy match score between original and matched text
     INTERPOLATION_LIMIT: int = 15                           # Maximum consecutive interpolated frames allowed
     WORDCLOUD_MINIMUM_CONFIDENCE: int = 70                  # Minium confidence threshold for words to be included in the wordcloud
     MAX_BOUNDING_BOX_MERGE_DISTANCE_PERCENT: float = 0.02   # 2% of frame dimension
     MIN_OVERLAP_RATIO_FOR_MERGE: float = 0.015              # 1.5% overlap required for automatic merging
     
+    ## Fuzzy Brand Matching Settings
+    MINIMUM_FUZZY_BRAND_MATCH_SCORE: int = 65               # Minimum fuzzy match score between original and matched text
+    MIN_TEXT_LENGTH: int = 3                                # Minimum length of text to be considered for brand matching
+    MIN_BRAND_LENGTH: int = 3                               # Minimum length of brand name to be considered for matching
+    FULL_MATCH_WEIGHT: float = 0.4                          # Weight given to full text match in overall score calculation
+    PARTIAL_MATCH_WEIGHT: float = 0.3                       # Weight given to partial text match in overall score calculation
+    WORD_MATCH_WEIGHT: float = 0.3                          # Weight given to word-by-word match in overall score calculation
+    MIN_FULL_MATCH_SCORE: int = 70                          # Minimum score required for full text match to be considered
+    MIN_PARTIAL_MATCH_SCORE: int = 80                       # Minimum score required for partial text match to be considered
+    MIN_WORD_MATCH_SCORE: int = 80                          # Minimum score required for word-by-word match to be considered
+    LENGTH_PENALTY_FACTOR: float = 0.1                      # Factor to penalize short matches, reducing false positives
+    EXACT_MATCH_BONUS: int = 20                             # Bonus for matching a brand name or variation exactly
+    CONTAINS_BRAND_BONUS: int = 50                          # Bonus for containing the brand name
+    COMMON_WORDS: set = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with'}  # Common words to ignore in matching process
+
     ## No longer used
-    MIN_WORD_MATCH: int = 80                                # Minimum confidence for applying word corrections
+    # MIN_WORD_MATCH: int = 80                                # Minimum confidence for applying word corrections
     # HIGH_CONFIDENCE_THRESHOLD: int = 80                     # Minimum score for high-confidence detections
     # LOW_CONFIDENCE_THRESHOLD: int = 70                      # Minimum score for low-confidence detections
-    MIN_BRAND_LENGTH: int = 3                               # Minimum length of a brand name
-    MIN_TEXT_WIDTH: int = 5                                 # Minimum text width as percentage of video width
-    MIN_TEXT_HEIGHT: int = 5                                # Minimum text height as percentage of video height
-    INTERPOLATION_CONFIDENCE: int = 70                      # Confidence score for interpolated brand appearances
+    # MIN_TEXT_WIDTH: int = 5                                 # Minimum text width as percentage of video width
+    # MIN_TEXT_HEIGHT: int = 5                                # Minimum text height as percentage of video height
+    # INTERPOLATION_CONFIDENCE: int = 70                      # Confidence score for interpolated brand appearances
     
     # Video post-processing settings
     SMOOTHING_WINDOW: int = 5                               # Smoothing window for

@@ -13,7 +13,6 @@ from core.aws import get_s3_client
 from core.s3_upload import save_data_to_s3
 from models.status_tracker import StatusTracker
 from models.video_details import VideoDetails
-from models.detection_classes import BrandInstance
 from core.logging import logger
 from utils.utils import find_font
 
@@ -40,7 +39,7 @@ async def annotate_video(video_id: str, status_tracker: StatusTracker, video_det
             processed_frames_dir = os.path.join(temp_dir, "processed_frames")
             os.makedirs(processed_frames_dir, exist_ok=True)
 
-            logger.info(f"Video Processing - Video Annotation - Step 5.3: Started annotating of frames for video {video_id}")
+            logger.info(f"Video Processing - Video Annotation - Step 5.3: Started annotating {len(ocr_results)} frames for video {video_id}")
             
             total_frames = len(ocr_results)
             processed_frames = 0

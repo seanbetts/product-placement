@@ -1,7 +1,7 @@
 {
   "pepsi": {
-      "variations": ["pepsi", "pepsi cola", "pepsi-cola"],
-      "word_exclusions": ["com"],
+      "variations": ["pepsi", "pepsi cola", "pepsi-cola", "epsi"],
+      "word_exclusions": [""],
       "category": "beverage",
       "objects": ["Bottle", "Can", "Vending Machine"]
   },
@@ -13,13 +13,13 @@
   },
   "pizza hut": {
       "variations": ["pizza hut", "pizzahut"],
-      "word_exclusions": ["com"],
+      "word_exclusions": [""],
       "category": "food",
       "objects": ["Pizza", "Restaurant", "Menu"]
   },
   "doritos": {
-      "variations": ["doritos", "dorito", "dorros", "dontos"],
-      "word_exclusions": ["com"],
+      "variations": ["doritos", "dorito", "dorros", "dontos", "domos", "dorites", "dortos", "dornos", "donos"],
+      "word_exclusions": [""],
       "category": "food",
       "objects": ["Snack", "Bag"]
   },
@@ -30,62 +30,62 @@
       "objects": ["Sneaker", "T-Shirt"]
   },
   "nuprin": {
-      "variations": ["nuprin", "new print", "auprin", "kuprin", "kuprix", "ruprix", "nuprix", "kupein", "kupsin"],
-      "word_exclusions": ["com"],
+      "variations": ["nuprin", "new print", "auprin", "kuprin", "kuprix", "ruprix", "nuprix", "kupein", "kupsin", "ruprin", "nuprik"],
+      "word_exclusions": [""],
       "category": "pharmaceutical",
       "objects": ["Pill", "Medicine"]
   },
   "adidas": {
       "variations": ["adidas", "addidas", "adiddas", "addiddas"],
-      "word_exclusions": ["com"],
+      "word_exclusions": [""],
       "category": "apparel",
       "objects": ["Sneaker", "T-Shirt", "Soccer Ball"]
   },
   "betano": {
       "variations": ["betano", "beteno"],
-      "word_exclusions": ["com"],
+      "word_exclusions": [""],
       "category": "gaming",
       "objects": ["Casino", "Slot Machine", "Playing Cards", "Dice", "Roulette"]
   },
   "₿c.game": {
       "variations": ["₿c.game", "bc.game", "☐c.game", "₿c game", "☐c game", "bc game", "₿c-game", "☐c-game", "bc-game", "₿cgame", "bcgame", "bccane", "bc.came", "bc came", "bc cane"],
-      "word_exclusions": ["com"],
+      "word_exclusions": [""],
       "category": "gaming",
       "objects": ["Computer", "Casino", "Slot Machine"]
   },
   "chang": {
       "variations": ["chang", "chan", "ching", "chana"],
-      "word_exclusions": ["com"],
+      "word_exclusions": [""],
       "category": "beverages",
       "objects": ["Beer", "Bottle", "Glass", "Pub", "Bar"]
   },
   "guinness": {
       "variations": ["guinness", "guiness", "guines", "guinnes"],
-      "word_exclusions": ["com"],
+      "word_exclusions": [""],
       "category": "beverages",
       "objects": ["Beer", "Glass", "Pub", "Bar"]
   },
   "gambleaware": {
       "variations": ["gambleaware", "gamble aware", "gambl aware"],
-      "word_exclusions": ["com"],
+      "word_exclusions": [""],
       "category": "gaming",
       "objects": ["Dice", "Playing Cards", "Slot Machine", "Casino"]
   },
   "king power": {
       "variations": ["king power", "kingpower", "kingpow", "eino power", "kind power", "king bower"],
-      "word_exclusions": ["com"],
+      "word_exclusions": [""],
       "category": "travel",
       "objects": ["Airport", "Suitcase", "Passport", "Airplane"]
   },
   "litefinance": {
       "variations": ["litefinance", "lite finance", "litefinans", "lite finans"],
-      "word_exclusions": ["com"],
+      "word_exclusions": [""],
       "category": "finance",
       "objects": ["Computer", "Chart", "Calculator", "Money"]
   },
   "eggo": {
     "variations": ["eggo", "ego", "3ggo", "3gg0", "egg0"],
-    "word_exclusions": ["com"],
+    "word_exclusions": [""],
     "category": "food",
     "objects": ["Computer", "Chart", "Calculator", "Money"]
 }
