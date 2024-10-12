@@ -92,9 +92,9 @@ class BrandDetector:
 
         # Enable logging for a specific brand and frames
         DO_LOGGING = True
-        LOGGING_BRAND: Optional[str] = 'pizza hut'
-        LOGGING_START_FRAME = 398
-        LOGGING_END_FRAME = 398
+        LOGGING_BRAND: Optional[str] = 'doritos'
+        LOGGING_START_FRAME = 663
+        LOGGING_END_FRAME = 663
         DO_LOGGING = not DO_LOGGING
 
         # Try to get the logging frame range, use default values if not set
@@ -137,7 +137,7 @@ class BrandDetector:
                 matched_brands.append(brand)
 
         if DO_LOGGING:
-            logger.info(f"Video Processing - Brand Detection - Step 3.2: Frame {frame.number}: Matched brands before grouping: {[b.cleaned_text for b in matched_brands]}")
+            logger.info(f"Video Processing - Brand Detection - Step 3.2: Frame {frame.number} - Matched brands before grouping: {[b.cleaned_text for b in matched_brands]}")
 
         # Group overlapping detections
         grouped_detections = await self.group_overlapping_detections(matched_brands)
@@ -164,7 +164,7 @@ class BrandDetector:
                 final_filtered_brands.append(brand)
 
         if DO_LOGGING:
-            logger.info(f"Video Processing - Brand Detection - Step 3.2: Frame {frame.number}: Final filtered brands: {[b.cleaned_text for b in final_filtered_brands]}")
+            logger.info(f"Video Processing - Brand Detection - Step 3.2: Frame {frame.number} - Final filtered brands: {[b.cleaned_text for b in final_filtered_brands]}")
 
         # Use final_filtered_brands instead of filtered_brands in subsequent processing
         self.all_detections[frame.number] = final_filtered_brands
@@ -219,7 +219,7 @@ class BrandDetector:
             merged_brands.extend(detections)
 
         if DO_LOGGING:
-            logger.info(f"Video Processing - Brand Detection - Step 3.2: Frame {frame.number}: Merged brands: {[b.cleaned_text for b in merged_brands]}")
+            logger.info(f"Video Processing - Brand Detection - Step 3.2: Frame {frame.number} - Merged brands: {[b.cleaned_text for b in merged_brands]}")
 
         # Store all detections
         self.all_detections[frame.number] = merged_brands
@@ -271,7 +271,13 @@ class BrandDetector:
         self.accumulated_results[frame.number] = interpolated_brands
 
         if DO_LOGGING:
-            logger.info(f"Video Processing - Brand Detection - Step 3.2: Frame {frame.number}: Final results: {self.accumulated_results[frame.number]}")
+            brand_results = [
+                f"Brand: {brand.brand}, Confidence: {brand.brand_match_confidence:.2f}"
+                for brand in self.accumulated_results[frame.number]
+            ]
+            brand_results_str = ", ".join(brand_results)
+
+            logger.info(f"Video Processing - Brand Detection - Step 3.2: Frame {frame.number} - Brands: {brand_results_str}")
 
         return DetectionResult(frame.number, self.accumulated_results[frame.number])
 
@@ -288,7 +294,7 @@ class BrandDetector:
                 logger.debug(f"Skipping detection due to low confidence: {confidence}")
                 return None
 
-            original_text = detection['DetectedText']
+            original_text = detection['DetectedText'].lower()
 
             if confidence > settings.MAX_CLEANING_CONFIDENCE:
                 cleaned_text = original_text
@@ -318,7 +324,6 @@ class BrandDetector:
     async def combine_adjacent_detections(self, detections: List[Dict]) -> List[Dict]:
         combined = []
         sorted_detections = sorted(detections, key=lambda x: x['bounding_box']['vertices'][0]['y'])
-        
         i = 0
         while i < len(sorted_detections):
             current = sorted_detections[i]
@@ -326,10 +331,21 @@ class BrandDetector:
             combined_confidence = current['confidence']
             combined_box = current['bounding_box'].copy()
             
+            # Check if the current detection is already a complete brand name
+            if any(combined_text.lower() == brand.lower() for brand in self.brand_database.keys()):
+                combined.append({
+                    'cleaned_text': combined_text,
+                    'confidence': combined_confidence,
+                    'bounding_box': combined_box,
+                    'frame_number': self.current_frame_number
+                })
+                i += 1
+                continue
+
             j = i + 1
             while j < len(sorted_detections):
                 next_det = sorted_detections[j]
-                if await self.are_detections_adjacent(current, next_det):
+                if await self.should_combine_detections(current, next_det):
                     combined_text += ' ' + next_det['cleaned_text']
                     combined_confidence = (combined_confidence + next_det['confidence']) / 2
                     try:
@@ -337,6 +353,11 @@ class BrandDetector:
                     except Exception as e:
                         logger.error(f"Error merging bounding boxes: {str(e)}")
                         break
+                    
+                    # If we've formed a complete brand name, stop combining
+                    if any(combined_text.lower() == brand.lower() for brand in self.brand_database.keys()):
+                        break
+                    
                     j += 1
                 else:
                     break
@@ -347,25 +368,58 @@ class BrandDetector:
                 'bounding_box': combined_box,
                 'frame_number': self.current_frame_number
             })
-            
             i = j
         
         return combined
+    
+    async def should_combine_detections(self, det1: Dict, det2: Dict) -> bool:
+        # Check if the detections are adjacent
+        if not await self.are_detections_adjacent(det1, det2):
+            return False
+
+        # Get the cleaned text for both detections
+        text1 = det1['cleaned_text'].lower()
+        text2 = det2['cleaned_text'].lower()
+
+        # Combine the texts
+        combined_text = f"{text1} {text2}"
+
+        # Check if the combination exactly matches a brand name
+        return any(combined_text == brand.lower() for brand in self.brand_database.keys())
         
     async def are_detections_adjacent(self, det1: Dict, det2: Dict) -> bool:
         v1 = det1['bounding_box'].get('vertices', [])
         v2 = det2['bounding_box'].get('vertices', [])
-        
+
         if isinstance(v1[0], dict):
             y1_bottom = max(v['y'] for v in v1)
             y2_top = min(v['y'] for v in v2)
+            x1_left = min(v['x'] for v in v1)
+            x1_right = max(v['x'] for v in v1)
+            x2_left = min(v['x'] for v in v2)
+            x2_right = max(v['x'] for v in v2)
         else:
             y1_bottom = max(v[1] for v in v1)
             y2_top = min(v[1] for v in v2)
-        
-        distance = y2_top - y1_bottom
-        max_distance = 0.05 * self.video_resolution[1]  # 5% of frame height
-        return distance <= max_distance
+            x1_left = min(v[0] for v in v1)
+            x1_right = max(v[0] for v in v1)
+            x2_left = min(v[0] for v in v2)
+            x2_right = max(v[0] for v in v2)
+
+        # Check vertical adjacency
+        vertical_distance = y2_top - y1_bottom
+        max_vertical_distance = settings.MIN_VERTICAL_OVERLAP_RATIO_FOR_MERGE * self.video_resolution[1]
+        is_vertically_adjacent = vertical_distance <= max_vertical_distance
+
+        # Check horizontal overlap
+        overlap_left = max(x1_left, x2_left)
+        overlap_right = min(x1_right, x2_right)
+        overlap_width = max(0, overlap_right - overlap_left)
+        min_width = min(x1_right - x1_left, x2_right - x2_left)
+        horizontal_overlap_ratio = overlap_width / min_width if min_width > 0 else 0
+        is_horizontally_overlapping = horizontal_overlap_ratio >= settings.MIN_HORIZONTAL_OVERLAP_RATIO_FOR_MERGE
+
+        return is_vertically_adjacent and is_horizontally_overlapping
 
     async def match_brand(self, detection: Dict, logging_brand: Optional[str] = None, logging_start_frame: Optional[int] = None, logging_end_frame: Optional[int] = None, do_logging: Optional[bool] = None) -> Optional[BrandInstance]:
         text = detection['cleaned_text']
@@ -486,6 +540,7 @@ class BrandDetector:
         LENGTH_PENALTY_FACTOR = settings.LENGTH_PENALTY_FACTOR
         EXACT_MATCH_BONUS = settings.EXACT_MATCH_BONUS
         CONTAINS_BRAND_BONUS = settings.CONTAINS_BRAND_BONUS
+        WORD_IN_BRAND_BONUS = settings.WORD_IN_BRAND_BONUS
         COMMON_WORDS = settings.COMMON_WORDS
 
         best_match = None
@@ -498,7 +553,7 @@ class BrandDetector:
             return None, 0
 
         if do_logging:
-            logger.info(f"Attempting to fuzzy match: '{text}'")
+            logger.debug(f"Attempting to fuzzy match: '{text}'")
 
         for brand, brand_info in self.brand_database.items():
             brand_lower = brand.lower()
@@ -566,9 +621,13 @@ class BrandDetector:
             contains_brand = brand_lower in text_lower or any(var.lower() in text_lower for var in variations)
             if contains_brand:
                 weighted_score += CONTAINS_BRAND_BONUS
+
+            # Apply bonus for word-in-brand match
+            if any(word in brand_words for word in text_words):
+                weighted_score += WORD_IN_BRAND_BONUS
                     
             if do_logging:
-                logger.info(f"Brand: {brand}, Full Score: {full_match_score}, Partial Score: {partial_match_score}, "
+                logger.debug(f"Brand: {brand}, Full Score: {full_match_score}, Partial Score: {partial_match_score}, "
                         f"Avg Word Score: {avg_word_score}, Weighted Score: {weighted_score}")
             
             is_current_best_match = weighted_score > best_score
@@ -579,6 +638,7 @@ class BrandDetector:
 
             # Detailed logging for specified brand
             if do_logging and logging_brand and brand.lower() == logging_brand.lower() and (text_lower == brand_lower or text_lower in [var.lower() for var in variations]):
+                logger.info(f"Fuzzy match found for '{text}' (Best score: {best_score:.2f})")
                 logger.info(f"--- Detailed Logging for {brand.capitalize()} ---")
                 logger.info(f"Input text: '{text}'")
                 logger.info(f"Variations: {variations}")
@@ -587,18 +647,18 @@ class BrandDetector:
                 logger.info(f"Partial match score: {partial_match_score}")
                 logger.info(f"Word scores: {word_scores}")
                 logger.info(f"Average word score: {avg_word_score}")
-                logger.info(f"Length penalty: {length_penalty}")
+                logger.info(f"Length penalty: {length_penalty:.2f}")
                 logger.info(f"Match ratio: {match_ratio}")
                 logger.info(f"Exact match: {exact_match}")
                 logger.info(f"Contains brand: {contains_brand}")
-                logger.info(f"Weighted score before bonuses: {weighted_score - (EXACT_MATCH_BONUS if exact_match else 0) - (CONTAINS_BRAND_BONUS if contains_brand else 0)}")
-                logger.info(f"Final weighted score: {weighted_score}")
-                logger.info(f"Current best score: {best_score}")
+                logger.info(f"Weighted score before bonuses: {(weighted_score - (EXACT_MATCH_BONUS if exact_match else 0) - (CONTAINS_BRAND_BONUS if contains_brand else 0)):.2f}")
+                logger.info(f"Final weighted score: {weighted_score:.2f}")
+                logger.info(f"Current best score: {best_score:.2f}")
                 logger.info(f"Is current best match: {is_current_best_match}")
                 logger.info("-----------------------------------")
 
         if do_logging and best_score < settings.MINIMUM_FUZZY_BRAND_MATCH_SCORE:
-            logger.info(f"No fuzzy match found for '{text}' (best score: {best_score})")
+            logger.info(f"No fuzzy match found for '{text}' (Best score: {best_score:.2f})")
             return None, 0
 
         logger.debug(f"Best fuzzy match: '{text}' -> '{best_match}', Score: {best_score}")
@@ -910,7 +970,7 @@ class BrandDetector:
                 logger.debug("One box is fully contained within the other, should not merge")
                 return False
 
-            if overlap_area > 0 and overlap_area / min_area >= settings.MIN_OVERLAP_RATIO_FOR_MERGE:
+            if overlap_area > 0 and overlap_area / min_area >= settings.MIN_VERTICAL_OVERLAP_RATIO_FOR_MERGE:
                 logger.debug("Boxes should be merged due to significant overlap")
                 return True
 

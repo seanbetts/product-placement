@@ -65,29 +65,29 @@ async def annotate_video(video_id: str, status_tracker: StatusTracker, video_det
                     else:
                         failed_frames += 1
                 except Exception as e:
-                    logger.error(f"Video Processing - Video Annotation: Error processing frame {i}/{total_frames} for video {video_id}: {str(e)}", exc_info=True)
+                    logger.error(f"Video Processing - Video Annotation: Error annotating frame {i}/{total_frames} for video {video_id}: {str(e)}", exc_info=True)
                     failed_frames += 1
 
                 if i % 100 == 0 or i == total_frames:
-                    logger.info(f"Video Processing - Video Annotation - Step 5.3: Processed {i}/{total_frames} frames ({((i / total_frames) * 100):.0f}%) for video {video_id}")
-                    logger.debug(f"Processed {i}/{total_frames} frames for video {video_id}. "
+                    logger.info(f"Video Processing - Video Annotation - Step 5.3: Annotated {i}/{total_frames} frames ({((i / total_frames) * 100):.0f}%)")
+                    logger.debug(f"Annotated {i}/{total_frames} frames for video {video_id}. "
                                         f"Successful: {processed_frames}, Failed: {failed_frames}")
                     progress = (i / total_frames) * 100
                     await status_tracker.update_process_status("annotation", "in_progress", progress)
 
-            logger.info(f"Video Processing - Video Annotation - Step 5.4: Finished annotating of frames for video {video_id}")
+            logger.info(f"Video Processing - Video Annotation - Step 5.4: Finished annotating of {total_frames} frames for video {video_id}")
 
-            logger.debug(f"Completed frame processing for video {video_id}. "
-                                f"Successfully processed: {processed_frames}, Failed: {failed_frames}")
+            logger.debug(f"Completed frame annotation for video {video_id}. "
+                                f"Successfully annotated: {processed_frames}, Failed: {failed_frames}")
 
             if processed_frames == 0:
-                raise RuntimeError(f"Video Processing - Video Annotation: No frames were successfully processed for video {video_id}")
+                raise RuntimeError(f"Video Processing - Video Annotation: No frames were successfully annotated for video {video_id}")
 
             frame_files = sorted(os.listdir(processed_frames_dir))
-            logger.debug(f"Found {len(frame_files)} processed frames in {processed_frames_dir}")
+            logger.debug(f"Found {len(frame_files)} annotated frames in {processed_frames_dir}")
 
             if not frame_files:
-                raise RuntimeError(f"Video Processing - Video Annotation: No processed frames found in {processed_frames_dir}")
+                raise RuntimeError(f"Video Processing - Video Annotation: No annotated frames found in {processed_frames_dir}")
 
             logger.info(f"Video Processing - Video Annotation - Step 5.5: Started video reconstruction for video {video_id}")
             await reconstruct_video(video_id, temp_dir, video_details)

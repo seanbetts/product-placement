@@ -71,14 +71,13 @@ class Settings(BaseSettings):
     INTERPOLATION_LIMIT: int = 15                           # Maximum consecutive interpolated frames allowed
     WORDCLOUD_MINIMUM_CONFIDENCE: int = 70                  # Minium confidence threshold for words to be included in the wordcloud
     MAX_BOUNDING_BOX_MERGE_DISTANCE_PERCENT: float = 0.02   # 2% of frame dimension
-    MIN_OVERLAP_RATIO_FOR_MERGE: float = 0.015              # 1.5% overlap required for automatic merging
     
     ## Fuzzy Brand Matching Settings
     MINIMUM_FUZZY_BRAND_MATCH_SCORE: int = 65               # Minimum fuzzy match score between original and matched text
     MIN_TEXT_LENGTH: int = 3                                # Minimum length of text to be considered for brand matching
     MIN_BRAND_LENGTH: int = 3                               # Minimum length of brand name to be considered for matching
     FULL_MATCH_WEIGHT: float = 0.4                          # Weight given to full text match in overall score calculation
-    PARTIAL_MATCH_WEIGHT: float = 0.3                       # Weight given to partial text match in overall score calculation
+    PARTIAL_MATCH_WEIGHT: float = 0.4                       # Weight given to partial text match in overall score calculation
     WORD_MATCH_WEIGHT: float = 0.3                          # Weight given to word-by-word match in overall score calculation
     MIN_FULL_MATCH_SCORE: int = 70                          # Minimum score required for full text match to be considered
     MIN_PARTIAL_MATCH_SCORE: int = 80                       # Minimum score required for partial text match to be considered
@@ -86,6 +85,9 @@ class Settings(BaseSettings):
     LENGTH_PENALTY_FACTOR: float = 0.1                      # Factor to penalize short matches, reducing false positives
     EXACT_MATCH_BONUS: int = 20                             # Bonus for matching a brand name or variation exactly
     CONTAINS_BRAND_BONUS: int = 50                          # Bonus for containing the brand name
+    WORD_IN_BRAND_BONUS: int = 30                           # Bonus for the word being part of the whole brand name
+    MIN_VERTICAL_OVERLAP_RATIO_FOR_MERGE: float = 0.015     # 1.5% vertical overlap required for merging
+    MIN_HORIZONTAL_OVERLAP_RATIO_FOR_MERGE: float = 0.75    # 75% horizontal overlap required for merging
     COMMON_WORDS: set = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with'}  # Common words to ignore in matching process
 
     ## No longer used
