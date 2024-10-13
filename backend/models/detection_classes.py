@@ -1,6 +1,7 @@
 import re
+import math
 from dataclasses import dataclass
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Generator
 from collections import deque, Counter, defaultdict
 from thefuzz import fuzz
 from core.config import settings
@@ -121,8 +122,11 @@ class BrandDetector:
         logger.debug(f"Frame {frame.number}: Number of text detections: {len(text_detections)}")
 
         line_detections = [det for det in text_detections if det['Type'] == 'LINE']
-        cleaned_detections = [await self.clean_detection(det) for det in line_detections]
-        cleaned_detections = [det for det in cleaned_detections if det is not None]
+        cleaned_detections = [
+            cleaned_det
+            for det in line_detections
+            for cleaned_det in await self.clean_detection(det)
+        ]
         logger.debug(f"Frame {frame.number}: Cleaned detections: {len(cleaned_detections)} items")
 
         combined_detections = await self.combine_adjacent_detections(cleaned_detections)
@@ -283,45 +287,96 @@ class BrandDetector:
 
         return DetectionResult(frame.number, self.accumulated_results[frame.number])
 
-    async def clean_detection(self, detection: Dict) -> Optional[Dict]:
+    async def clean_detection(self, detection: Dict) -> List[Dict]:
         try:
             logger.debug(f"Cleaning detection: {detection['Type']} - {detection['DetectedText']}")
-            
             if detection['Type'] != settings.OCR_TYPE:
-                return None
-
+                return []
             confidence = detection['Confidence']
-            
             if confidence < settings.MINIMUM_OCR_CONFIDENCE:
                 logger.debug(f"Skipping detection due to low confidence: {confidence}")
-                return None
-
+                return []
             original_text = detection['DetectedText'].lower()
-
             if confidence > settings.MAX_CLEANING_CONFIDENCE:
                 cleaned_text = original_text
             else:
                 cleaned_text = await self.clean_text(original_text)
-
             logger.debug(f"Frame {self.current_frame_number}: Cleaned text: '{original_text}' -> '{cleaned_text}'")
-
             if cleaned_text is None or len(cleaned_text.strip()) <= 2:
                 logger.debug(f"Skipping detection due to short or None cleaned text: '{original_text}'")
-                return None
-
+                return []
             bounding_box = await self.convert_relative_bbox(detection['Geometry']['BoundingBox'])
             adapted_bounding_box = self.adapt_bounding_box(bounding_box)
 
-            return {
-                "original_text": original_text,
-                "cleaned_text": cleaned_text,
-                "confidence": confidence,
-                "bounding_box": adapted_bounding_box,
-                "frame_number": self.current_frame_number
-            }
+            # New step: Analyze and adjust brand detection
+            adjusted_detections = await self.analyze_and_adjust_brand_detection(cleaned_text, adapted_bounding_box)
+
+            return [
+                {
+                    "original_text": original_text,
+                    "cleaned_text": adj['cleaned_text'],
+                    "confidence": confidence,
+                    "bounding_box": adj['bounding_box'],
+                    "frame_number": self.current_frame_number
+                }
+                for adj in adjusted_detections
+            ]
         except Exception as e:
             logger.error(f"Error in clean_detection: {str(e)}", exc_info=True)
-            return None
+            return []
+        
+    async def analyze_and_adjust_brand_detection(self, cleaned_text: str, bounding_box: Dict) -> List[Dict]:
+        original_text = cleaned_text
+        original_box = bounding_box.copy()
+        results = []
+
+        for brand, brand_info in self.brand_database.items():
+            variations = brand_info.get('variations', [brand])
+            for variation in variations:
+                variation_lower = variation.lower()
+                matches = list(self.find_all(cleaned_text, variation_lower))
+                
+                if matches:
+                    # Calculate average width per character
+                    total_width = bounding_box['vertices'][1]['x'] - bounding_box['vertices'][0]['x']
+                    avg_width_per_char = total_width / len(cleaned_text)
+
+                    # Calculate width of spaces between matches
+                    space_width = avg_width_per_char * (len(cleaned_text) - sum(len(variation_lower) for _ in matches))
+                    variation_width = (total_width - space_width) / len(matches)
+
+                    for i, start_index in enumerate(matches):
+                        end_index = start_index + len(variation_lower)
+
+                        # Calculate new bounding box
+                        left_adjust = int(start_index * avg_width_per_char + i * (space_width / (len(matches) + 1)))
+                        new_left = bounding_box['vertices'][0]['x'] + left_adjust
+                        new_right = new_left + variation_width
+
+                        new_box = {
+                            'vertices': [
+                                {'x': int(new_left), 'y': bounding_box['vertices'][0]['y']},
+                                {'x': int(new_right), 'y': bounding_box['vertices'][1]['y']},
+                                {'x': int(new_right), 'y': bounding_box['vertices'][2]['y']},
+                                {'x': int(new_left), 'y': bounding_box['vertices'][3]['y']}
+                            ]
+                        }
+
+                        results.append({
+                            'cleaned_text': variation_lower,
+                            'bounding_box': new_box,
+                            'brand': brand  # Include the main brand name
+                        })
+
+                    logger.debug(f"Adjusted bounding boxes for brand '{brand}' variation '{variation_lower}'. Original: {original_box}, New: {[r['bounding_box'] for r in results]}")
+                    logger.debug(f"Adjusted cleaned text. Original: '{original_text}', New: {[r['cleaned_text'] for r in results]}")
+
+                    break  # Stop after finding and adjusting for the first brand variation with matches
+            
+            if results:  # If we found matches for this brand, stop checking other brands
+                break
+
+        return results if results else [{'cleaned_text': cleaned_text, 'bounding_box': bounding_box, 'brand': None}]
         
     async def combine_adjacent_detections(self, detections: List[Dict]) -> List[Dict]:
         combined = []
@@ -540,10 +595,17 @@ class BrandDetector:
         MIN_PARTIAL_MATCH_SCORE = settings.MIN_PARTIAL_MATCH_SCORE
         MIN_WORD_MATCH_SCORE = settings.MIN_WORD_MATCH_SCORE
         LENGTH_PENALTY_FACTOR = settings.LENGTH_PENALTY_FACTOR
+        LENGTH_GRACE_RANGE = settings.LENGTH_GRACE_RANGE
         EXACT_MATCH_BONUS = settings.EXACT_MATCH_BONUS
         CONTAINS_BRAND_BONUS = settings.CONTAINS_BRAND_BONUS
         WORD_IN_BRAND_BONUS = settings.WORD_IN_BRAND_BONUS
         COMMON_WORDS = settings.COMMON_WORDS
+
+        def calculate_length_penalty(brand_length, text_length, factor=0.1, grace_range=1.1):
+            length_ratio = max(text_length / brand_length, brand_length / text_length)
+            if length_ratio <= grace_range:
+                return 0
+            return factor * math.log(length_ratio - grace_range + 1)
 
         best_match = None
         best_score = 0
@@ -585,8 +647,10 @@ class BrandDetector:
             word_scores = [max(fuzz.ratio(text_word, brand_word) for brand_word in all_brand_words) for text_word in text_words]
             avg_word_score = sum(word_scores) / len(word_scores) if word_scores else 0
             
-            # Apply length penalty
-            length_penalty = LENGTH_PENALTY_FACTOR * (1 / len(brand_lower) + 1 / len(text_lower))
+            # Apply length mis-match penalty
+            length_penalty = calculate_length_penalty(len(brand_lower), len(text_lower), 
+                                          factor=LENGTH_PENALTY_FACTOR, 
+                                          grace_range=LENGTH_GRACE_RANGE)
             
             # Add a score for matching individual words in multi-word brands
             brand_word_match_score = 0
@@ -874,6 +938,15 @@ class BrandDetector:
                 if b.brand == brand and not b.is_interpolated:
                     return frame
         return None
+    
+    def find_all(self, string: str, sub: str) -> Generator[int, None, None]:
+        start = 0
+        while True:
+            start = string.find(sub, start)
+            if start == -1:
+                return
+            yield start
+            start += len(sub)  # use start += 1 to find overlapping matches
 
     @staticmethod
     async def clean_text(text: str) -> str:

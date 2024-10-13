@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     MINIMUM_OCR_CONFIDENCE: int = 30                        # Minimum acceptable confidence score for including a LINE from raw_ocr.json
     MAX_CLEANING_CONFIDENCE: int = 67                       # Maximum confidence score required to skip text cleaning
     MIN_DETECTIONS: int = 2                                 # Minimum number of detections for a brand to be considered
-    MIN_BRAND_TIME: float = 0.9                             # Minimum number of seconds a brand needs to appear
+    MIN_BRAND_TIME: float = 1.0                             # Minimum number of seconds a brand needs to appear
     FRAME_WINDOW: int = 1                                   # Window (in seconds) for checking brand consistency
     INTERPOLATION_LIMIT: int = 15                           # Maximum consecutive interpolated frames allowed
     WORDCLOUD_MINIMUM_CONFIDENCE: int = 70                  # Minium confidence threshold for words to be included in the wordcloud
@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     MIN_PARTIAL_MATCH_SCORE: int = 80                       # Minimum score required for partial text match to be considered
     MIN_WORD_MATCH_SCORE: int = 80                          # Minimum score required for word-by-word match to be considered
     LENGTH_PENALTY_FACTOR: float = 0.1                      # Factor to penalize short matches, reducing false positives
+    LENGTH_GRACE_RANGE: float = 1.1                         # Grace range for shorter or longer length mis-matches
     EXACT_MATCH_BONUS: int = 20                             # Bonus for matching a brand name or variation exactly
     CONTAINS_BRAND_BONUS: int = 50                          # Bonus for containing the brand name
     WORD_IN_BRAND_BONUS: int = 30                           # Bonus for the word being part of the whole brand name
@@ -129,7 +130,7 @@ class Settings(BaseSettings):
         # Estimated memory usage per worker in GB
         # Used to calculate the maximum number of workers based on available memory
         # Lower values allow for more workers but may underestimate actual memory usage
-        estimated_memory_per_worker = 0.2
+        estimated_memory_per_worker = 0.1
 
         # Minimum number of workers to use, regardless of other calculations
         # Ensures a base level of parallelism
