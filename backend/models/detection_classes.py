@@ -601,6 +601,10 @@ class BrandDetector:
         WORD_IN_BRAND_BONUS = settings.WORD_IN_BRAND_BONUS
         COMMON_WORDS = settings.COMMON_WORDS
 
+        def contains_excluded_words(text: str, exclusions: List[str]) -> bool:
+            text_lower = text.lower()
+            return any(exclusion.lower() in text_lower for exclusion in exclusions if exclusion)
+
         def calculate_length_penalty(brand_length, text_length, factor=0.1, grace_range=1.1):
             length_ratio = max(text_length / brand_length, brand_length / text_length)
             if length_ratio <= grace_range:
@@ -621,8 +625,8 @@ class BrandDetector:
 
         for brand, brand_info in self.brand_database.items():
             brand_lower = brand.lower()
-            brand_words = brand_lower.split()
             variations = brand_info.get('variations', [])
+            exclusions = brand_info.get('word_exclusions', [])
             
             if len(brand_lower) < MIN_BRAND_LENGTH:
                 continue
@@ -701,6 +705,15 @@ class BrandDetector:
             if weighted_score > best_score:
                 best_score = weighted_score
                 best_match = brand
+
+
+            # Check word exclusions for the best match
+            if best_match:
+                exclusions = self.brand_database[best_match].get('word_exclusions', [])
+                if contains_excluded_words(text, exclusions):
+                    if do_logging:
+                        logger.info(f"Excluded match for brand '{best_match}'. Text: '{text}'. Exclusions: {exclusions}")
+                    return None, 0
 
             # Detailed logging for specified brand
             if do_logging and logging_brand and brand.lower() == logging_brand.lower() and (text_lower == brand_lower or text_lower in [var.lower() for var in variations]):

@@ -42,43 +42,43 @@
       "objects": ["Sneaker", "T-Shirt", "Soccer Ball"]
   },
   "betano": {
-      "variations": ["betano", "beteno"],
+      "variations": ["betano", "beteno", "cetano", "tano", "betan", "betane", "betand", "etan", "tetano", "getano", "retano"],
       "word_exclusions": [""],
       "category": "gaming",
       "objects": ["Casino", "Slot Machine", "Playing Cards", "Dice", "Roulette"]
   },
   "₿c.game": {
-      "variations": ["₿c.game", "bc.game", "☐c.game", "₿c game", "☐c game", "bc game", "₿c-game", "☐c-game", "bc-game", "₿cgame", "bcgame", "bccane", "bc.came", "bc came", "bc cane"],
+      "variations": ["₿c.game", "bc.game", "bc.game-", "bc.ganf", "bc.ganf-", "bc.gane", "bc.gang", "b.c game", "☐c.game", "₿c game", "☐c game", "bc game", "₿c-game", "☐c-game", "bc-game", "₿cgame", "bcgame", "bccane", "bc.came", "bc came", "bc cane", "bcame", "bc_came", "bc.came", "bc same", "b game", "c.game", "c game"],
       "word_exclusions": [""],
       "category": "gaming",
       "objects": ["Computer", "Casino", "Slot Machine"]
   },
   "chang": {
-      "variations": ["chang", "chan", "ching", "chana", "chiana"],
+      "variations": ["chang", "chan", "ching", "chana", "chara", "chiana", "whang", "chaza", "shang", "rhang", "chring", "charg"],
       "word_exclusions": [""],
       "category": "beverages",
       "objects": ["Beer", "Bottle", "Glass", "Pub", "Bar"]
   },
   "guinness": {
-      "variations": ["guinness", "guiness", "guines", "guinnes"],
+      "variations": ["guinness", "guiness", "guines", "guinnes", "gignness", "unness", "hinness", "guin", "guznness", "vquinness", "guanness", "guenness", "uinne", "glinness", "guinne", "ginne", "ginges", "guins", "quinness", "guixness", "gunne", "minness", "sunness", "to uinness", "genness", "ginnness", "guinnes", "grinness", "girness", "cuinness", "geinness", "to quinness", "ginnes", "inness", "guinne's", "tsuinness", "glinnes", "gianness", "suinness", "gienness", "gunness", "gurness", "gines", "a guinn", "guinns", "innes", "uunness", "guine", "uinness", "jinness", "gunes", "uinnes", "guinn", "goinness", "gunnes", "guzness", "ginness"],
       "word_exclusions": [""],
       "category": "beverages",
       "objects": ["Beer", "Glass", "Pub", "Bar"]
   },
   "gambleaware": {
-      "variations": ["gambleaware", "gamble aware", "gambl aware", "gamblea war"],
+      "variations": ["gambleaware", "gamble aware", "gambl aware", "gamblea war", "ambleaware", "gambieawara", "mbleawar", "ambleawar", "gambleawar", "gambleavare", "gamblea wale", "amblea ware", "gamblea vare", "ambleavare", "gamblea war", "mbleaware", "amblea are", "sambleaware", "gambleavary", "gambieaware", "gambleaw", "bleaware", "gamblea avar", "nbleaware", "gamblea", "mbleaward", "gambie4ware", "gamblea vale", "gamblea avare", "gamblea var", "gamble4were"],
       "word_exclusions": [""],
       "category": "gaming",
       "objects": ["Dice", "Playing Cards", "Slot Machine", "Casino"]
   },
   "king power": {
       "variations": ["king power", "kingpower", "kingpow", "eino power", "kind power", "king bower"],
-      "word_exclusions": [""],
+      "word_exclusions": ["the power", "the power of", "the power if", "power possibilities", "the power of possibilities"],
       "category": "travel",
       "objects": ["Airport", "Suitcase", "Passport", "Airplane"]
   },
   "litefinance": {
-      "variations": ["litefinance", "lite finance", "litefinans", "lite finans"],
+      "variations": ["litefinance", "lite finance", "litefinans", "lite finans", "litefinanci", "lile finance", "vlite a finance", "lite finan", "vite finance", "litofinance", "like finance", "litefinand", "litafinance", "lide finance", "lite financia", "litsfinance", "tefinance", "litefina", "litefinan", "littefinance", "lite financ", "vlile finance", "vitefinance", "lite finand", "life finance", "linance", "vlie finance", "literimance", "ite finan", "litefinant", "ite finance", "lite efinance", "litefi", "licefinance", "ithe finance", "ite fina", "lite fibitace", "linafinance", "libe finance", "litefinana", "vlibfinance", "lite nce", "lilefinance", "vlille finance", "efinance", "libafinance", "libefinance", "ite financ", "te finance", "lifefinance", "lice finance", "linefinance", "litefinanc"],
       "word_exclusions": [""],
       "category": "finance",
       "objects": ["Computer", "Chart", "Calculator", "Money"]
@@ -88,5 +88,5 @@
     "word_exclusions": [""],
     "category": "food",
     "objects": ["Computer", "Chart", "Calculator", "Money"]
+  }
 }
- }

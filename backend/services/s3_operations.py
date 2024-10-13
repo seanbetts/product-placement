@@ -525,41 +525,80 @@ async def get_processed_ocr_results(video_id: str):
 
 ## Get video processed OCR results
 ########################################################
-async def get_brands_ocr_results(video_id: str):
-    logger.debug(f"Received request for brand OCR results of video: {video_id}")
-    ocr_key = f'{video_id}/ocr/brands_ocr.json'
+# async def get_brands_ocr_results(video_id: str):
+#     logger.debug(f"Received request for brand OCR results of video: {video_id}")
+#     ocr_key = f'{video_id}/ocr/brands_ocr.json'
+    
+#     try:
+#         logger.debug(f"Attempting to retrieve brand OCR results from S3 for video: {video_id}")
+
+#         async with get_s3_client() as s3_client:
+#             response = s3_client.get_object(
+#                 Bucket=settings.PROCESSING_BUCKET, 
+#                 Key=ocr_key
+#             )
+#         data = await response['Body'].read()
+#         data_size = len(data)
+
+#         ocr_results = json.loads(data.decode('utf-8'))
+#         logger.debug(f"Successfully retrieved brand OCR results for video {video_id}. Size: {data_size} bytes")
+        
+#         return ocr_results
+
+#     except s3_client.exceptions.NoSuchKey:
+#         logger.error(f"Brand OCR results not found for video {video_id}")
+#         raise HTTPException(status_code=404, detail="Brand OCR results not found")
+    
+#     except json.JSONDecodeError as e:
+#         logger.error(f"Error decoding JSON for brand OCR results of video {video_id}: {str(e)}", exc_info=True)
+#         raise HTTPException(status_code=500, detail="Error processing brand OCR results")
+
+#     except s3_client.exceptions.ClientError as e:
+#         logger.error(f"S3 client error retrieving brand OCR results for video {video_id}: {str(e)}", exc_info=True)
+#         raise HTTPException(status_code=500, detail="Error retrieving brand OCR results from storage")
+
+#     except Exception as e:
+#         logger.error(f"Unexpected error retrieving brand OCR results for video {video_id}: {str(e)}", exc_info=True)
+#         raise HTTPException(status_code=500, detail="Unexpected error retrieving brand OCR results")
+########################################################
+
+## Get video objects results
+########################################################
+async def get_objects_results(video_id: str):
+    logger.debug(f"Received request for objects data of video: {video_id}")
+    objects_key = f'{video_id}/object_detection/raw_object_detection_results.json'
     
     try:
-        logger.debug(f"Attempting to retrieve brand OCR results from S3 for video: {video_id}")
+        logger.debug(f"Attempting to retrieve objects data from S3 for video: {video_id}")
 
         async with get_s3_client() as s3_client:
             response = s3_client.get_object(
                 Bucket=settings.PROCESSING_BUCKET, 
-                Key=ocr_key
+                Key=objects_key
             )
         data = await response['Body'].read()
         data_size = len(data)
 
-        ocr_results = json.loads(data.decode('utf-8'))
-        logger.debug(f"Successfully retrieved brand OCR results for video {video_id}. Size: {data_size} bytes")
+        objects_results = json.loads(data.decode('utf-8'))
+        logger.debug(f"Successfully retrieved objects data for video {video_id}. Size: {data_size} bytes")
         
-        return ocr_results
+        return objects_results
 
     except s3_client.exceptions.NoSuchKey:
-        logger.error(f"Brand OCR results not found for video {video_id}")
-        raise HTTPException(status_code=404, detail="Brand OCR results not found")
+        logger.error(f"Objects data not found for video {video_id}")
+        raise HTTPException(status_code=404, detail="Objects data not found")
     
     except json.JSONDecodeError as e:
-        logger.error(f"Error decoding JSON for brand OCR results of video {video_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Error processing brand OCR results")
+        logger.error(f"Error decoding JSON for objects data for video {video_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error processing objects data")
 
     except s3_client.exceptions.ClientError as e:
-        logger.error(f"S3 client error retrieving brand OCR results for video {video_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Error retrieving brand OCR results from storage")
+        logger.error(f"S3 client error retrieving objects data for video {video_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error retrieving objects data from storage")
 
     except Exception as e:
-        logger.error(f"Unexpected error retrieving brand OCR results for video {video_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Unexpected error retrieving brand OCR results")
+        logger.error(f"Unexpected error retrieving objects data for video {video_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Unexpected error retrieving objects data")
 ########################################################
 
 ## Get processed video for a given video ID

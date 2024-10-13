@@ -24,7 +24,7 @@ async def detect_objects(video_id: str, status_tracker: 'StatusTracker', video_d
             brand_database = json.load(f)
 
         total_frames = video_details("number_of_frames")
-        raw_results = {}
+        object_results = {}
 
         for frame_number in range(total_frames):
             try:
@@ -61,7 +61,7 @@ async def detect_objects(video_id: str, status_tracker: 'StatusTracker', video_d
                     )
                 )
                 frame_key = f'{frame_number:06d}.jpg'
-                raw_results[frame_key] = rekognition_response.get('Labels', [])
+                object_results[frame_key] = rekognition_response.get('Labels', [])
 
                 # Update progress
                 progress = (frame_number + 1) / total_frames * 100
@@ -76,14 +76,14 @@ async def detect_objects(video_id: str, status_tracker: 'StatusTracker', video_d
                 logger.error(f"Video Processing - Object Detection - Step 4.1: Error processing frame {frame_number:06d}.jpg for video {video_id}: {str(e)}")
 
         # Save combined raw results to S3
-        await s3_operations.save_data_to_s3(video_id, 'raw_object_detection_results.json', raw_results)
+        await s3_operations.save_data_to_s3(video_id, 'raw_object_detection_results.json', object_results)
         logger.info(f"Video Processing - Object Detection - Step 4.2: Object detection completed for video {video_id}")
 
         # Set status to complete
         await status_tracker.update_process_status("objects", "complete", 100)
 
         logger.info(f"Video Processing - Object Detection - Step 4.3: Combining brand and object stats for annotation: {video_id}")
-        annotation_objects = await combine_object_and_brand_data(video_id, status_tracker, video_details, brand_results, raw_results)
+        annotation_objects = await combine_object_and_brand_data(video_id, status_tracker, video_details, brand_results, object_results)
 
         return annotation_objects
 
@@ -94,10 +94,9 @@ async def detect_objects(video_id: str, status_tracker: 'StatusTracker', video_d
         raise
 ########################################################
 
-
 ## Combine brand and object stats
 ########################################################
-async def combine_object_and_brand_data(video_id: str, status_tracker: 'StatusTracker', video_details: VideoDetails, brand_results: list, raw_results: Dict[str, Any]):
+async def combine_object_and_brand_data(video_id: str, status_tracker: 'StatusTracker', video_details: VideoDetails, brand_results: list, object_results: Dict[str, Any]):
     try:
         # Set initial status
         await status_tracker.update_process_status("annotation", "processing", 0)
@@ -107,9 +106,9 @@ async def combine_object_and_brand_data(video_id: str, status_tracker: 'StatusTr
 
         # Process each frame
         annotation_objects = []
-        total_frames = len(raw_results)
+        total_frames = len(object_results)
 
-        for frame_number, frame_data in raw_results.items():
+        for frame_number, frame_data in object_results.items():
             frame_number = int(frame_number.split('.')[0])  # Convert '000503.jpg' to 503
             
             # Get brand data for this frame
@@ -148,7 +147,7 @@ async def combine_object_and_brand_data(video_id: str, status_tracker: 'StatusTr
 
         # Save combined results to S3
         await s3_operations.save_data_to_s3(video_id, 'annotation_objects.json', annotation_objects)
-        logger.info(f"Video Processing - Annotation: Object and brand annotation completed for video {video_id}")
+        logger.info(f"Video Processing - Object Detection - Step 4.3: Object and brand data combined for video {video_id}")
 
         # Set status to complete
         await status_tracker.update_process_status("annotation", "complete", 100)
@@ -156,7 +155,7 @@ async def combine_object_and_brand_data(video_id: str, status_tracker: 'StatusTr
         return annotation_objects
 
     except Exception as e:
-        logger.error(f"Video Processing - Annotation: Error in combining object and brand data for video {video_id}: {str(e)}")
+        logger.error(f"Video Processing - Object Detection - Step 4.3: Error in combining object and brand data for video {video_id}: {str(e)}")
         # Set status to error
         await status_tracker.update_process_status("annotation", "error")
         raise

@@ -76,6 +76,33 @@ async def detect_objects_endpoint(video_id: str):
         raise HTTPException(status_code=500, detail=f"Error running object detection: {str(e)}")
 ########################################################
 
+## PROCESS OBJECTS (POST)
+## Processes objects data and combines with brand data
+########################################################
+@router.post("/process-objects/{video_id}")
+async def process_objects_endpoint(video_id: str):
+    logger.info(f"Received request to process objects data for video {video_id}")
+
+    status_tracker = StatusTracker(video_id)
+    await status_tracker.update_s3_status()
+
+    video_details = await VideoDetails.create(video_id)
+
+    brand_results = await s3_operations.get_brands_ocr_results(video_id)
+
+    object_results = await s3_operations.get_objects_results(video_id)
+
+    try:
+        logger.debug(f"Starting processing of objects data for video: {video_id}")
+        await object_detection.combine_object_and_brand_data(video_id, status_tracker, video_details, brand_results, object_results)
+        logger.info(f"Object data processing completed for video {video_id}")
+        return {"message": f"Object data processing completed for video {video_id}"}
+
+    except Exception as e:
+        logger.error(f"Error processing objects data for video {video_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error running object detection: {str(e)}")
+########################################################
+
 ## ANNOTATE VIDEOS (POST)
 ## Annotates videos with brand, logos, and object detection
 ########################################################
